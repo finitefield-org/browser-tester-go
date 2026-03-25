@@ -12,7 +12,7 @@ func TestSessionTargetNodeIDIsNilSafe(t *testing.T) {
 func TestSessionNavigationLogReturnsCopy(t *testing.T) {
 	s := NewSession(SessionConfig{
 		URL:  "https://example.test/start",
-		HTML: `<main><script>host:locationAssign("/next"); host:locationReplace("/replace")</script></main>`,
+		HTML: `<main><script>host.locationAssign("/next"); host.locationReplace("/replace")</script></main>`,
 	})
 
 	logs := s.NavigationLog()

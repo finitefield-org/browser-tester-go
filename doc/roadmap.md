@@ -29,7 +29,7 @@ Exit criteria:
 
 ## Phase 2: Script Core
 
-- Implement the minimum script parser/evaluator slice.
+- Implement the minimum classic-JS script parser/evaluator slice.
 - Add host bindings needed for inline bootstrap, including bounded `innerHTML` / `outerHTML` / `textContent` helpers, a bounded `documentCurrentScript` helper for classic inline scripts, and an explicit `expr(...)` wrapper for nested host expressions.
 - Keep unsupported syntax explicit.
 

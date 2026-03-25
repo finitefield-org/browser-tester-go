@@ -412,7 +412,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		}
 		state, ok := h.session.windowHistoryState()
 		if !ok {
-			return script.StringValue("null"), nil
+			return script.NullValue(), nil
 		}
 		return script.StringValue(state), nil
 
@@ -595,7 +595,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		}
 		value, ok := h.session.localStorageGetItem(key)
 		if !ok {
-			return script.StringValue("null"), nil
+			return script.NullValue(), nil
 		}
 		return script.StringValue(value), nil
 
@@ -669,7 +669,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		}
 		key, ok := h.session.localStorageKey(int(index))
 		if !ok {
-			return script.StringValue("null"), nil
+			return script.NullValue(), nil
 		}
 		return script.StringValue(key), nil
 
@@ -686,7 +686,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		}
 		value, ok := h.session.sessionStorageGetItem(key)
 		if !ok {
-			return script.StringValue("null"), nil
+			return script.NullValue(), nil
 		}
 		return script.StringValue(value), nil
 
@@ -760,7 +760,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		}
 		key, ok := h.session.sessionStorageKey(int(index))
 		if !ok {
-			return script.StringValue("null"), nil
+			return script.NullValue(), nil
 		}
 		return script.StringValue(key), nil
 
@@ -1086,6 +1086,9 @@ func inlineScriptResolveElement(store *dom.Store, selector string) (dom.NodeID, 
 func scriptStringArg(method string, args []script.Value, index int) (string, error) {
 	if index >= len(args) {
 		return "", fmt.Errorf("%s requires argument %d", method, index+1)
+	}
+	if args[index].Kind == script.ValueKindNull {
+		return "null", nil
 	}
 	if args[index].Kind != script.ValueKindString {
 		return "", fmt.Errorf("%s argument %d must be a string", method, index+1)

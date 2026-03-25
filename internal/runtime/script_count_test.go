@@ -4,7 +4,7 @@ import "testing"
 
 func TestSessionScriptCountInspectionHelpers(t *testing.T) {
 	s := NewSession(SessionConfig{
-		HTML: `<main><script></script><div id="host"></div><script>host:setTextContent(#host, changed)</script></main>`,
+		HTML: `<main><script></script><div id="host"></div><script>host.setTextContent("#host", "changed")</script></main>`,
 	})
 
 	if got := s.ScriptCount(); got != 2 {

@@ -17,6 +17,15 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [ ] Add regression tests for every bug fix that changes observable behavior.
 - [ ] Keep fuzz and property coverage current for parser, selector, scheduler, location/history, cookie/window.name, and mock-registry boundaries.
 
+## P2 - Script Syntax Expansion
+
+- [x] Replace the current `host:<method>` mini-language with a bounded classic-JS parser/evaluator slice for inline scripts.
+- [ ] Add modern expression support that the current runtime cannot parse: template literals, object/array destructuring, spread/rest, optional chaining, nullish coalescing, logical assignment operators, numeric separators, and `BigInt`.
+- [ ] Add modern declaration and control-flow syntax: `let`/`const`, arrow functions, `async`/`await`, generator functions, loops, `if`/`switch`, and `try`/`catch`/`finally`.
+- [ ] Add class syntax used by real-world scripts: class declarations, class fields, private fields, and static blocks.
+- [ ] Add module-mode syntax only if a module-script slice becomes explicitly in scope: `import`/`export`, dynamic `import()`, and top-level `await`.
+- [ ] Keep unsupported syntax explicit with typed errors until each slice is implemented.
+
 ## P2 - Selector And Query Expansion
 
 - [ ] Add new selector slices only when a user-visible gap appears and the HTML standard calls for it.

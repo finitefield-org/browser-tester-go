@@ -85,6 +85,64 @@ func TestDispatchSupportsNoopAndHostCall(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsClassicJSMemberCalls(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"documentCurrentScript": StringValue(`<script id="boot">host.setTextContent("#out", host.documentCurrentScript())</script>`),
+			"setTextContent":        UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.setTextContent("#out", host.documentCurrentScript())`})
+	if err != nil {
+		t.Fatalf("Dispatch(classic JS member calls) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindUndefined {
+		t.Fatalf("Dispatch(classic JS member calls) kind = %q, want %q", result.Value.Kind, ValueKindUndefined)
+	}
+	if len(host.calls) != 2 {
+		t.Fatalf("host calls = %#v, want two calls", host.calls)
+	}
+	if host.calls[0].method != "documentCurrentScript" {
+		t.Fatalf("host calls[0].method = %q, want documentCurrentScript", host.calls[0].method)
+	}
+	if host.calls[1].method != "setTextContent" {
+		t.Fatalf("host calls[1].method = %q, want setTextContent", host.calls[1].method)
+	}
+	if got := host.calls[1].args[1]; got.Kind != ValueKindString || got.String != `<script id="boot">host.setTextContent("#out", host.documentCurrentScript())</script>` {
+		t.Fatalf("host calls[1].args[1] = %#v, want nested JS source string", got)
+	}
+}
+
+func TestDispatchSupportsClassicJSStatementLists(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host.setTextContent("#out", "first"); host.setTextContent("#out", "second")`})
+	if err != nil {
+		t.Fatalf("Dispatch(classic JS statement list) error = %v", err)
+	}
+	if len(host.calls) != 2 {
+		t.Fatalf("host calls = %#v, want two calls", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" || host.calls[1].method != "setTextContent" {
+		t.Fatalf("host call methods = %#v, want setTextContent twice", host.calls)
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "first" {
+		t.Fatalf("host calls[0].args[1] = %#v, want first", host.calls[0].args[1])
+	}
+	if host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "second" {
+		t.Fatalf("host calls[1].args[1] = %#v, want second", host.calls[1].args[1])
+	}
+}
+
 func TestDispatchParsesHostArguments(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{

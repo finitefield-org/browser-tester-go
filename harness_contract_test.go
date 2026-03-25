@@ -5588,6 +5588,20 @@ func TestMutationContractsTextareaChildMutationsUpdateResetDefaultValue(t *testi
 	}
 }
 
+func TestHarnessInlineScriptsSupportClassicJSMemberCalls(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script id="boot">host.setInnerHTML("#out", host.documentCurrentScript())</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="out"><script id="boot">host.setInnerHTML("#out", host.documentCurrentScript())</script></div><script id="boot">host.setInnerHTML("#out", host.documentCurrentScript())</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after classic JS inline script = %q, want %q", got, want)
+	}
+	if got, want := harness.Debug().LastInlineScriptHTML(), `<script id="boot">host.setInnerHTML("#out", host.documentCurrentScript())</script>`; got != want {
+		t.Fatalf("Debug().LastInlineScriptHTML() = %q, want %q", got, want)
+	}
+}
+
 func TestNilHarnessMutationWrappersReturnDomErrors(t *testing.T) {
 	var nilHarness *Harness
 

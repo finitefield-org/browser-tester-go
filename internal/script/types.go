@@ -4,6 +4,7 @@ type ValueKind string
 
 const (
 	ValueKindUndefined  ValueKind = "undefined"
+	ValueKindNull       ValueKind = "null"
 	ValueKindString     ValueKind = "string"
 	ValueKindBool       ValueKind = "bool"
 	ValueKindNumber     ValueKind = "number"
@@ -20,6 +21,10 @@ type Value struct {
 
 func UndefinedValue() Value {
 	return Value{Kind: ValueKindUndefined}
+}
+
+func NullValue() Value {
+	return Value{Kind: ValueKindNull}
 }
 
 func StringValue(value string) Value {
