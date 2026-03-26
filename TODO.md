@@ -17,28 +17,47 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [ ] Add regression tests for every bug fix that changes observable behavior.
 - [ ] Keep fuzz and property coverage current for parser, selector, scheduler, location/history, cookie/window.name, and mock-registry boundaries.
 
-## P2 - Script Syntax Expansion
+## P2 - Script Syntax Backlog
 
-- [x] Replace the current `host:<method>` mini-language with a bounded classic-JS parser/evaluator slice for inline scripts.
-- [ ] Add modern expression support that the current runtime cannot parse: object/array destructuring and spread/rest.
-  - [x] Numeric separators in decimal literals.
-  - [x] Plain template literals without interpolation.
-  - [x] Nullish coalescing between scalar expressions.
-  - [x] Optional chaining short-circuit on nullish bases.
-  - [x] Decimal BigInt literals.
-  - [x] Logical assignment operators on local bindings.
-- [ ] Add modern declaration and control-flow syntax: `let`/`const`, arrow functions, `async`/`await`, generator functions, loops, `if`/`switch`, and `try`/`catch`/`finally`.
-  - [x] `let` / `const` declarations with local bindings.
-  - [x] Block-bodied `if` / `else` control flow.
-  - [x] Block-bodied `while` / `do...while` loops.
-  - [x] Block-bodied `for` loops.
-  - [x] Block-bodied `switch` statements with `break`.
-  - [x] Block-bodied `try` / `catch` / `finally` blocks.
-- [ ] Add class syntax used by real-world scripts: class declarations, class fields, private fields, and static blocks.
-  - [x] Class declarations with `static` blocks.
-  - [x] Public `static` class fields.
-- [ ] Add module-mode syntax only if a module-script slice becomes explicitly in scope: `import`/`export`, dynamic `import()`, and top-level `await`.
-- [ ] Keep unsupported syntax explicit with typed errors until each slice is implemented.
+- [x] Object literals and array literals.
+- [x] Object literal shorthand properties and methods.
+- [x] Object literal computed property names and methods.
+- [x] Object literal getter accessors.
+- [x] Object literal setter accessors.
+- [x] `throw` statements with catch-bound values.
+- [x] Array/object destructuring patterns in `let` / `const` declarations.
+- [x] Spread/rest syntax in array/object literals and `let` / `const` binding patterns.
+- [x] Arrow functions.
+- [x] Plain `function` declarations and `return` statements.
+- [x] `async` / `await`.
+- [x] Plain `async function` declarations and expressions with `await` statements.
+- [x] Async class methods with `await` statements.
+- [x] Generator class methods with `yield` statements.
+- [x] Default parameter values in function, arrow, and class method parameters.
+- [x] Generator functions and standalone `yield` statements.
+- [x] Named generator expressions and self-binding.
+- [x] `yield*` delegation.
+- [x] Unlabeled `break` / `continue` statements.
+- [x] `delete` expressions on local object bindings.
+- [x] `yield` inside nested block-bodied `if` / `else` branches and other simple block bodies.
+- [x] `yield` inside loop bodies.
+- [x] `yield` inside `switch` clauses and `try` / `catch` / `finally` blocks.
+- [x] Labeled `break` / `continue` statements.
+- [x] Bounded `new Class()` instantiation for class objects.
+- [x] Bounded `extends` inheritance for class objects.
+- [x] Property assignment on existing object bindings and private class fields.
+- [x] Module-style `export` declarations and export specifier lists.
+- [x] Module syntax: `import` declarations, re-export syntax with `from`, and dynamic `import()`.
+- [x] Top-level `await` at the dispatch entrypoint.
+- [x] Static and prototype class methods.
+- [x] Class instance fields.
+- [x] Class computed fields and methods.
+- [x] Class syntax beyond the current slice: private fields.
+- [x] Class `super` property, method, and constructor calls in class bodies.
+- [x] Template literal interpolation.
+- [x] Optional chaining across bounded object-property chains, bracket access, and nullish bases, including `host?.method(...)` and `host?.["method"](...)`.
+- [x] Optional call syntax `?.()` and bracket access `?.[expr]`.
+- [ ] Any still-unsupported syntax that continues to throw `ErrorKindUnsupported`.
 
 ## P2 - Selector And Query Expansion
 

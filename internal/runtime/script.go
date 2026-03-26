@@ -13,8 +13,8 @@ func (s *Session) runScriptOnStore(store *dom.Store, source string) (script.Valu
 	if s == nil {
 		return script.UndefinedValue(), fmt.Errorf("session is unavailable")
 	}
-	runtime := script.NewRuntime(&inlineScriptHost{session: s, store: store})
-	result, err := runtime.Dispatch(script.DispatchRequest{Source: source})
+	runtime := script.NewRuntimeWithBindings(&inlineScriptHost{session: s, store: store}, browserGlobalBindings(s, store))
+	result, err := runtime.Dispatch(script.DispatchRequest{Source: source, Bindings: s.moduleBindings})
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
@@ -31,11 +31,19 @@ func (s *Session) executeInlineScripts(store *dom.Store) (err error) {
 		}
 	}()
 	nodes := store.Nodes()
+	if err := s.loadModuleBindings(store); err != nil {
+		return err
+	}
 	for _, node := range nodes {
 		if s.domStore != nil && s.domStore != store {
 			return nil
 		}
 		if node == nil || node.Kind != dom.NodeKindElement || node.TagName != "script" {
+			continue
+		}
+		if typeAttr, ok, err := store.GetAttribute(node.ID, "type"); err != nil {
+			return err
+		} else if ok && strings.EqualFold(strings.TrimSpace(typeAttr), "module") {
 			continue
 		}
 		if store.Node(node.ID) == nil {
@@ -557,6 +565,19 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
 		}
 		return script.StringValue(h.session.documentCurrentScript()), nil
+
+	case "eventTargetValue":
+		if len(args) > 0 {
+			return script.UndefinedValue(), fmt.Errorf("event.target.value accepts no arguments")
+		}
+		if h.session == nil {
+			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
+		}
+		value, err := h.session.eventTargetValue()
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return script.StringValue(value), nil
 
 	case "setDocumentCookie":
 		value, err := scriptStringArg(method, args, 0)
@@ -1094,8 +1115,11 @@ func scriptStringArg(method string, args []script.Value, index int) (string, err
 	if args[index].Kind == script.ValueKindBigInt {
 		return args[index].BigInt, nil
 	}
+	if args[index].Kind == script.ValueKindArray || args[index].Kind == script.ValueKindObject || args[index].Kind == script.ValueKindFunction || args[index].Kind == script.ValueKindPromise {
+		return script.ToJSString(args[index]), nil
+	}
 	if args[index].Kind != script.ValueKindString {
-		return "", fmt.Errorf("%s argument %d must be a string, null, or BigInt", method, index+1)
+		return "", fmt.Errorf("%s argument %d must be a string, null, BigInt, array, object, function, or promise", method, index+1)
 	}
 	return args[index].String, nil
 }

@@ -1,5 +1,10 @@
 package dom
 
+import (
+	"fmt"
+	"strings"
+)
+
 type NodeID int64
 
 type NodeKind uint8
@@ -63,6 +68,20 @@ func (s *Store) Reset() {
 	s.documentID = s.newNode(Node{
 		Kind: NodeKindDocument,
 	})
+}
+
+func (s *Store) CreateElement(tagName string) (NodeID, error) {
+	if s == nil {
+		return 0, fmt.Errorf("dom store is nil")
+	}
+	normalized := strings.ToLower(strings.TrimSpace(tagName))
+	if normalized == "" {
+		return 0, fmt.Errorf("tag name must not be empty")
+	}
+	return s.newNode(Node{
+		Kind:    NodeKindElement,
+		TagName: normalized,
+	}), nil
 }
 
 func (s *Store) CurrentURL() string {

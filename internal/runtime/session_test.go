@@ -1375,6 +1375,28 @@ func TestSessionDispatchesInputListenersFromTypeText(t *testing.T) {
 	}
 }
 
+func TestSessionDispatchesInputListenersWithEventTargetValue(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><section id="wrap"><input id="search"><p id="status">idle</p></section><script>host:addEventListener("#wrap", "input", 'host.setTextContent("#status", host.eventTargetValue())', "capture")</script></main>`,
+	})
+
+	if err := s.TypeText("#search", "Ada"); err != nil {
+		t.Fatalf("TypeText(#search) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><section id="wrap"><input id="search" value="Ada"><p id="status">Ada</p></section><script>host:addEventListener("#wrap", "input", 'host.setTextContent("#status", host.eventTargetValue())', "capture")</script></main>`; got != want {
+		t.Fatalf("DumpDOM() after event target value listener = %q, want %q", got, want)
+	}
+}
+
+func TestSessionEventTargetValueRequiresActiveDispatch(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+
+	if _, err := s.eventTargetValue(); err == nil || err.Error() != "eventTargetValue() requires an active event dispatch" {
+		t.Fatalf("eventTargetValue() error = %v, want active dispatch error", err)
+	}
+}
+
 func TestSessionDispatchesCaptureTargetAndBubbleListeners(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><section id="wrap"><button id="btn">Go</button></section><div id="log"></div><script>host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>capture</span>")', "capture"); host:addEventListener("#btn", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>target</span>")'); host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>bubble</span>")', "bubble")</script></main>`,

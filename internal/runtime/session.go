@@ -6,6 +6,7 @@ import (
 
 	"browsertester/internal/dom"
 	"browsertester/internal/mocks"
+	"browsertester/internal/script"
 )
 
 type SessionConfig struct {
@@ -49,6 +50,7 @@ type Session struct {
 	microtasks               []string
 	currentScriptHTML        string
 	lastInlineScriptHTML     string
+	moduleBindings           map[string]script.Value
 	historyEntries           []historyEntry
 	historyIndex             int
 	historyScrollRestoration string

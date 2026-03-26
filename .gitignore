@@ -2,3 +2,7 @@ html-standard/
 
 .DS_Store
 
+
+browsertester.test
+script.test
+*.test

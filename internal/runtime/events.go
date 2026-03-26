@@ -25,6 +25,8 @@ type eventListenerRecord struct {
 }
 
 type eventDispatchContext struct {
+	store              *dom.Store
+	targetNodeID       dom.NodeID
 	defaultPrevented   bool
 	propagationStopped bool
 }
@@ -130,7 +132,10 @@ func (s *Session) dispatchEventListenersWithPropagation(store *dom.Store, nodeID
 	}
 
 	prev := s.eventDispatch
-	ctx := &eventDispatchContext{}
+	ctx := &eventDispatchContext{
+		store:        store,
+		targetNodeID: nodeID,
+	}
 	s.eventDispatch = ctx
 	defer func() {
 		s.eventDispatch = prev
@@ -303,4 +308,25 @@ func (s *Session) stopPropagation() error {
 	}
 	s.eventDispatch.propagationStopped = true
 	return nil
+}
+
+func (s *Session) eventTargetValue() (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("session is unavailable")
+	}
+	if s.eventDispatch == nil {
+		return "", fmt.Errorf("eventTargetValue() requires an active event dispatch")
+	}
+	if s.eventDispatch.targetNodeID == 0 {
+		return "", fmt.Errorf("event target node is unavailable")
+	}
+
+	store := s.eventDispatch.store
+	if store == nil {
+		return "", fmt.Errorf("event target store is unavailable")
+	}
+	if store.Node(s.eventDispatch.targetNodeID) == nil {
+		return "", fmt.Errorf("event target node is unavailable")
+	}
+	return store.ValueForNode(s.eventDispatch.targetNodeID), nil
 }

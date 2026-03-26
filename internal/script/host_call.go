@@ -49,7 +49,11 @@ func parseHostArgs(input string) ([]Value, error) {
 			break
 		}
 
-		value, next, err := parseHostArg(text, i)
+		next, err := scanHostArgEnd(text, i)
+		if err != nil {
+			return nil, err
+		}
+		value, err := parseHostArg(text[i:next])
 		if err != nil {
 			return nil, err
 		}
@@ -67,50 +71,147 @@ func parseHostArgs(input string) ([]Value, error) {
 	return args, nil
 }
 
-func parseHostArg(input string, start int) (Value, int, error) {
-	if start >= len(input) {
-		return Value{}, 0, fmt.Errorf("host dispatch argument is missing")
+func scanHostArgEnd(input string, start int) (int, error) {
+	var quote byte
+	var escape bool
+	var lineComment bool
+	var blockComment bool
+	var parenDepth int
+	var braceDepth int
+	var bracketDepth int
+
+	for i := start; i < len(input); i++ {
+		ch := input[i]
+		if lineComment {
+			if ch == '\n' || ch == '\r' {
+				lineComment = false
+			}
+			continue
+		}
+		if blockComment {
+			if ch == '*' && i+1 < len(input) && input[i+1] == '/' {
+				blockComment = false
+				i++
+			}
+			continue
+		}
+		if quote != 0 {
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' {
+				escape = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		if ch == ',' && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+			return i, nil
+		}
+
+		switch ch {
+		case '\'', '"', '`':
+			quote = ch
+		case '/':
+			if i+1 < len(input) {
+				switch input[i+1] {
+				case '/':
+					lineComment = true
+					i++
+				case '*':
+					blockComment = true
+					i++
+				}
+			}
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		}
 	}
 
-	switch input[start] {
+	if quote != 0 {
+		return 0, fmt.Errorf("unterminated quoted host argument")
+	}
+	if blockComment {
+		return 0, fmt.Errorf("unterminated block comment in host dispatch argument")
+	}
+	return len(input), nil
+}
+
+func parseHostArg(raw string) (Value, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return Value{}, fmt.Errorf("host dispatch argument is missing")
+	}
+
+	switch raw[0] {
 	case '"', '\'':
-		quote := input[start]
-		i := start + 1
+		quote := raw[0]
+		i := 1
 		var b strings.Builder
-		for i < len(input) {
-			if input[i] == quote {
-				return StringValue(b.String()), i + 1, nil
+		for i < len(raw) {
+			if raw[i] == quote {
+				return StringValue(b.String()), nil
 			}
-			b.WriteByte(input[i])
+			if raw[i] == '\\' && i+1 < len(raw) {
+				i++
+				switch raw[i] {
+				case '\\', '\'', '"':
+					b.WriteByte(raw[i])
+				case 'n':
+					b.WriteByte('\n')
+				case 'r':
+					b.WriteByte('\r')
+				case 't':
+					b.WriteByte('\t')
+				default:
+					b.WriteByte(raw[i])
+				}
+				i++
+				continue
+			}
+			b.WriteByte(raw[i])
 			i++
 		}
-		return Value{}, 0, fmt.Errorf("unterminated quoted host argument")
+		return Value{}, fmt.Errorf("unterminated quoted host argument")
 	default:
-		i := start
-		for i < len(input) && input[i] != ',' {
-			i++
-		}
-		raw := strings.TrimSpace(input[start:i])
-		if raw == "" {
-			return Value{}, 0, fmt.Errorf("host dispatch argument is missing")
-		}
 		if strings.HasPrefix(raw, "expr(") && strings.HasSuffix(raw, ")") {
 			inner := strings.TrimSpace(raw[len("expr(") : len(raw)-1])
 			if inner == "" {
-				return Value{}, 0, fmt.Errorf("expression wrapper requires a non-empty source")
+				return Value{}, fmt.Errorf("expression wrapper requires a non-empty source")
 			}
-			return InvocationValue(inner), i, nil
+			return InvocationValue(inner), nil
 		}
 		if strings.EqualFold(raw, "true") {
-			return BoolValue(true), i, nil
+			return BoolValue(true), nil
 		}
 		if strings.EqualFold(raw, "false") {
-			return BoolValue(false), i, nil
+			return BoolValue(false), nil
 		}
 		if number, err := strconv.ParseFloat(raw, 64); err == nil {
-			return NumberValue(number), i, nil
+			return NumberValue(number), nil
 		}
-		return StringValue(raw), i, nil
+		return StringValue(raw), nil
 	}
 }
 

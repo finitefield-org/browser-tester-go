@@ -268,6 +268,93 @@ func (s *Store) CloneNodeAfter(nodeID NodeID, deep bool) (NodeID, error) {
 	return cloneID, nil
 }
 
+func (s *Store) AppendChild(parentID, childID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+	child := s.Node(childID)
+	if child == nil {
+		return fmt.Errorf("invalid child node id: %d", childID)
+	}
+	if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+		return fmt.Errorf("document node can only contain element children")
+	}
+	if child.Parent != 0 {
+		if oldParent := s.Node(child.Parent); oldParent != nil {
+			oldParent.Children = removeNodeID(oldParent.Children, childID)
+		}
+	}
+	child.Parent = parentID
+	parent.Children = append(parent.Children, childID)
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
+func (s *Store) InsertBefore(parentID, childID, referenceChildID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	if referenceChildID == 0 {
+		return s.AppendChild(parentID, childID)
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+	reference := s.Node(referenceChildID)
+	if reference == nil {
+		return fmt.Errorf("invalid reference node id: %d", referenceChildID)
+	}
+	if reference.Parent != parentID {
+		return fmt.Errorf("reference node %d is not a child of parent %d", referenceChildID, parentID)
+	}
+	child := s.Node(childID)
+	if child == nil {
+		return fmt.Errorf("invalid child node id: %d", childID)
+	}
+	if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+		return fmt.Errorf("document node can only contain element children")
+	}
+	index := indexOfNodeID(parent.Children, referenceChildID)
+	if index < 0 {
+		return fmt.Errorf("reference node %d is not attached to its parent", referenceChildID)
+	}
+	if child.Parent != 0 {
+		if oldParent := s.Node(child.Parent); oldParent != nil {
+			oldParent.Children = removeNodeID(oldParent.Children, childID)
+		}
+	}
+	parent.Children = spliceNodeIDs(parent.Children, index, 0, []NodeID{childID})
+	child.Parent = parentID
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
+func (s *Store) RemoveChild(parentID, childID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+	child := s.Node(childID)
+	if child == nil {
+		return fmt.Errorf("invalid child node id: %d", childID)
+	}
+	if child.Parent != parentID {
+		return fmt.Errorf("node %d is not a child of parent %d", childID, parentID)
+	}
+	parent.Children = removeNodeID(parent.Children, childID)
+	child.Parent = 0
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
 func (s *Store) parseFragmentNodes(markup string) ([]NodeID, error) {
 	temp := NewStore()
 	if err := temp.BootstrapHTML(markup); err != nil {
