@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"browsertester/internal/dom"
@@ -1090,8 +1091,11 @@ func scriptStringArg(method string, args []script.Value, index int) (string, err
 	if args[index].Kind == script.ValueKindNull {
 		return "null", nil
 	}
+	if args[index].Kind == script.ValueKindBigInt {
+		return args[index].BigInt, nil
+	}
 	if args[index].Kind != script.ValueKindString {
-		return "", fmt.Errorf("%s argument %d must be a string", method, index+1)
+		return "", fmt.Errorf("%s argument %d must be a string, null, or BigInt", method, index+1)
 	}
 	return args[index].String, nil
 }
@@ -1115,8 +1119,18 @@ func scriptInt64Arg(method string, args []script.Value, index int) (int64, error
 	if index >= len(args) {
 		return 0, fmt.Errorf("%s requires argument %d", method, index+1)
 	}
+	if args[index].Kind == script.ValueKindBigInt {
+		bigInt := new(big.Int)
+		if _, ok := bigInt.SetString(args[index].BigInt, 10); !ok {
+			return 0, fmt.Errorf("%s argument %d must be a number or BigInt", method, index+1)
+		}
+		if !bigInt.IsInt64() {
+			return 0, fmt.Errorf("%s argument %d BigInt is out of int64 range", method, index+1)
+		}
+		return bigInt.Int64(), nil
+	}
 	if args[index].Kind != script.ValueKindNumber {
-		return 0, fmt.Errorf("%s argument %d must be a number", method, index+1)
+		return 0, fmt.Errorf("%s argument %d must be a number or BigInt", method, index+1)
 	}
 	return int64(args[index].Number), nil
 }

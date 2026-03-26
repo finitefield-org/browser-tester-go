@@ -8,6 +8,7 @@ const (
 	ValueKindString     ValueKind = "string"
 	ValueKindBool       ValueKind = "bool"
 	ValueKindNumber     ValueKind = "number"
+	ValueKindBigInt     ValueKind = "bigint"
 	ValueKindInvocation ValueKind = "invocation"
 )
 
@@ -16,6 +17,7 @@ type Value struct {
 	String     string
 	Bool       bool
 	Number     float64
+	BigInt     string
 	Invocation string
 }
 
@@ -45,6 +47,13 @@ func NumberValue(value float64) Value {
 	return Value{
 		Kind:   ValueKindNumber,
 		Number: value,
+	}
+}
+
+func BigIntValue(value string) Value {
+	return Value{
+		Kind:   ValueKindBigInt,
+		BigInt: value,
 	}
 }
 

@@ -20,9 +20,23 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 ## P2 - Script Syntax Expansion
 
 - [x] Replace the current `host:<method>` mini-language with a bounded classic-JS parser/evaluator slice for inline scripts.
-- [ ] Add modern expression support that the current runtime cannot parse: template literals, object/array destructuring, spread/rest, optional chaining, nullish coalescing, logical assignment operators, numeric separators, and `BigInt`.
+- [ ] Add modern expression support that the current runtime cannot parse: object/array destructuring and spread/rest.
+  - [x] Numeric separators in decimal literals.
+  - [x] Plain template literals without interpolation.
+  - [x] Nullish coalescing between scalar expressions.
+  - [x] Optional chaining short-circuit on nullish bases.
+  - [x] Decimal BigInt literals.
+  - [x] Logical assignment operators on local bindings.
 - [ ] Add modern declaration and control-flow syntax: `let`/`const`, arrow functions, `async`/`await`, generator functions, loops, `if`/`switch`, and `try`/`catch`/`finally`.
+  - [x] `let` / `const` declarations with local bindings.
+  - [x] Block-bodied `if` / `else` control flow.
+  - [x] Block-bodied `while` / `do...while` loops.
+  - [x] Block-bodied `for` loops.
+  - [x] Block-bodied `switch` statements with `break`.
+  - [x] Block-bodied `try` / `catch` / `finally` blocks.
 - [ ] Add class syntax used by real-world scripts: class declarations, class fields, private fields, and static blocks.
+  - [x] Class declarations with `static` blocks.
+  - [x] Public `static` class fields.
 - [ ] Add module-mode syntax only if a module-script slice becomes explicitly in scope: `import`/`export`, dynamic `import()`, and top-level `await`.
 - [ ] Keep unsupported syntax explicit with typed errors until each slice is implemented.
 

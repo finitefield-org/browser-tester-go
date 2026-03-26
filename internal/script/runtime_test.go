@@ -32,6 +32,58 @@ func (h *fakeHost) Call(method string, args []Value) (Value, error) {
 	return UndefinedValue(), errors.New("host method is not configured")
 }
 
+type loopHost struct {
+	present map[string]bool
+	text    map[string]string
+	calls   []hostCall
+}
+
+func newLoopHost() *loopHost {
+	return &loopHost{
+		present: map[string]bool{
+			"#step1": true,
+			"#step2": true,
+		},
+		text: map[string]string{
+			"#out": "old",
+		},
+	}
+}
+
+func (h *loopHost) Call(method string, args []Value) (Value, error) {
+	copiedArgs := make([]Value, len(args))
+	copy(copiedArgs, args)
+	h.calls = append(h.calls, hostCall{method: method, args: copiedArgs})
+
+	switch method {
+	case "querySelector":
+		if len(args) != 1 || args[0].Kind != ValueKindString {
+			return UndefinedValue(), errors.New("querySelector argument must be a selector string")
+		}
+		if h.present[args[0].String] {
+			return StringValue(args[0].String), nil
+		}
+		return UndefinedValue(), nil
+	case "removeNode":
+		if len(args) != 1 || args[0].Kind != ValueKindString {
+			return UndefinedValue(), errors.New("removeNode argument must be a selector string")
+		}
+		delete(h.present, args[0].String)
+		return UndefinedValue(), nil
+	case "setTextContent":
+		if len(args) != 2 || args[0].Kind != ValueKindString || args[1].Kind != ValueKindString {
+			return UndefinedValue(), errors.New("setTextContent arguments must be selector and string")
+		}
+		if h.text == nil {
+			h.text = map[string]string{}
+		}
+		h.text[args[0].String] = args[1].String
+		return UndefinedValue(), nil
+	default:
+		return UndefinedValue(), errors.New("host method is not configured")
+	}
+}
+
 func TestNewRuntimeUsesDefaultConfig(t *testing.T) {
 	runtime := NewRuntime(nil)
 	if runtime == nil {
@@ -140,6 +192,834 @@ func TestDispatchSupportsClassicJSStatementLists(t *testing.T) {
 	}
 	if host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "second" {
 		t.Fatalf("host calls[1].args[1] = %#v, want second", host.calls[1].args[1])
+	}
+}
+
+func TestDispatchSupportsNumericSeparatorsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(1_000)`})
+	if err != nil {
+		t.Fatalf("Dispatch(classic JS numeric separators) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(classic JS numeric separators) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindNumber || host.calls[0].args[0].Number != 1000 {
+		t.Fatalf("host calls[0].args[0] = %#v, want 1000", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchSupportsBigIntLiteralsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(-1_234n, !0n)`})
+	if err != nil {
+		t.Fatalf("Dispatch(classic JS BigInt literals) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(classic JS BigInt literals) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 {
+		t.Fatalf("host.calls[0].args len = %d, want 2", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindBigInt || host.calls[0].args[0].BigInt != "-1234" {
+		t.Fatalf("host.calls[0].args[0] = %#v, want -1234", host.calls[0].args[0])
+	}
+	if host.calls[0].args[1].Kind != ValueKindBool || !host.calls[0].args[1].Bool {
+		t.Fatalf("host.calls[0].args[1] = %#v, want true", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchRejectsMalformedBigIntLiterals(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(1.0n)`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed BigInt literal) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed BigInt literal) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed BigInt literal) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchSupportsLetAndConstBindingsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let target = "#out"; const value = "fresh"; host.setTextContent(target, value)`})
+	if err != nil {
+		t.Fatalf("Dispatch(let/const bindings) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 {
+		t.Fatalf("host.calls[0].args len = %d, want 2", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "#out" {
+		t.Fatalf("host.calls[0].args[0] = %#v, want #out", host.calls[0].args[0])
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "fresh" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want fresh", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchSupportsIfElseBlocksInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let flag = true; if (flag) { host.setTextContent("#out", "then") } else { host.setTextContent("#out", "else") }`})
+	if err != nil {
+		t.Fatalf("Dispatch(if/else blocks) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 {
+		t.Fatalf("host.calls[0].args len = %d, want 2", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "#out" {
+		t.Fatalf("host.calls[0].args[0] = %#v, want #out", host.calls[0].args[0])
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "then" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want then", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchRejectsConstWithoutInitializer(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `const value`})
+	if err == nil {
+		t.Fatalf("Dispatch(const without initializer) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(const without initializer) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(const without initializer) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchSupportsBlockBodiedWhileLoopsInClassicJS(t *testing.T) {
+	host := newLoopHost()
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let step1 = host.querySelector("#step1"); let step2 = host.querySelector("#step2"); while (step1 ?? step2) { if (step1) { host.setTextContent("#out", "first"); host.removeNode("#step1"); step1 &&= undefined } else { host.setTextContent("#out", "second"); host.removeNode("#step2"); step2 &&= undefined } }`})
+	if err != nil {
+		t.Fatalf("Dispatch(while loop) error = %v", err)
+	}
+	if got, want := host.text["#out"], "second"; got != want {
+		t.Fatalf("loop host text[#out] = %q, want %q", got, want)
+	}
+	if len(host.calls) != 6 {
+		t.Fatalf("host calls = %#v, want six calls", host.calls)
+	}
+	if host.calls[0].method != "querySelector" || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "#step1" {
+		t.Fatalf("host.calls[0] = %#v, want querySelector(#step1)", host.calls[0])
+	}
+	if host.calls[1].method != "querySelector" || host.calls[1].args[0].Kind != ValueKindString || host.calls[1].args[0].String != "#step2" {
+		t.Fatalf("host.calls[1] = %#v, want querySelector(#step2)", host.calls[1])
+	}
+	if host.calls[2].method != "setTextContent" || host.calls[2].args[1].Kind != ValueKindString || host.calls[2].args[1].String != "first" {
+		t.Fatalf("host.calls[2] = %#v, want first iteration text", host.calls[2])
+	}
+	if host.calls[3].method != "removeNode" || host.calls[3].args[0].Kind != ValueKindString || host.calls[3].args[0].String != "#step1" {
+		t.Fatalf("host.calls[3] = %#v, want removeNode(#step1)", host.calls[3])
+	}
+	if host.calls[4].method != "setTextContent" || host.calls[4].args[1].Kind != ValueKindString || host.calls[4].args[1].String != "second" {
+		t.Fatalf("host.calls[4] = %#v, want second iteration text", host.calls[4])
+	}
+	if host.calls[5].method != "removeNode" || host.calls[5].args[0].Kind != ValueKindString || host.calls[5].args[0].String != "#step2" {
+		t.Fatalf("host.calls[5] = %#v, want removeNode(#step2)", host.calls[5])
+	}
+}
+
+func TestDispatchSupportsBlockBodiedForLoopsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `for (let keepGoing = true; keepGoing; keepGoing &&= false) { host.setTextContent("#out", "ran") }`})
+	if err != nil {
+		t.Fatalf("Dispatch(for loop) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "ran" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want ran", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchSupportsClassDeclarationsWithStaticBlocksInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `class Example { static { host.setTextContent("#out", "static") } }`})
+	if err != nil {
+		t.Fatalf("Dispatch(class declaration) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "static" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want static", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchSupportsStaticClassFieldsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `class Example { static value = host.setTextContent("#out", "field"); static { host.setTextContent("#out", "block") } }`})
+	if err != nil {
+		t.Fatalf("Dispatch(class static field) error = %v", err)
+	}
+	if len(host.calls) != 2 {
+		t.Fatalf("host calls = %#v, want two calls", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" || host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "field" {
+		t.Fatalf("host.calls[0] = %#v, want static field initializer call", host.calls[0])
+	}
+	if host.calls[1].method != "setTextContent" || host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "block" {
+		t.Fatalf("host.calls[1] = %#v, want static block call", host.calls[1])
+	}
+}
+
+func TestDispatchSupportsBlockBodiedDoWhileLoopsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `do { host.setTextContent("#out", "ran") } while (false)`})
+	if err != nil {
+		t.Fatalf("Dispatch(do/while loop) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 || host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "ran" {
+		t.Fatalf("host.calls[0].args = %#v, want ran", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsSwitchStatementsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `switch ("b") { case "a": host.setTextContent("#out", "a"); break; case "b": host.setTextContent("#out", "b"); case "c": host.setTextContent("#out", "c"); break; default: host.setTextContent("#out", "default") }`})
+	if err != nil {
+		t.Fatalf("Dispatch(switch statement) error = %v", err)
+	}
+	if len(host.calls) != 2 {
+		t.Fatalf("host calls = %#v, want two calls", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" || host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "b" {
+		t.Fatalf("host.calls[0] = %#v, want first matched case", host.calls[0])
+	}
+	if host.calls[1].method != "setTextContent" || host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "c" {
+		t.Fatalf("host.calls[1] = %#v, want fallthrough case", host.calls[1])
+	}
+}
+
+func TestDispatchSupportsTryCatchFinallyStatementsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{
+			"fail": errors.New("boom"),
+		},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `try { host.fail() } catch (err) { host.setTextContent("#out", err) } finally { host.setTextContent("#side", "finally") }`})
+	if err != nil {
+		t.Fatalf("Dispatch(try/catch/finally) error = %v", err)
+	}
+	if len(host.calls) != 3 {
+		t.Fatalf("host calls = %#v, want three calls", host.calls)
+	}
+	if host.calls[0].method != "fail" {
+		t.Fatalf("host.calls[0].method = %q, want fail", host.calls[0].method)
+	}
+	if host.calls[1].method != "setTextContent" || host.calls[1].args[0].Kind != ValueKindString || host.calls[1].args[0].String != "#out" {
+		t.Fatalf("host.calls[1] = %#v, want catch handler write to #out", host.calls[1])
+	}
+	if host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "host: boom" {
+		t.Fatalf("host.calls[1].args[1] = %#v, want stringified host error", host.calls[1].args[1])
+	}
+	if host.calls[2].method != "setTextContent" || host.calls[2].args[0].Kind != ValueKindString || host.calls[2].args[0].String != "#side" {
+		t.Fatalf("host.calls[2] = %#v, want finally handler write to #side", host.calls[2])
+	}
+	if host.calls[2].args[1].Kind != ValueKindString || host.calls[2].args[1].String != "finally" {
+		t.Fatalf("host.calls[2].args[1] = %#v, want finally", host.calls[2].args[1])
+	}
+}
+
+func TestDispatchRejectsWhileLoopWhenStepLimitIsExceeded(t *testing.T) {
+	host := newLoopHost()
+	runtime := NewRuntimeWithConfig(RuntimeConfig{StepLimit: 1}, host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let step1 = host.querySelector("#step1"); let step2 = host.querySelector("#step2"); while (step1 ?? step2) { if (step1) { host.setTextContent("#out", "first"); host.removeNode("#step1"); step1 &&= undefined } else { host.setTextContent("#out", "second"); host.removeNode("#step2"); step2 &&= undefined } }`})
+	if err == nil {
+		t.Fatalf("Dispatch(while loop step limit) error = nil, want runtime error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(while loop step limit) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(while loop step limit) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if got, want := host.text["#out"], "first"; got != want {
+		t.Fatalf("loop host text[#out] after step limit = %q, want %q", got, want)
+	}
+	if len(host.calls) != 4 {
+		t.Fatalf("host calls = %#v, want four calls before step limit failure", host.calls)
+	}
+}
+
+func TestDispatchRejectsForLoopWhenStepLimitIsExceeded(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntimeWithConfig(RuntimeConfig{StepLimit: 1}, host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `for (;;){ host.setTextContent("#out", "tick") }`})
+	if err == nil {
+		t.Fatalf("Dispatch(for loop step limit) error = nil, want runtime error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(for loop step limit) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(for loop step limit) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call before step limit failure", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "tick" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want tick", host.calls[0].args[1])
+	}
+}
+
+func TestDispatchRejectsMalformedSwitchStatements(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `switch ("x") { default: host.setTextContent("#out", "one"); default: host.setTextContent("#out", "two") }`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed switch statement) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed switch statement) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed switch statement) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchRejectsMalformedForStatements(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `for (let keepGoing = true; keepGoing) { host.setTextContent("#out", "one") }`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed for statement) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed for statement) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed for statement) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchRejectsUnsupportedClassMembers(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `class Example { static foo() {} }`})
+	if err == nil {
+		t.Fatalf("Dispatch(unsupported class member) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(unsupported class member) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(unsupported class member) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+}
+
+func TestDispatchRejectsPrivateClassFields(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `class Example { static #secret = 1 }`})
+	if err == nil {
+		t.Fatalf("Dispatch(private class field) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(private class field) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(private class field) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+}
+
+func TestDispatchRejectsTryWithoutCatchOrFinally(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{},
+		errs:   map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `try { host.setTextContent("#out", "x") }`})
+	if err == nil {
+		t.Fatalf("Dispatch(try without catch/finally) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(try without catch/finally) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(try without catch/finally) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchSupportsLogicalAssignmentOperatorsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo":           StringValue("done"),
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let left = "kept"; left ||= host.echo("boom"); let middle = null; middle ??= "fresh"; let right = true; right &&= host.echo("done"); host.setTextContent("#left", left); host.setTextContent("#middle", middle); host.setTextContent("#right", right)`})
+	if err != nil {
+		t.Fatalf("Dispatch(logical assignment operators) error = %v", err)
+	}
+	if len(host.calls) != 4 {
+		t.Fatalf("host calls = %#v, want four calls", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "done" {
+		t.Fatalf("host calls[0].args = %#v, want echo(done)", host.calls[0].args)
+	}
+	if host.calls[1].method != "setTextContent" || host.calls[1].args[1].Kind != ValueKindString || host.calls[1].args[1].String != "kept" {
+		t.Fatalf("host calls[1] = %#v, want left kept", host.calls[1])
+	}
+	if host.calls[2].method != "setTextContent" || host.calls[2].args[1].Kind != ValueKindString || host.calls[2].args[1].String != "fresh" {
+		t.Fatalf("host calls[2] = %#v, want middle fresh", host.calls[2])
+	}
+	if host.calls[3].method != "setTextContent" || host.calls[3].args[1].Kind != ValueKindString || host.calls[3].args[1].String != "done" {
+		t.Fatalf("host calls[3] = %#v, want right done", host.calls[3])
+	}
+}
+
+func TestDispatchRejectsLogicalAssignmentOnConstBinding(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{},
+		errs:   map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `const value = false; value ||= "other"`})
+	if err == nil {
+		t.Fatalf("Dispatch(logical assignment on const) error = nil, want runtime error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(logical assignment on const) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(logical assignment on const) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchDoesNotMutateSkippedLogicalAssignmentRhs(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let outer = "kept"; let inner = "seed"; outer ||= (inner ||= "changed"); host.setTextContent("#out", inner)`})
+	if err != nil {
+		t.Fatalf("Dispatch(skipped logical assignment rhs) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 || host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "seed" {
+		t.Fatalf("host calls[0].args = %#v, want inner to remain seed", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsPlainTemplateLiterals(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: "host.echo(`hello world`)"})
+	if err != nil {
+		t.Fatalf("Dispatch(plain template literal) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(plain template literal) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "hello world" {
+		t.Fatalf("host calls[0].args[0] = %#v, want hello world", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchRejectsTemplateLiteralInterpolation(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: "host.echo(`hello ${name}`)"})
+	if err == nil {
+		t.Fatalf("Dispatch(template literal interpolation) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(template literal interpolation) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(template literal interpolation) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+	if len(host.calls) != 0 {
+		t.Fatalf("host calls = %#v, want no calls", host.calls)
+	}
+}
+
+func TestDispatchSupportsNullishCoalescingInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(null ?? "fallback")`})
+	if err != nil {
+		t.Fatalf("Dispatch(nullish coalescing) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(nullish coalescing) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "fallback" {
+		t.Fatalf("host calls[0].args[0] = %#v, want fallback", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchShortCircuitsNullishCoalescingInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("kept" ?? host.echo("boom"))`})
+	if err != nil {
+		t.Fatalf("Dispatch(nullish short-circuit) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(nullish short-circuit) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "kept" {
+		t.Fatalf("host calls[0].args[0] = %#v, want kept", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchSupportsOptionalChainingOnHostMethodCalls(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host?.echo("ok")`})
+	if err != nil {
+		t.Fatalf("Dispatch(optional chaining host method) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(optional chaining host method) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "ok" {
+		t.Fatalf("host calls[0].args[0] = %#v, want ok", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchShortCircuitsOptionalChainingOnNullishBase(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `null?.echo(host.echo("boom"))`})
+	if err != nil {
+		t.Fatalf("Dispatch(optional chaining short-circuit) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindUndefined {
+		t.Fatalf("Dispatch(optional chaining short-circuit) kind = %q, want %q", result.Value.Kind, ValueKindUndefined)
+	}
+	if len(host.calls) != 0 {
+		t.Fatalf("host calls = %#v, want no calls", host.calls)
+	}
+}
+
+func TestDispatchRejectsMalformedOptionalChaining(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `null?.`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed optional chaining) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed optional chaining) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed optional chaining) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchRejectsMalformedNullishCoalescing(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("value" ??)`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed nullish coalescing) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed nullish coalescing) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed nullish coalescing) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestDispatchRejectsMalformedNumericSeparators(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(1_)`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed numeric separators) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed numeric separators) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed numeric separators) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
 	}
 }
 
@@ -1462,7 +2342,7 @@ func TestDispatchSupportsDOMQueryHostCalls(t *testing.T) {
 
 func TestDispatchReturnsUnsupportedForUnknownSource(t *testing.T) {
 	runtime := NewRuntime(nil)
-	_, err := runtime.Dispatch(DispatchRequest{Source: "let a = 1"})
+	_, err := runtime.Dispatch(DispatchRequest{Source: "function foo() {}"})
 	if err == nil {
 		t.Fatalf("Dispatch() error = nil, want unsupported error")
 	}
