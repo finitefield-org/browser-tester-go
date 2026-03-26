@@ -5796,6 +5796,32 @@ func TestHarnessInlineScriptsSupportDestructuringPatterns(t *testing.T) {
 	}
 }
 
+func TestHarnessInlineScriptsSupportDestructuringDefaults(t *testing.T) {
+	harness, err := FromHTML("<main><div id=\"out\">old</div><script>let [first = \"fallback\", second = first] = []; const {kind = \"box\", label: alias = kind} = {}; host.setTextContent(\"#out\", `${first}-${second}-${kind}-${alias}`)</script></main>")
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after destructuring defaults error = %v", err)
+	} else if want := "fallback-fallback-box-box"; got != want {
+		t.Fatalf("TextContent(#out) after destructuring defaults = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportVarDeclarations(t *testing.T) {
+	harness, err := FromHTML("<main><div id=\"out\">old</div><script>var value = 1; var value = value + 1; host.setTextContent(\"#out\", `${value}`)</script></main>")
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after var declarations error = %v", err)
+	} else if want := "2"; got != want {
+		t.Fatalf("TextContent(#out) after var declarations = %q, want %q", got, want)
+	}
+}
+
 func TestHarnessInlineScriptsSupportSpreadRestSyntax(t *testing.T) {
 	harness, err := FromHTML("<main><div id=\"out\">old</div><script>let more = [2, 3]; let extra = {kind: \"box\"}; let [first, ...rest] = [1, ...more, 4]; let {kind, ...others} = {...extra, count: 2}; let {count} = others; host.setTextContent(\"#out\", `${first}-${rest}-${kind}-${count}`)</script></main>")
 	if err != nil {
@@ -6232,6 +6258,84 @@ func TestHarnessInlineScriptsSupportLogicalAssignmentOperators(t *testing.T) {
 	}
 }
 
+func TestHarnessInlineScriptsSupportLogicalAssignmentOnObjectProperties(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>let obj = { _value: "", get value() { return this._value }, set value(next) { this._value = next }, nested: { count: null } }; obj.value ||= "fresh"; obj.nested.count ??= 7; host.setTextContent("#out", ` + "`" + `${obj.value}-${obj._value}-${obj.nested.count}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after logical assignment on object properties error = %v", err)
+	} else if want := "fresh-fresh-7"; got != want {
+		t.Fatalf("TextContent(#out) after logical assignment on object properties = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportInOperator(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>let obj = { set value(next) { this._value = next }, nested: { count: 1 }, items: [1, 2] }; host.setTextContent("#out", ` + "`" + `${"value" in obj}-${"missing" in obj}-${"count" in obj.nested}-${0 in obj.items}-${2 in obj.items}-${"length" in obj.items}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after in operator error = %v", err)
+	} else if want := "true-false-true-true-false-true"; got != want {
+		t.Fatalf("TextContent(#out) after in operator = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportInstanceofOperator(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>class Base {}; class Derived extends Base {}; let base = new Base(); let derived = new Derived(); let plain = {}; host.setTextContent("#out", ` + "`" + `${base instanceof Base}-${derived instanceof Base}-${derived instanceof Derived}-${plain instanceof Base}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after instanceof operator error = %v", err)
+	} else if want := "true-true-true-false"; got != want {
+		t.Fatalf("TextContent(#out) after instanceof operator = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportConditionalOperator(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>host.setTextContent("#out", ` + "`" + `${({} ? "object" : "no")}-${([] ? "array" : "no")}-${(false ? "left" : true ? "middle" : "right")}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after conditional operator error = %v", err)
+	} else if want := "object-array-middle"; got != want {
+		t.Fatalf("TextContent(#out) after conditional operator = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportExponentiationOperators(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>let value = 2; value **= 3; let big = 2n; big **= 3n; host.setTextContent("#out", ` + "`" + `${value}-${big}-${2 ** 3 ** 2}-${2 ** -1}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after exponentiation operators error = %v", err)
+	} else if want := "8-8-512-0.5"; got != want {
+		t.Fatalf("TextContent(#out) after exponentiation operators = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportBitwiseAndShiftOperators(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>host.setTextContent("#out", ` + "`" + `${5 & 3}-${5 | 2}-${5 ^ 1}-${1 << 3}-${8 >> 1}-${8 >>> 1}-${~1}-${1n & 3n}-${1n << 2n}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after bitwise operators error = %v", err)
+	} else if want := "1-7-4-8-4-4--2-1-4"; got != want {
+		t.Fatalf("TextContent(#out) after bitwise operators = %q, want %q", got, want)
+	}
+}
+
 func TestHarnessInlineScriptsSupportBlockBodiedWhileLoops(t *testing.T) {
 	harness, err := FromHTML(`<main><div id="out">old</div><div id="step1"></div><div id="step2"></div><script>let step1 = host.querySelector("#step1"); let step2 = host.querySelector("#step2"); while (step1 ?? step2) { if (step1) { host.setTextContent("#out", "first"); host.removeNode("#step1"); step1 &&= undefined } else { host.setTextContent("#out", "second"); host.removeNode("#step2"); step2 &&= undefined } }</script></main>`)
 	if err != nil {
@@ -6255,6 +6359,58 @@ func TestHarnessInlineScriptsSupportBlockBodiedForLoops(t *testing.T) {
 		t.Fatalf("TextContent(#out) after for loop error = %v", err)
 	} else if want := "ran"; got != want {
 		t.Fatalf("TextContent(#out) after for loop = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportForOfLoops(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>for (let [first, second = first] of [[1], [2, 3]]) { host.setTextContent("#out", ` + "`" + `${first}-${second}` + "`" + `) }</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after for...of loop error = %v", err)
+	} else if want := "2-3"; got != want {
+		t.Fatalf("TextContent(#out) after for...of loop = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportForInLoops(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out"></div><script>for (let key in { alpha: 1, beta: 2 }) { host.setTextContent("#out", host?.["textContent"]("#out") + key) }</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after for...in loop error = %v", err)
+	} else if want := "alphabeta"; got != want {
+		t.Fatalf("TextContent(#out) after for...in loop = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportForAwaitOfLoops(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>async function wrap(value) { return value }; for await (let value of [wrap("alpha"), wrap("beta")]) { host.setTextContent("#out", value) }</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after for await...of loop error = %v", err)
+	} else if want := "beta"; got != want {
+		t.Fatalf("TextContent(#out) after for await...of loop = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportTypeofOperator(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out">old</div><script>host.setTextContent("#out", ` + "`" + `${typeof null}-${typeof host}-${typeof host.echo}` + "`" + `)</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after typeof operator error = %v", err)
+	} else if want := "object-object-function"; got != want {
+		t.Fatalf("TextContent(#out) after typeof operator = %q, want %q", got, want)
 	}
 }
 

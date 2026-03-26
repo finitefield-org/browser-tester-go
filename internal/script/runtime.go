@@ -34,8 +34,8 @@ type DispatchResult struct {
 }
 
 type Runtime struct {
-	config        RuntimeConfig
-	host          HostBindings
+	config         RuntimeConfig
+	host           HostBindings
 	globalBindings map[string]Value
 }
 
@@ -61,6 +61,7 @@ type classicJSClassFieldDefinition struct {
 type classicJSClassDefinition struct {
 	env                 *classicJSEnvironment
 	privateFieldPrefix  string
+	instanceMarker      string
 	instanceFields      []classicJSClassFieldDefinition
 	superStaticTarget   Value
 	superInstanceTarget Value
@@ -121,6 +122,7 @@ func (d *classicJSClassDefinition) cloneDetached(mapping map[*classicJSEnvironme
 	}
 	cloned := &classicJSClassDefinition{
 		privateFieldPrefix:  d.privateFieldPrefix,
+		instanceMarker:      d.instanceMarker,
 		instanceFields:      make([]classicJSClassFieldDefinition, 0, len(d.instanceFields)),
 		superStaticTarget:   cloneValueDetached(d.superStaticTarget, mapping),
 		superInstanceTarget: cloneValueDetached(d.superInstanceTarget, mapping),
@@ -324,8 +326,8 @@ func NewRuntimeWithConfigAndBindings(config RuntimeConfig, host HostBindings, gl
 		cfg.StepLimit = DefaultRuntimeConfig().StepLimit
 	}
 	return &Runtime{
-		config:        cfg,
-		host:          host,
+		config:         cfg,
+		host:           host,
 		globalBindings: cloneBindingsMap(globalBindings),
 	}
 }

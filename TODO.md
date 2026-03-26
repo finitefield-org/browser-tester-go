@@ -26,7 +26,16 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Object literal setter accessors.
 - [x] `throw` statements with catch-bound values.
 - [x] Array/object destructuring patterns in `let` / `const` declarations.
+- [x] Default binding values in array/object destructuring patterns.
 - [x] Spread/rest syntax in array/object literals and `let` / `const` binding patterns.
+- [x] `var` declarations.
+- [x] Unary `typeof` operator.
+- [x] Relational `in` operator on bounded object and array values.
+- [x] Relational `instanceof` operator on bounded class objects.
+- [x] Conditional `?:` operator.
+- [x] Exponentiation operator `**` and assignment `**=`.
+- [x] Bitwise and shift operators.
+- [x] Logical assignment operators on local bindings and object property chains.
 - [x] Arrow functions.
 - [x] Plain `function` declarations and `return` statements.
 - [x] `async` / `await`.
@@ -43,6 +52,9 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] `yield` inside loop bodies.
 - [x] `yield` inside `switch` clauses and `try` / `catch` / `finally` blocks.
 - [x] Labeled `break` / `continue` statements.
+- [x] Bounded array `for...of` loops.
+- [x] Bounded array `for await...of` loops.
+- [x] Bounded object/array `for...in` loops.
 - [x] Bounded `new Class()` instantiation for class objects.
 - [x] Bounded `extends` inheritance for class objects.
 - [x] Property assignment on existing object bindings and private class fields.
