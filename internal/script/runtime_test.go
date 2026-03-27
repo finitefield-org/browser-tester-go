@@ -76,13 +76,17 @@ func (h *hostReferenceDeleteHost) ResolveHostReference(path string) (Value, erro
 func (h *hostReferenceDeleteHost) DeleteHostReference(path string) error {
 	h.deletedPaths = append(h.deletedPaths, path)
 
-	if path != "button.dataset.foo" {
+	switch path {
+	case "button.dataset":
+		return NewError(ErrorKindUnsupported, "deletion of element.dataset is unsupported in this bounded classic-JS slice")
+	case "button.dataset.foo":
+		if h.values != nil {
+			delete(h.values, path)
+		}
+		return nil
+	default:
 		return fmt.Errorf("unexpected delete path %q", path)
 	}
-	if h.values != nil {
-		delete(h.values, path)
-	}
-	return nil
 }
 
 type echoHost struct {
@@ -1082,6 +1086,34 @@ func TestDispatchSupportsDeleteExpressionsOnHostReferencesInClassicJS(t *testing
 	}
 	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "true|undefined" {
 		t.Fatalf("host.calls[0].args = %#v, want one true|undefined string", host.calls[0].args)
+	}
+}
+
+func TestDispatchRejectsDeleteExpressionsOnHostDatasetSurfaceInClassicJS(t *testing.T) {
+	host := &hostReferenceDeleteHost{}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"button": HostObjectReference("button"),
+		},
+		Source: `delete button.dataset`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(delete on host dataset surface) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(delete on host dataset surface) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(delete on host dataset surface) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+	if len(host.deletedPaths) != 1 || host.deletedPaths[0] != "button.dataset" {
+		t.Fatalf("host.deletedPaths = %#v, want one button.dataset delete path", host.deletedPaths)
+	}
+	if len(host.calls) != 0 {
+		t.Fatalf("host.calls = %#v, want no calls after rejected delete", host.calls)
 	}
 }
 

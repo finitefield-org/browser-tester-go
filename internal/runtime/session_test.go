@@ -1609,6 +1609,40 @@ func TestSessionClickHonorsPreventDefaultFromListeners(t *testing.T) {
 	}
 }
 
+func TestSessionClickCanToggleFavoriteCurrentStateThroughBoundedClassicJS(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="favorite-current-button" type="button">Add favorite</button><div id="status">off</div><script>const state = { favoritesOnly: false, favorites: [] }; const button = document.querySelector("#favorite-current-button"); button.addEventListener("click", () => { state.favoritesOnly = !state.favoritesOnly; if (state.favoritesOnly) { state.favorites.unshift({ category: "spray", fromUnit: "L_ha", toUnit: "gal_acre", gallonType: "us" }); } else { state.favorites = state.favorites.slice(0, 0); } button.classList.toggle("active", state.favoritesOnly); host.setTextContent("#status", state.favoritesOnly ? "on" : "off"); });</script></main>`,
+	})
+
+	if err := s.Click("#favorite-current-button"); err != nil {
+		t.Fatalf("Click(#favorite-current-button) first error = %v", err)
+	}
+	if got, err := s.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) after first click error = %v", err)
+	} else if got != "on" {
+		t.Fatalf("TextContent(#status) after first click = %q, want on", got)
+	}
+	if got, err := s.ClassList("#favorite-current-button"); err != nil {
+		t.Fatalf("ClassList(#favorite-current-button) after first click error = %v", err)
+	} else if !got.Contains("active") {
+		t.Fatalf("ClassList(#favorite-current-button) after first click = %#v, want active", got)
+	}
+
+	if err := s.Click("#favorite-current-button"); err != nil {
+		t.Fatalf("Click(#favorite-current-button) second error = %v", err)
+	}
+	if got, err := s.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) after second click error = %v", err)
+	} else if got != "off" {
+		t.Fatalf("TextContent(#status) after second click = %q, want off", got)
+	}
+	if got, err := s.ClassList("#favorite-current-button"); err != nil {
+		t.Fatalf("ClassList(#favorite-current-button) after second click error = %v", err)
+	} else if got.Contains("active") {
+		t.Fatalf("ClassList(#favorite-current-button) after second click = %#v, want no active class", got)
+	}
+}
+
 func TestSessionClickHonorsStopPropagationFromCaptureListeners(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><section id="wrap"><button id="btn">Go</button></section><div id="log"></div><script>host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>capture</span>"); host:stopPropagation()', "capture"); host:addEventListener("#btn", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>target</span>")'); host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>bubble</span>")', "bubble")</script></main>`,
