@@ -2,6 +2,7 @@ package script
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -63,6 +64,7 @@ type classicJSClassDefinition struct {
 	privateFieldPrefix  string
 	instanceMarker      string
 	instanceFields      []classicJSClassFieldDefinition
+	hasStaticPrototype  bool
 	superStaticTarget   Value
 	superInstanceTarget Value
 	hasSuper            bool
@@ -124,6 +126,7 @@ func (d *classicJSClassDefinition) cloneDetached(mapping map[*classicJSEnvironme
 		privateFieldPrefix:  d.privateFieldPrefix,
 		instanceMarker:      d.instanceMarker,
 		instanceFields:      make([]classicJSClassFieldDefinition, 0, len(d.instanceFields)),
+		hasStaticPrototype:  d.hasStaticPrototype,
 		superStaticTarget:   cloneValueDetached(d.superStaticTarget, mapping),
 		superInstanceTarget: cloneValueDetached(d.superInstanceTarget, mapping),
 		hasSuper:            d.hasSuper,
@@ -188,6 +191,22 @@ func (e *classicJSEnvironment) classDefinition(name string) (*classicJSClassDefi
 	return nil, false
 }
 
+func resolveClassicJSClassDefinition(value Value, env *classicJSEnvironment) (*classicJSClassDefinition, bool) {
+	if value.Kind != ValueKindObject {
+		return nil, false
+	}
+	if value.ClassDefinition != nil {
+		return value.ClassDefinition, true
+	}
+	if value.ClassKey != "" && env != nil {
+		classDef, ok := env.classDefinition(value.ClassKey)
+		if ok && classDef != nil {
+			return classDef, true
+		}
+	}
+	return nil, false
+}
+
 func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*classicJSEnvironment) jsValue {
 	switch value.kind {
 	case jsValueScalar:
@@ -195,6 +214,10 @@ func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*clas
 		if value.hasReceiver {
 			cloned.receiver = cloneValueDetached(value.receiver, mapping)
 			cloned.hasReceiver = true
+		}
+		if value.hasNewTarget {
+			cloned.newTarget = cloneValueDetached(value.newTarget, mapping)
+			cloned.hasNewTarget = true
 		}
 		return cloned
 	case jsValueHostObject:
@@ -205,6 +228,10 @@ func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*clas
 		return hostMethodJSValue(value.method)
 	case jsValueSuper:
 		cloned := superJSValue(cloneValueDetached(value.value, mapping), cloneValueDetached(value.receiver, mapping))
+		if value.hasNewTarget {
+			cloned.newTarget = cloneValueDetached(value.newTarget, mapping)
+			cloned.hasNewTarget = true
+		}
 		return cloned
 	default:
 		return value
@@ -224,13 +251,19 @@ func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJ
 		return ArrayValue(cloned)
 	case ValueKindObject:
 		if len(value.Object) == 0 {
-			return ObjectValue(nil)
+			cloned := ObjectValue(nil)
+			cloned.ClassKey = value.ClassKey
+			cloned.ClassDefinition = value.ClassDefinition
+			return cloned
 		}
 		cloned := make([]ObjectEntry, len(value.Object))
 		for i, entry := range value.Object {
 			cloned[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetached(entry.Value, mapping)}
 		}
-		return ObjectValue(cloned)
+		clonedValue := ObjectValue(cloned)
+		clonedValue.ClassKey = value.ClassKey
+		clonedValue.ClassDefinition = value.ClassDefinition
+		return clonedValue
 	case ValueKindFunction:
 		if value.NativeFunction != nil {
 			return NativeFunctionValue(value.NativeFunction)
@@ -261,7 +294,7 @@ func (e *classicJSEnvironment) declare(name string, value jsValue, mutable bool)
 	if _, exists := e.bindings[name]; exists {
 		return NewError(ErrorKindParse, fmt.Sprintf("duplicate lexical declaration for %q in this bounded classic-JS slice", name))
 	}
-	e.bindings[name] = classicJSBinding{value: value, mutable: mutable}
+	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: mutable}
 	return nil
 }
 
@@ -301,11 +334,56 @@ func (e *classicJSEnvironment) assign(name string, value jsValue) error {
 		if !binding.mutable {
 			return NewError(ErrorKindRuntime, fmt.Sprintf("cannot assign to immutable binding %q in this bounded classic-JS slice", name))
 		}
-		binding.value = value
+		binding.value = value.withoutAssignTarget()
 		current.bindings[name] = binding
 		return nil
 	}
 	return NewError(ErrorKindUnsupported, fmt.Sprintf("assignment target %q is not a declared local binding in this bounded classic-JS slice", name))
+}
+
+func (e *classicJSEnvironment) setBindingValue(name string, value jsValue) bool {
+	for current := e; current != nil; current = current.parent {
+		if len(current.bindings) == 0 {
+			continue
+		}
+		binding, ok := current.bindings[name]
+		if !ok {
+			continue
+		}
+		binding.value = value.withoutAssignTarget()
+		current.bindings[name] = binding
+		return true
+	}
+	return false
+}
+
+func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue jsValue) int {
+	if oldValue.Kind != ValueKindObject || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindObject {
+		return 0
+	}
+	oldPtr := reflect.ValueOf(oldValue.Object).Pointer()
+	if oldPtr == 0 {
+		return 0
+	}
+	replacement := newValue.withoutAssignTarget()
+	replaced := 0
+	for current := e; current != nil; current = current.parent {
+		if len(current.bindings) == 0 {
+			continue
+		}
+		for name, binding := range current.bindings {
+			if binding.value.kind != jsValueScalar || binding.value.value.Kind != ValueKindObject {
+				continue
+			}
+			if reflect.ValueOf(binding.value.value.Object).Pointer() != oldPtr {
+				continue
+			}
+			binding.value = replacement
+			current.bindings[name] = binding
+			replaced++
+		}
+	}
+	return replaced
 }
 
 func NewRuntime(host HostBindings) *Runtime {
@@ -393,7 +471,7 @@ func (r *Runtime) dispatchStatement(source string, env *classicJSEnvironment, mo
 		return r.dispatchLegacyStatement(source, env)
 	}
 
-	value, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, r.host, env, r.config.StepLimit, true, false, false, nil, nil, moduleExports)
+	value, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, r.host, env, r.config.StepLimit, true, false, false, nil, UndefinedValue(), false, nil, moduleExports)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -473,10 +551,10 @@ func evalClassicJSProgram(source string, host HostBindings, env *classicJSEnviro
 }
 
 func evalClassicJSProgramWithAllowAwait(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, privateClass *classicJSClassDefinition) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, false, false, nil, privateClass, nil)
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, false, false, nil, UndefinedValue(), false, privateClass, nil)
 }
 
-func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
 	if env == nil {
 		env = newClassicJSEnvironment()
 	}
@@ -494,7 +572,7 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host Ho
 
 	var last Value = UndefinedValue()
 	for i, statement := range statements {
-		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, privateClass, moduleExports)
+		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports)
 		if err != nil {
 			if yieldedValue, state, ok := classicJSYieldSignalDetails(err); ok {
 				if state == nil && i+1 < len(statements) {
@@ -519,7 +597,7 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host Ho
 }
 
 func evalClassicJSProgramWithAllowAwaitAndYield(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, resumeState classicJSResumeState, privateClass *classicJSClassDefinition) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, allowYield, false, resumeState, privateClass, nil)
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, allowYield, false, resumeState, UndefinedValue(), false, privateClass, nil)
 }
 
 func splitScriptStatements(source string) ([]string, error) {
@@ -537,6 +615,55 @@ func splitScriptStatements(source string) ([]string, error) {
 	var parenDepth int
 	var braceDepth int
 	var bracketDepth int
+	doStates := make([]int, 0, 4)
+	skipSpaceAndCommentsForward := func(index int) int {
+		for index < len(text) {
+			switch text[index] {
+			case ' ', '\t', '\n', '\r':
+				index++
+			case '/':
+				if index+1 >= len(text) {
+					return index
+				}
+				switch text[index+1] {
+				case '/':
+					index += 2
+					for index < len(text) && text[index] != '\n' && text[index] != '\r' {
+						index++
+					}
+				case '*':
+					index += 2
+					for index+1 < len(text) && !(text[index] == '*' && text[index+1] == '/') {
+						index++
+					}
+					if index+1 < len(text) {
+						index += 2
+					}
+				default:
+					return index
+				}
+			default:
+				return index
+			}
+		}
+		return index
+	}
+	nextKeywordAhead := func(index int, keyword string) bool {
+		index = skipSpaceAndCommentsForward(index)
+		if index+len(keyword) > len(text) {
+			return false
+		}
+		if text[index:index+len(keyword)] != keyword {
+			return false
+		}
+		if index > 0 && isIdentPart(text[index-1]) {
+			return false
+		}
+		if index+len(keyword) < len(text) && isIdentPart(text[index+len(keyword)]) {
+			return false
+		}
+		return true
+	}
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
 		if lineComment {
@@ -565,6 +692,17 @@ func splitScriptStatements(source string) ([]string, error) {
 				quote = 0
 			}
 			continue
+		}
+		topLevel := parenDepth == 0 && braceDepth == 0 && bracketDepth == 0
+		if topLevel {
+			if ch == 'd' && i+1 < len(text) && text[i:i+2] == "do" && (i == 0 || !isIdentPart(text[i-1])) && (i+2 >= len(text) || !isIdentPart(text[i+2])) {
+				doStates = append(doStates, 1)
+			}
+			if ch == 'w' && i+4 < len(text) && text[i:i+5] == "while" && (i == 0 || !isIdentPart(text[i-1])) && (i+5 >= len(text) || !isIdentPart(text[i+5])) {
+				if n := len(doStates); n > 0 && doStates[n-1] == 1 {
+					doStates[n-1] = 2
+				}
+			}
 		}
 		switch ch {
 		case '\'', '"':
@@ -601,7 +739,22 @@ func splitScriptStatements(source string) ([]string, error) {
 				bracketDepth--
 			}
 		case ';':
-			if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+			if topLevel {
+				if n := len(doStates); n > 0 {
+					if doStates[n-1] == 1 {
+						doStates[n-1] = 2
+						continue
+					}
+					if doStates[n-1] == 2 {
+						doStates = doStates[:n-1]
+						if len(doStates) > 0 {
+							continue
+						}
+					}
+				}
+				if nextKeywordAhead(i+1, "else") {
+					continue
+				}
 				statement := strings.TrimSpace(text[start:i])
 				if statement != "" {
 					statements = append(statements, statement)

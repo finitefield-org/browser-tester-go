@@ -24,17 +24,22 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Object literal computed property names and methods.
 - [x] Object literal getter accessors.
 - [x] Object literal setter accessors.
+- [x] Object literal async and generator methods.
+- [x] Object literal methods can read `super` through bounded prototype targets.
 - [x] `throw` statements with catch-bound values.
 - [x] Array/object destructuring patterns in `let` / `const` declarations.
 - [x] Default binding values in array/object destructuring patterns.
 - [x] Spread/rest syntax in array/object literals and `let` / `const` binding patterns.
+- [x] Function-like parameter destructuring patterns with default values and rest identifiers.
 - [x] `var` declarations.
 - [x] Unary `typeof` operator.
 - [x] Relational `in` operator on bounded object and array values.
 - [x] Relational `instanceof` operator on bounded class objects.
 - [x] Conditional `?:` operator.
+- [x] Comma operator / sequence expressions.
 - [x] Exponentiation operator `**` and assignment `**=`.
 - [x] Bitwise and shift operators.
+- [x] Prefix/postfix increment and decrement expressions on local bindings and object property chains.
 - [x] Logical assignment operators on local bindings and object property chains.
 - [x] Arrow functions.
 - [x] Plain `function` declarations and `return` statements.
@@ -47,28 +52,36 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Named generator expressions and self-binding.
 - [x] `yield*` delegation.
 - [x] Unlabeled `break` / `continue` statements.
-- [x] `delete` expressions on local object bindings.
+- [x] `delete` expressions on local object and array bindings.
 - [x] `yield` inside nested block-bodied `if` / `else` branches and other simple block bodies.
 - [x] `yield` inside loop bodies.
 - [x] `yield` inside `switch` clauses and `try` / `catch` / `finally` blocks.
 - [x] Labeled `break` / `continue` statements.
-- [x] Bounded array `for...of` loops.
-- [x] Bounded array `for await...of` loops.
+- [x] Bounded array and iterator-like object `for...of` loops.
+- [x] Bounded array and iterator-like object `for await...of` loops.
 - [x] Bounded object/array `for...in` loops.
 - [x] Bounded `new Class()` instantiation for class objects.
 - [x] Bounded `extends` inheritance for class objects.
 - [x] Property assignment on existing object bindings and private class fields.
 - [x] Module-style `export` declarations and export specifier lists.
 - [x] Module syntax: `import` declarations, re-export syntax with `from`, and dynamic `import()`.
+- [x] `using` / `await using` declarations.
+- [x] `import.meta.url` inside bounded module scripts.
 - [x] Top-level `await` at the dispatch entrypoint.
 - [x] Static and prototype class methods.
 - [x] Class instance fields.
 - [x] Class computed fields and methods.
+- [x] Numeric literals across decimal, hexadecimal, binary, and octal forms, including numeric separators and `BigInt` suffixes.
+- [x] Class expressions.
 - [x] Class syntax beyond the current slice: private fields.
+- [x] Private `in` operator on bounded class private fields.
 - [x] Class `super` property, method, and constructor calls in class bodies.
+- [x] Class `super` property assignment when the receiver does not already expose the property.
 - [x] Template literal interpolation.
+- [x] Tagged template literals with bounded function tags and interpolation.
 - [x] Optional chaining across bounded object-property chains, bracket access, and nullish bases, including `host?.method(...)` and `host?.["method"](...)`.
 - [x] Optional call syntax `?.()` and bracket access `?.[expr]`.
+- [x] Import attributes / options objects on bounded import syntax.
 - [ ] Any still-unsupported syntax that continues to throw `ErrorKindUnsupported`.
 
 ## P2 - Selector And Query Expansion

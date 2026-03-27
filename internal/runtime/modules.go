@@ -98,6 +98,7 @@ func (s *Session) loadInlineModule(id string, moduleSources map[string]string, l
 		}
 		bindings[dep] = depValue
 	}
+	bindings[script.ClassicJSModuleMetaURLBindingName] = script.StringValue("inline-module:" + id)
 
 	moduleExports := map[string]script.Value{}
 	runtime := script.NewRuntimeWithBindings(&inlineScriptHost{session: s, store: store}, browserGlobalBindings(s, store))

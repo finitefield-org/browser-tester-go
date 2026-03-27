@@ -9,18 +9,19 @@ import (
 type ValueKind string
 
 const (
-	ValueKindUndefined  ValueKind = "undefined"
-	ValueKindNull       ValueKind = "null"
-	ValueKindString     ValueKind = "string"
-	ValueKindBool       ValueKind = "bool"
-	ValueKindNumber     ValueKind = "number"
-	ValueKindBigInt     ValueKind = "bigint"
-	ValueKindArray      ValueKind = "array"
-	ValueKindObject     ValueKind = "object"
-	ValueKindFunction   ValueKind = "function"
+	ValueKindUndefined     ValueKind = "undefined"
+	ValueKindNull          ValueKind = "null"
+	ValueKindString        ValueKind = "string"
+	ValueKindBool          ValueKind = "bool"
+	ValueKindNumber        ValueKind = "number"
+	ValueKindBigInt        ValueKind = "bigint"
+	ValueKindArray         ValueKind = "array"
+	ValueKindObject        ValueKind = "object"
+	ValueKindPrivateName   ValueKind = "private-name"
+	ValueKindFunction      ValueKind = "function"
 	ValueKindHostReference ValueKind = "host-reference"
-	ValueKindPromise    ValueKind = "promise"
-	ValueKindInvocation ValueKind = "invocation"
+	ValueKindPromise       ValueKind = "promise"
+	ValueKindInvocation    ValueKind = "invocation"
 )
 
 type NativeFunction func(args []Value) (Value, error)
@@ -29,8 +30,8 @@ type HostReferenceKind string
 
 const (
 	HostReferenceKindObject      HostReferenceKind = "object"
-	HostReferenceKindFunction     HostReferenceKind = "function"
-	HostReferenceKindConstructor  HostReferenceKind = "constructor"
+	HostReferenceKindFunction    HostReferenceKind = "function"
+	HostReferenceKindConstructor HostReferenceKind = "constructor"
 )
 
 type ObjectEntry struct {
@@ -39,19 +40,22 @@ type ObjectEntry struct {
 }
 
 type Value struct {
-	Kind       ValueKind
-	String     string
-	Bool       bool
-	Number     float64
-	BigInt     string
-	Array      []Value
-	Object     []ObjectEntry
-	Function   *classicJSArrowFunction
-	NativeFunction NativeFunction
+	Kind              ValueKind
+	String            string
+	Bool              bool
+	Number            float64
+	BigInt            string
+	Array             []Value
+	Object            []ObjectEntry
+	PrivateName       string
+	ClassKey          string
+	ClassDefinition   *classicJSClassDefinition
+	Function          *classicJSArrowFunction
+	NativeFunction    NativeFunction
 	HostReferencePath string
 	HostReferenceKind HostReferenceKind
-	Promise    *Value
-	Invocation string
+	Promise           *Value
+	Invocation        string
 }
 
 func UndefinedValue() Value {
@@ -106,6 +110,13 @@ func ObjectValue(entries []ObjectEntry) Value {
 	}
 }
 
+func PrivateNameValue(name string) Value {
+	return Value{
+		Kind:        ValueKindPrivateName,
+		PrivateName: name,
+	}
+}
+
 func FunctionValue(fn *classicJSArrowFunction) Value {
 	return Value{
 		Kind:     ValueKindFunction,
@@ -116,7 +127,7 @@ func FunctionValue(fn *classicJSArrowFunction) Value {
 func NativeFunctionValue(fn NativeFunction) Value {
 	return Value{
 		Kind:           ValueKindFunction,
-		NativeFunction:  fn,
+		NativeFunction: fn,
 	}
 }
 
@@ -200,6 +211,8 @@ func ToJSString(value Value) string {
 		return b.String()
 	case ValueKindObject:
 		return "[object Object]"
+	case ValueKindPrivateName:
+		return "#" + value.PrivateName
 	case ValueKindFunction:
 		return "[Function]"
 	case ValueKindHostReference:
