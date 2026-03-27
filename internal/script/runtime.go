@@ -386,6 +386,35 @@ func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue js
 	return replaced
 }
 
+func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsValue) int {
+	if oldValue.Kind != ValueKindArray || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindArray {
+		return 0
+	}
+	oldPtr := reflect.ValueOf(oldValue.Array).Pointer()
+	if oldPtr == 0 {
+		return 0
+	}
+	replacement := newValue.withoutAssignTarget()
+	replaced := 0
+	for current := e; current != nil; current = current.parent {
+		if len(current.bindings) == 0 {
+			continue
+		}
+		for name, binding := range current.bindings {
+			if binding.value.kind != jsValueScalar || binding.value.value.Kind != ValueKindArray {
+				continue
+			}
+			if reflect.ValueOf(binding.value.value.Array).Pointer() != oldPtr {
+				continue
+			}
+			binding.value = replacement
+			current.bindings[name] = binding
+			replaced++
+		}
+	}
+	return replaced
+}
+
 func NewRuntime(host HostBindings) *Runtime {
 	return NewRuntimeWithConfigAndBindings(DefaultRuntimeConfig(), host, nil)
 }
@@ -584,10 +613,10 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host Ho
 				return UndefinedValue(), NewError(ErrorKindRuntime, ToJSString(throwValue))
 			}
 			if classicJSBreakSignalValue(err) {
-				return UndefinedValue(), NewError(ErrorKindRuntime, "break statement is not within a loop or switch in this bounded classic-JS slice")
+				return UndefinedValue(), NewError(ErrorKindParse, "break statement is not within a loop or switch in this bounded classic-JS slice")
 			}
 			if classicJSContinueSignalValue(err) {
-				return UndefinedValue(), NewError(ErrorKindRuntime, "continue statement is not within a loop in this bounded classic-JS slice")
+				return UndefinedValue(), NewError(ErrorKindParse, "continue statement is not within a loop in this bounded classic-JS slice")
 			}
 			return UndefinedValue(), err
 		}

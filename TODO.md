@@ -25,7 +25,7 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Object literal getter accessors.
 - [x] Object literal setter accessors.
 - [x] Object literal async and generator methods.
-- [x] Object literal methods can read `super` through bounded prototype targets.
+- [x] Object literal and class methods can read, write, and delete `super` through bounded prototype targets and bounded null-prototype object literals, including compound assignments.
 - [x] `throw` statements with catch-bound values.
 - [x] Array/object destructuring patterns in `let` / `const` declarations.
 - [x] Default binding values in array/object destructuring patterns.
@@ -39,8 +39,8 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Comma operator / sequence expressions.
 - [x] Exponentiation operator `**` and assignment `**=`.
 - [x] Bitwise and shift operators.
-- [x] Prefix/postfix increment and decrement expressions on local bindings and object property chains.
-- [x] Logical assignment operators on local bindings and object property chains.
+- [x] Prefix/postfix increment and decrement expressions on local bindings and object/array property chains.
+- [x] Logical assignment operators on local bindings and object/array property chains.
 - [x] Arrow functions.
 - [x] Plain `function` declarations and `return` statements.
 - [x] `async` / `await`.
@@ -62,7 +62,7 @@ The current codebase builds and `go test ./...` passes; the remaining items are 
 - [x] Bounded object/array `for...in` loops.
 - [x] Bounded `new Class()` instantiation for class objects.
 - [x] Bounded `extends` inheritance for class objects.
-- [x] Property assignment on existing object bindings and private class fields.
+- [x] Property assignment on existing object/array bindings and private class fields.
 - [x] Module-style `export` declarations and export specifier lists.
 - [x] Module syntax: `import` declarations, re-export syntax with `from`, and dynamic `import()`.
 - [x] `using` / `await using` declarations.
