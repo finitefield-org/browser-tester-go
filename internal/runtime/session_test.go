@@ -1172,6 +1172,56 @@ func TestSessionDispatchesStandardEventListenersOnWindowDocumentAndElement(t *te
 	}
 }
 
+func TestSessionRegistersTemplateWindowLifecycleListeners(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="out"></div><script>window.addEventListener("online", () => {}); window.addEventListener("offline", () => {}); window.addEventListener("resize", () => {}); host.setTextContent("#out", navigator.onLine ? "online" : "offline")</script></main>`,
+	})
+
+	if _, err := s.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "online" {
+		t.Fatalf("TextContent(#out) = %q, want online", got)
+	}
+
+	listeners := s.EventListeners()
+	if len(listeners) != 3 {
+		t.Fatalf("EventListeners() len = %d, want 3", len(listeners))
+	}
+	if listeners[0].NodeID == 0 || listeners[0].NodeID != listeners[1].NodeID || listeners[1].NodeID != listeners[2].NodeID {
+		t.Fatalf("EventListeners() node ids = %#v, want same non-zero node id", listeners)
+	}
+	if listeners[0].Event != "online" || listeners[0].Phase != "bubble" {
+		t.Fatalf("EventListeners()[0] = %#v, want bubble online listener", listeners[0])
+	}
+	if listeners[1].Event != "offline" || listeners[1].Phase != "bubble" {
+		t.Fatalf("EventListeners()[1] = %#v, want bubble offline listener", listeners[1])
+	}
+	if listeners[2].Event != "resize" || listeners[2].Phase != "bubble" {
+		t.Fatalf("EventListeners()[2] = %#v, want bubble resize listener", listeners[2])
+	}
+}
+
+func TestSessionSkipsNonClassicInlineScripts(t *testing.T) {
+	s := NewSession(SessionConfig{})
+
+	if err := s.WriteHTML(`<main><div id="out"></div><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage"}</script><script>host.setTextContent("#out", "ok")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after non-classic script skip", got)
+	}
+}
+
 func TestSessionDispatchRejectsBlankEventType(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><button id="btn">Go</button></main>`,
@@ -1321,6 +1371,21 @@ func TestSessionFormControlsUpdateLiveDomAndLog(t *testing.T) {
 	}
 	if log[3].Kind != InteractionKindSubmit || log[3].Selector != "#profile" {
 		t.Fatalf("InteractionLog()[3] = %#v, want submit #profile", log[3])
+	}
+}
+
+func TestSessionSelectValueAssignmentUpdatesLiveDom(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select><div id="out"></div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`,
+	})
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "b" {
+		t.Fatalf("TextContent(#out) = %q, want b", got)
+	}
+	if got, want := s.DumpDOM(), `<main><select id="mode"><option value="a">A</option><option value="b" selected>B</option></select><div id="out">b</div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`; got != want {
+		t.Fatalf("DumpDOM() = %q, want %q", got, want)
 	}
 }
 

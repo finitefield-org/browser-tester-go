@@ -281,12 +281,61 @@ func TestDispatchTreatsMissingHostReferencePropertiesAsAbsentInOperator(t *testi
 	})
 
 	result, err := runtime.Dispatch(DispatchRequest{
-		Source: `host.echo(("serviceWorker" in navigator) + "|" + ("serviceWorker" in window))`,
+		Source: `host.echo(("missingFeature" in navigator) + "|" + ("missingFeature" in window))`,
 	})
 	if err != nil {
 		t.Fatalf("Dispatch(host-reference in operator) error = %v", err)
 	}
 	if result.Value.Kind != ValueKindString || result.Value.String != "false|false" {
 		t.Fatalf("Dispatch(host-reference in operator) value = %#v, want string false|false", result.Value)
+	}
+}
+
+func TestDispatchSupportsBrowserPromiseThenCatch(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"clipboard": HostObjectReference("clipboard"),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `clipboard.writeText("copied").then(function () { host.echo("done") }).catch(function () { host.echo("caught") }); "done"`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(browser promise chain) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "done" {
+		t.Fatalf("Dispatch(browser promise chain) value = %#v, want string done", result.Value)
+	}
+	if len(host.clipboardWrites) != 1 || host.clipboardWrites[0] != "copied" {
+		t.Fatalf("clipboard writes = %#v, want one copied write", host.clipboardWrites)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one echo call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "done" {
+		t.Fatalf("host.calls[0].args = %#v, want string done", host.calls[0].args)
+	}
+}
+
+func TestDispatchPropagatesPromiseThenCallbackErrors(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"clipboard": HostObjectReference("clipboard"),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Source: `clipboard.writeText("copied").then(function () { throw "boom" })`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(browser promise then callback error) error = nil, want runtime error")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Dispatch(browser promise then callback error) error = %q, want thrown value", err)
+	}
+	if len(host.clipboardWrites) != 1 || host.clipboardWrites[0] != "copied" {
+		t.Fatalf("clipboard writes = %#v, want one copied write", host.clipboardWrites)
 	}
 }

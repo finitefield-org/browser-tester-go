@@ -80,12 +80,14 @@ runtime slices.
   - `documentCurrentScript`
 - bounded browser-global bridge for raw HTML bootstrap: `window` / `self` / `globalThis` / `top` /
   `parent` / `frames`, `document` (including `title`, `readyState`, `activeElement`, `baseURI`,
-  `URL`, `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`, `designMode`, and
+  `URL` / `URLSearchParams`, `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`,
+  `designMode`, and
   `dir`, plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`,
   `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`,
   `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, and `childElementCount`), `location`, `history`, `navigator`, `URL`,
-  `Intl.NumberFormat`, `localStorage`, `sessionStorage`, `matchMedia`, `console`, `clipboard`, and
+  `previousElementSibling`, and `childElementCount`), `location`, `history`, `navigator`, `URL` /
+  `URLSearchParams`, `Intl.NumberFormat`, `localStorage`, `sessionStorage`, `matchMedia`, `console`,
+  `clipboard`, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
   stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` / `Boolean`
@@ -93,9 +95,13 @@ runtime slices.
   `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
   `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()`,
-  `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
+  `String.prototype.startsWith()` / `String.prototype.endsWith()`, `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
   `toExponential()`, and the bounded array/string/number/date prototype helpers used by
-  template-driven bootstrap, plus `URL.searchParams.keys()` for template query handling
+  template-driven bootstrap, plus the live `URL` / `URLSearchParams` query-state bridge
+  (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
+  `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for template query handling,
+  plus `Object.entries()` / `Object.values()` for plain-object enumeration, and bounded promise-style
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:
@@ -482,8 +488,9 @@ runtime slices.
   scripts can also use bounded standard DOM surfaces such as `window` / `document` / `element`
   `addEventListener`, `details.open`, `element.classList`, `input.select()`,
   `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
-  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`, and
-  `window.confirm()` / `window.prompt()`-driven dialog flows through the typed dialog mock family.
+  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`, the
+  live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()`
+  driven dialog flows through the typed dialog mock family.
 - Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

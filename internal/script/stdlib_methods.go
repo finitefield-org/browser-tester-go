@@ -407,6 +407,57 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			}
 			return NumberValue(float64(fromIndex + idx)), nil
 		}), true, nil
+	case "startsWith":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.startsWith expects 1 argument")
+			}
+			if len(args) > 2 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.startsWith accepts at most 2 arguments")
+			}
+			search := ToJSString(args[0])
+			fromIndex := 0
+			if len(args) > 1 {
+				fromIndex = indexFromValue(args[1], 0)
+			}
+			if fromIndex < 0 {
+				fromIndex = 0
+			}
+			if fromIndex > len(value.String) {
+				return BoolValue(false), nil
+			}
+			if search == "" {
+				return BoolValue(true), nil
+			}
+			return BoolValue(strings.HasPrefix(value.String[fromIndex:], search)), nil
+		}), true, nil
+	case "endsWith":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.endsWith expects 1 argument")
+			}
+			if len(args) > 2 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.endsWith accepts at most 2 arguments")
+			}
+			search := ToJSString(args[0])
+			end := len(value.String)
+			if len(args) > 1 {
+				end = indexFromValue(args[1], end)
+			}
+			if end < 0 {
+				end = 0
+			}
+			if end > len(value.String) {
+				end = len(value.String)
+			}
+			if search == "" {
+				return BoolValue(true), nil
+			}
+			if len(search) > end {
+				return BoolValue(false), nil
+			}
+			return BoolValue(strings.HasSuffix(value.String[:end], search)), nil
+		}), true, nil
 	case "includes":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -544,6 +595,43 @@ func (p *classicJSStatementParser) resolveDatePrototypeMethod(value Value, name 
 			return NumberValue(float64(ms)), nil
 		}), true, nil
 	}
+	return UndefinedValue(), false, nil
+}
+
+func (p *classicJSStatementParser) resolvePromisePrototypeMethod(value Value, name string) (Value, bool, error) {
+	if value.Kind != ValueKindPromise {
+		return UndefinedValue(), false, nil
+	}
+
+	resolved := UndefinedValue()
+	if value.Promise != nil {
+		resolved = unwrapPromiseValue(*value.Promise)
+	}
+
+	switch name {
+	case "then":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) > 2 {
+				return UndefinedValue(), fmt.Errorf("Promise.then accepts at most 2 arguments")
+			}
+			if len(args) == 0 || args[0].Kind == ValueKindUndefined || args[0].Kind == ValueKindNull {
+				return PromiseValue(resolved), nil
+			}
+			result, err := InvokeCallableValue(p.host, args[0], []Value{resolved}, UndefinedValue(), false)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return PromiseValue(unwrapPromiseValue(result)), nil
+		}), true, nil
+	case "catch":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) > 1 {
+				return UndefinedValue(), fmt.Errorf("Promise.catch accepts at most 1 argument")
+			}
+			return PromiseValue(resolved), nil
+		}), true, nil
+	}
+
 	return UndefinedValue(), false, nil
 }
 

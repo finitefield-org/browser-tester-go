@@ -111,8 +111,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
   `element.classList`, `input.select()`, `document.execCommand("copy")`,
   `document.createElement()`, `setAttribute()`, `appendChild()` / `removeChild()`, browser-global
-  locale reads like `navigator.language`, and `window.confirm()` / `window.prompt()` flows through
-  the dialog mock family.
+  locale reads like `navigator.language`, the live `URL` / `URLSearchParams` query-state bridge,
+  and `window.confirm()` / `window.prompt()` flows through the dialog mock family.
   Location URLs are resolved against the current URL just like navigation links, and history updates
   feed the same navigation log. It can also trigger bounded synthetic event helpers such as
   `Dispatch` and `DispatchKeyboard` for custom and keyboard event sequences, and it can query
@@ -121,11 +121,14 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `Boolean` / `Math` / `Date`, including template-facing helpers such as `Array.from()` /
   `Array.isArray()`, `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
-  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()`,
-  `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
+  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()` /
+  `String.prototype.startsWith()` / `String.prototype.endsWith()`, `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
   `toExponential()`, the bounded array/string/number/date prototype helpers used by
-  template-driven bootstrap, and `URL.searchParams.keys()` for query-string handling. The
-  `MatchMedia` mock family also exposes
+  template-driven bootstrap, and the live `URL` / `URLSearchParams` query-state bridge
+  (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
+  `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for query-string handling,
+  plus `Object.entries()` / `Object.values()` for plain-object enumeration, and bounded promise-style
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`. The `MatchMedia` mock family also exposes
   listener capture injection through the registry for tests, and the `Storage` mock family exposes
   deterministic change capture through `Events()` with ordered `seed` / `set` / `remove` / `clear`
   operations.

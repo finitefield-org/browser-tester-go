@@ -88,9 +88,17 @@ func resolveObjectReference(path string) (script.Value, error) {
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectAssign(args)
 		}), nil
+	case "entries":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectEntries(args)
+		}), nil
 	case "keys":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectKeys(args)
+		}), nil
+	case "values":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectValues(args)
 		}), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Object."+path))
@@ -354,6 +362,41 @@ func browserObjectKeys(args []script.Value) (script.Value, error) {
 	entries := make([]script.Value, 0, len(keys))
 	for _, key := range keys {
 		entries = append(entries, script.StringValue(key))
+	}
+	return script.ArrayValue(entries), nil
+}
+
+func browserObjectEntries(args []script.Value) (script.Value, error) {
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("Object.entries expects 1 argument")
+	}
+	if args[0].Kind != script.ValueKindObject {
+		return script.UndefinedValue(), fmt.Errorf("Object.entries expects an object")
+	}
+	keys := uniqueObjectKeys(args[0].Object)
+	entries := make([]script.Value, 0, len(keys))
+	for _, key := range keys {
+		value, _ := objectProperty(args[0], key)
+		entries = append(entries, script.ArrayValue([]script.Value{
+			script.StringValue(key),
+			value,
+		}))
+	}
+	return script.ArrayValue(entries), nil
+}
+
+func browserObjectValues(args []script.Value) (script.Value, error) {
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("Object.values expects 1 argument")
+	}
+	if args[0].Kind != script.ValueKindObject {
+		return script.UndefinedValue(), fmt.Errorf("Object.values expects an object")
+	}
+	keys := uniqueObjectKeys(args[0].Object)
+	entries := make([]script.Value, 0, len(keys))
+	for _, key := range keys {
+		value, _ := objectProperty(args[0], key)
+		entries = append(entries, value)
 	}
 	return script.ArrayValue(entries), nil
 }

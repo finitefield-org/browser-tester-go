@@ -3481,18 +3481,51 @@ func TestInlineScriptsRejectPromptWithoutQueuedResponseThroughPublicFacade(t *te
 	}
 }
 
-func TestInlineScriptsTreatMissingNavigatorServiceWorkerAsAbsentThroughPublicFacade(t *testing.T) {
-	harness, err := NewHarnessBuilder().Build()
+func TestInlineScriptsSupportMatchMediaMatchesThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().
+		MatchMedia(map[string]bool{"(max-width: 1079px)": true}).
+		Build()
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	err = harness.WriteHTML(`<main><div id="out"></div><script>if (!("serviceWorker" in navigator)) { host.setTextContent("#out", "skipped") } else { host.setTextContent("#out", "registered") }</script></main>`)
+	err = harness.WriteHTML(`<main><div id="mode"></div><script>const mobile = window.matchMedia("(max-width: 1079px)").matches; host.setTextContent("#mode", mobile ? "mobile" : "desktop")</script></main>`)
 	if err != nil {
 		t.Fatalf("WriteHTML() error = %v", err)
 	}
 
-	if got, want := harness.Debug().DumpDOM(), `<main><div id="out">skipped</div><script>if (!("serviceWorker" in navigator)) { host.setTextContent("#out", "skipped") } else { host.setTextContent("#out", "registered") }</script></main>`; got != want {
-		t.Fatalf("Debug().DumpDOM() after navigator.serviceWorker guard = %q, want %q", got, want)
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="mode">mobile</div><script>const mobile = window.matchMedia("(max-width: 1079px)").matches; host.setTextContent("#mode", mobile ? "mobile" : "desktop")</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after matchMedia.matches = %q, want %q", got, want)
+	}
+	if got := harness.Debug().MatchMediaCalls(); len(got) != 1 || got[0].Query != "(max-width: 1079px)" {
+		t.Fatalf("Debug().MatchMediaCalls() = %#v, want one max-width query", got)
+	}
+}
+
+func TestInlineScriptsCanRegisterTemplateWindowLifecycleListeners(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out"></div><script>window.addEventListener("online", () => {}); window.addEventListener("offline", () => {}); window.addEventListener("resize", () => {}); host.setTextContent("#out", navigator.onLine ? "online" : "offline")</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="out">online</div><script>window.addEventListener("online", () => {}); window.addEventListener("offline", () => {}); window.addEventListener("resize", () => {}); host.setTextContent("#out", navigator.onLine ? "online" : "offline")</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after template window listeners = %q, want %q", got, want)
+	}
+
+	listeners := harness.Debug().EventListeners()
+	if len(listeners) != 3 {
+		t.Fatalf("Debug().EventListeners() len = %d, want 3", len(listeners))
+	}
+	if listeners[0].NodeID == 0 || listeners[0].NodeID != listeners[1].NodeID || listeners[1].NodeID != listeners[2].NodeID {
+		t.Fatalf("Debug().EventListeners() node ids = %#v, want same non-zero node id", listeners)
+	}
+	if listeners[0].Event != "online" || listeners[0].Phase != "bubble" {
+		t.Fatalf("Debug().EventListeners()[0] = %#v, want bubble online listener", listeners[0])
+	}
+	if listeners[1].Event != "offline" || listeners[1].Phase != "bubble" {
+		t.Fatalf("Debug().EventListeners()[1] = %#v, want bubble offline listener", listeners[1])
+	}
+	if listeners[2].Event != "resize" || listeners[2].Phase != "bubble" {
+		t.Fatalf("Debug().EventListeners()[2] = %#v, want bubble resize listener", listeners[2])
 	}
 }
 
@@ -4545,6 +4578,22 @@ func TestFormControlActionsUpdateDebugDom(t *testing.T) {
 	}
 }
 
+func TestFormControlValueAssignmentUpdatesDebugDom(t *testing.T) {
+	harness, err := FromHTML(`<main><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select><div id="out"></div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "b" {
+		t.Fatalf("TextContent(#out) = %q, want b", got)
+	}
+	if got, want := harness.Debug().DumpDOM(), `<main><select id="mode"><option value="a">A</option><option value="b" selected>B</option></select><div id="out">b</div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() = %q, want %q", got, want)
+	}
+}
+
 func TestClickAppliesDefaultActions(t *testing.T) {
 	harness, err := FromHTML(`<form id="profile"><input id="agree" type="checkbox"><button id="submit" type="submit">Save</button></form>`)
 	if err != nil {
@@ -4978,6 +5027,22 @@ func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 	if got := harness.Debug().PendingMicrotasks(); len(got) != 0 {
 		t.Fatalf("Debug().PendingMicrotasks() = %#v, want empty after bootstrap drain", got)
+	}
+}
+
+func TestInlineScriptsSkipNonClassicScriptTypes(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out"></div><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage"}</script><script>host.setTextContent("#out", "ok")</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	if got := harness.Debug().DOMError(); got != "" {
+		t.Fatalf("Debug().DOMError() = %q, want empty after non-classic script skip", got)
 	}
 }
 

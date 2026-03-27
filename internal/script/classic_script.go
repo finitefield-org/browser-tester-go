@@ -8618,6 +8618,9 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 				return scalarJSValue(resolved), nil
 			}
 		}
+		if method, ok, err := p.resolvePromisePrototypeMethod(value.value, name); ok || err != nil {
+			return scalarJSValue(method), err
+		}
 		if strings.HasPrefix(name, "#") {
 			if p.privateFieldPrefix == "" {
 				return jsValue{}, NewError(ErrorKindUnsupported, "private class fields are not accessible outside this class body in this bounded classic-JS slice")
@@ -8668,7 +8671,7 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			}
 			return scalarJSValue(UndefinedValue()), nil
 		case ValueKindNull, ValueKindUndefined:
-			return jsValue{}, NewError(ErrorKindRuntime, "cannot access property on nullish value in this bounded classic-JS slice")
+			return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot access property %q on nullish value in this bounded classic-JS slice", name))
 		default:
 			return scalarJSValue(UndefinedValue()), nil
 		}
@@ -8740,6 +8743,9 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 				return scalarJSValue(resolved), nil
 			}
 		}
+		if method, ok, err := p.resolvePromisePrototypeMethod(value.value, keyString); ok || err != nil {
+			return scalarJSValue(method), err
+		}
 		switch value.value.Kind {
 		case ValueKindObject:
 			if resolved, ok := lookupObjectProperty(value.value.Object, keyString); ok {
@@ -8792,7 +8798,7 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 			}
 			return scalarJSValue(UndefinedValue()), nil
 		case ValueKindNull, ValueKindUndefined:
-			return jsValue{}, NewError(ErrorKindRuntime, "cannot access property on nullish value in this bounded classic-JS slice")
+			return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot access property %q on nullish value in this bounded classic-JS slice", keyString))
 		default:
 			return scalarJSValue(UndefinedValue()), nil
 		}

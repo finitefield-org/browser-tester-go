@@ -19,6 +19,72 @@ func TestDispatchSupportsStringIndexOf(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsStringStartsWith(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["go".startsWith("g"), "go".startsWith("o"), "go".startsWith("o", 1), "go".startsWith("", 2)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.startsWith) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.startsWith) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|false|true|true" {
+		t.Fatalf("Dispatch(String.startsWith) value = %q, want %q", result.Value.String, "true|false|true|true")
+	}
+}
+
+func TestDispatchRejectsInvalidStringStartsWithArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".startsWith()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.startsWith()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.startsWith()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.startsWith()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchSupportsStringEndsWith(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["go".endsWith("o"), "go".endsWith("g"), "go".endsWith("g", 1), "go".endsWith("", 1)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.endsWith) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.endsWith) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|false|true|true" {
+		t.Fatalf("Dispatch(String.endsWith) value = %q, want %q", result.Value.String, "true|false|true|true")
+	}
+}
+
+func TestDispatchRejectsInvalidStringEndsWithArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".endsWith()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.endsWith()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.endsWith()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.endsWith()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
 func TestDispatchSupportsArrayFindIndexSpliceAndUnshift(t *testing.T) {
 	runtime := NewRuntime(nil)
 

@@ -28,6 +28,8 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 			Array.from("go").join("|"),
 			Array.isArray(items) ? "true" : "false",
 			Object.keys(assigned).join(","),
+			Object.entries(assigned).map(entry => entry.join("=")).join(","),
+			Object.values(assigned).join(","),
 			Object.keys(date).length + "|" + Object.keys(Object.assign({}, date)).length,
 			JSON.stringify(parsed),
 			JSON.stringify(date),
@@ -53,6 +55,8 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 		"g|o",
 		"true",
 		"first,second",
+		"first=a,second=b",
+		"a,b",
 		"0|0",
 		`{"a":1,"b":[2,3]}`,
 		strconv.Quote(wantDate),
@@ -114,5 +118,17 @@ func TestRunScriptRejectsInvalidJSONParse(t *testing.T) {
 	_, err := session.runScriptOnStore(dom.NewStore(), `JSON.parse("{")`)
 	if err == nil {
 		t.Fatalf("runScriptOnStore() error = nil, want parse error")
+	}
+}
+
+func TestRunScriptRejectsInvalidObjectEntriesArity(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Object.entries(1)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want object entries error")
+	}
+	if !strings.Contains(err.Error(), "Object.entries expects an object") {
+		t.Fatalf("runScriptOnStore() error = %v, want object entries message", err)
 	}
 }

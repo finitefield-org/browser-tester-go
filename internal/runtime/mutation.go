@@ -172,8 +172,10 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevMicrotasks := append([]string(nil), s.microtasks...)
 	prevTimers := cloneTimerMap(s.timers)
 	prevFrames := cloneAnimationFrameMap(s.animationFrames)
+	prevURLStates := cloneBrowserURLStateMap(s.urlStates)
 	prevNextTimerID := s.nextTimerID
 	prevNextAnimationFrameID := s.nextAnimationFrameID
+	prevNextURLStateID := s.nextURLStateID
 	prevRunningTimerID := s.runningTimerID
 	prevRunningTimerCancelled := s.runningTimerCancelled
 	prevScrollX := s.scrollX
@@ -215,8 +217,10 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.microtasks = prevMicrotasks
 			s.timers = prevTimers
 			s.animationFrames = prevFrames
+			s.urlStates = prevURLStates
 			s.nextTimerID = prevNextTimerID
 			s.nextAnimationFrameID = prevNextAnimationFrameID
+			s.nextURLStateID = prevNextURLStateID
 			s.runningTimerID = prevRunningTimerID
 			s.runningTimerCancelled = prevRunningTimerCancelled
 			s.scrollX = prevScrollX

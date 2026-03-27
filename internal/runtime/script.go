@@ -44,7 +44,7 @@ func (s *Session) executeInlineScripts(store *dom.Store) (err error) {
 		}
 		if typeAttr, ok, err := store.GetAttribute(node.ID, "type"); err != nil {
 			return err
-		} else if ok && strings.EqualFold(strings.TrimSpace(typeAttr), "module") {
+		} else if ok && !isClassicInlineScriptType(typeAttr) {
 			continue
 		}
 		if store.Node(node.ID) == nil {
@@ -69,6 +69,28 @@ func (s *Session) executeInlineScripts(store *dom.Store) (err error) {
 		}
 	}
 	return nil
+}
+
+func isClassicInlineScriptType(typeAttr string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(typeAttr))
+	if normalized == "" {
+		return true
+	}
+	if semi := strings.IndexByte(normalized, ';'); semi >= 0 {
+		normalized = strings.TrimSpace(normalized[:semi])
+	}
+	switch normalized {
+	case "text/javascript",
+		"application/javascript",
+		"text/ecmascript",
+		"application/ecmascript",
+		"text/jscript",
+		"text/livescript",
+		"application/x-javascript":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Session) runInlineScriptOnStore(store *dom.Store, currentScript string, source string) (script.Value, error) {

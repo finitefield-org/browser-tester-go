@@ -55,6 +55,8 @@ type Session struct {
 	currentScriptHTML        string
 	lastInlineScriptHTML     string
 	moduleBindings           map[string]script.Value
+	urlStates                map[string]*browserURLState
+	nextURLStateID           int64
 	historyEntries           []historyEntry
 	historyIndex             int
 	historyScrollRestoration string

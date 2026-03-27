@@ -45,6 +45,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"navigator":             navigatorRef,
 		"name":                  script.HostObjectReference("name"),
 		"URL":                   script.HostConstructorReference("URL"),
+		"URLSearchParams":       script.HostConstructorReference("URLSearchParams"),
 		"Intl":                  intlRef,
 		"localStorage":          localStorageRef,
 		"sessionStorage":        sessionStorageRef,
@@ -90,6 +91,10 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return value, err
 	}
 
+	if strings.HasPrefix(normalized, "url:") {
+		return resolveURLInstanceReference(session, normalized)
+	}
+
 	switch normalized {
 	case "window", "self", "globalThis", "top", "parent", "frames":
 		return script.HostObjectReference("window"), nil
@@ -119,7 +124,11 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		}), nil
 	case "URL":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserURLConstructor(args)
+			return browserURLConstructor(session, args)
+		}), nil
+	case "URLSearchParams":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserURLSearchParamsConstructor(args)
 		}), nil
 	case "localStorage":
 		return script.HostObjectReference("localStorage"), nil
@@ -225,6 +234,9 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 	}
 	if strings.HasPrefix(normalized, "clipboard.") {
 		return resolveClipboardReference(session, strings.TrimPrefix(normalized, "clipboard."))
+	}
+	if strings.HasPrefix(normalized, "url:") {
+		return resolveURLInstanceReference(session, normalized)
 	}
 	if strings.HasPrefix(normalized, "element:") {
 		return resolveElementReference(session, store, normalized)
@@ -1180,7 +1192,7 @@ func resolveURLReference(session *Session, path string) (script.Value, error) {
 	switch rest {
 	case "":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserURLConstructor(args)
+			return browserURLConstructor(session, args)
 		}), nil
 	case "toString", "valueOf":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -1194,85 +1206,6 @@ func resolveURLReference(session *Session, path string) (script.Value, error) {
 		}), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "URL."+rest))
-}
-
-func browserURLConstructor(args []script.Value) (script.Value, error) {
-	if len(args) == 0 || len(args) > 2 {
-		return script.UndefinedValue(), fmt.Errorf("URL expects 1 or 2 arguments")
-	}
-
-	href, err := scriptStringArg("URL", args, 0)
-	if err != nil {
-		return script.UndefinedValue(), err
-	}
-	resolved := strings.TrimSpace(href)
-	if len(args) == 2 {
-		base, err := scriptStringArg("URL", args, 1)
-		if err != nil {
-			return script.UndefinedValue(), err
-		}
-		resolved = resolveHyperlinkURL(base, href)
-	}
-	parsed, err := neturl.Parse(resolved)
-	if err != nil {
-		return script.UndefinedValue(), err
-	}
-	if len(args) == 1 && !parsed.IsAbs() {
-		return script.UndefinedValue(), fmt.Errorf("URL constructor requires an absolute URL or a base URL")
-	}
-	return browserURLObjectValue(parsed, resolved), nil
-}
-
-func browserURLObjectValue(parsed *neturl.URL, raw string) script.Value {
-	if parsed == nil {
-		return script.ObjectValue([]script.ObjectEntry{
-			{Key: "href", Value: script.StringValue(raw)},
-			{Key: "searchParams", Value: browserURLSearchParamsValueFromRaw("")},
-			{Key: "toString", Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-				return script.StringValue(raw), nil
-			})},
-			{Key: "toJSON", Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-				return script.StringValue(raw), nil
-			})},
-		})
-	}
-
-	origin := ""
-	if parsed.Scheme != "" && parsed.Host != "" {
-		origin = parsed.Scheme + "://" + parsed.Host
-	}
-	href := raw
-	if href == "" {
-		href = parsed.String()
-	}
-
-	entries := []script.ObjectEntry{
-		{Key: "href", Value: script.StringValue(href)},
-		{Key: "origin", Value: script.StringValue(origin)},
-		{Key: "protocol", Value: script.StringValue(protocolFromURL(parsed))},
-		{Key: "host", Value: script.StringValue(parsed.Host)},
-		{Key: "hostname", Value: script.StringValue(parsed.Hostname())},
-		{Key: "port", Value: script.StringValue(parsed.Port())},
-		{Key: "pathname", Value: script.StringValue(pathnameFromURL(parsed))},
-		{Key: "search", Value: script.StringValue(searchFromURL(parsed))},
-		{Key: "hash", Value: script.StringValue(hashFromURL(parsed))},
-		{Key: "searchParams", Value: browserURLSearchParamsValue(parsed)},
-	}
-	entries = append(entries,
-		script.ObjectEntry{
-			Key: "toString",
-			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-				return script.StringValue(href), nil
-			}),
-		},
-		script.ObjectEntry{
-			Key: "toJSON",
-			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-				return script.StringValue(href), nil
-			}),
-		},
-	)
-	return script.ObjectValue(entries)
 }
 
 func protocolFromURL(parsed *neturl.URL) string {

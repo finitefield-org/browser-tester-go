@@ -41,6 +41,10 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 		return nil
 	}
 
+	if strings.HasPrefix(normalized, "url:") {
+		return setURLInstanceReferenceValue(session, normalized, value)
+	}
+
 	if strings.HasPrefix(normalized, "element:") {
 		return setElementReferenceValue(session, store, normalized, value)
 	}
@@ -74,6 +78,9 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 	case rest == "outerHTML":
 		return store.SetOuterHTML(nodeID, script.ToJSString(value))
 	case rest == "value":
+		if node.TagName == "select" {
+			return store.SetSelectValue(nodeID, script.ToJSString(value))
+		}
 		return store.SetFormControlValue(nodeID, script.ToJSString(value))
 	case rest == "checked":
 		if value.Kind != script.ValueKindBool {
