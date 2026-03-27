@@ -11,8 +11,10 @@ Owns:
 - `Error` and its classification helpers
 - `DebugView`
 - `MockRegistryView`
-- public live view and snapshot helper types such as `ClassListView`, `DatasetView`, `OptionLabel`, `OptionValue`, and `OptgroupLabel`
-- public tree-mutation helpers such as `TextContent`, `SetTextContent`, `ReplaceChildren`, and `CloneNode`
+- public live view and snapshot helper types such as `ClassListView`, `DatasetView`, `OptionLabel`,
+  `OptionValue`, and `OptgroupLabel`
+- public tree-mutation helpers such as `TextContent`, `SetTextContent`, `ReplaceChildren`, and
+  `CloneNode`
 - public seed/value helper types that are part of constructors or mock APIs
 
 Location:
@@ -95,7 +97,8 @@ Choose this layer when the question is:
 
 Owns:
 
-- family structs for fetch, dialogs, clipboard, location, open, close, print, scroll, matchMedia, downloads, file input, and storage
+- family structs for fetch, dialogs, clipboard, location, open, close, print, scroll, matchMedia,
+  downloads, file input, and storage
 - capture logs
 - failure injection
 - reset behavior
@@ -115,7 +118,10 @@ Choose this layer when the question is:
 1. Put long-lived state in the subsystem that owns that state.
 2. Keep `Harness` entry points thin and delegating.
 3. Do not let script-runtime types leak into DOM or runtime data models.
-4. Add a new public API only after deciding whether it belongs on `Harness`, `DebugView`, or a mock family.
-5. Add a new mock in `internal/runtime` or `internal/mocks`, then wire it through the public facade without bypassing the registry.
-6. Use explicit config fields for builder seeds and bootstrap failures. Do not hide them in storage or other unrelated state.
+4. Add a new public API only after deciding whether it belongs on `Harness`, `DebugView`, or a mock
+   family.
+5. Add a new mock in `internal/runtime` or `internal/mocks`, then wire it through the public facade
+   without bypassing the registry.
+6. Use explicit config fields for builder seeds and bootstrap failures. Do not hide them in storage
+   or other unrelated state.
 7. Check `../html-standard/` before implementing any new HTML or DOM slice.

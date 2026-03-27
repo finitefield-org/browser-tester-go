@@ -2,6 +2,19 @@ package dom
 
 import "fmt"
 
+func (s *Store) walkElementDescendantsPreOrder(id NodeID, visit func(*Node)) {
+	if s == nil {
+		return
+	}
+	node := s.nodes[id]
+	if node == nil {
+		return
+	}
+	for _, childID := range node.Children {
+		s.walkElementPreOrder(childID, visit)
+	}
+}
+
 func (s *Store) QuerySelectorWithin(rootID NodeID, selector string) (NodeID, bool, error) {
 	if s == nil {
 		return 0, false, fmt.Errorf("dom store is nil")
@@ -10,7 +23,7 @@ func (s *Store) QuerySelectorWithin(rootID NodeID, selector string) (NodeID, boo
 	if root == nil {
 		return 0, false, fmt.Errorf("invalid node id: %d", rootID)
 	}
-	parsed, err := parseSelectorSequence(selector)
+	parsed, err := parseSelectorExpression(selector)
 	if err != nil {
 		return 0, false, err
 	}
@@ -21,27 +34,14 @@ func (s *Store) QuerySelectorWithin(rootID NodeID, selector string) (NodeID, boo
 	}
 
 	var matches []NodeID
-	if root.Kind == NodeKindElement {
-		s.walkElementPreOrder(rootID, func(node *Node) {
-			if node == nil {
-				return
-			}
-			if parsed.matchesWithScope(s, node, scopeNodeID) {
-				matches = append(matches, node.ID)
-			}
-		})
-	} else {
-		for _, childID := range root.Children {
-			s.walkElementPreOrder(childID, func(node *Node) {
-				if node == nil {
-					return
-				}
-				if parsed.matchesWithScope(s, node, scopeNodeID) {
-					matches = append(matches, node.ID)
-				}
-			})
+	s.walkElementDescendantsPreOrder(rootID, func(node *Node) {
+		if node == nil {
+			return
 		}
-	}
+		if parsed.matchesWithScope(s, node, scopeNodeID) {
+			matches = append(matches, node.ID)
+		}
+	})
 
 	if len(matches) == 0 {
 		return 0, false, nil
@@ -57,7 +57,7 @@ func (s *Store) QuerySelectorAllWithin(rootID NodeID, selector string) (NodeList
 	if root == nil {
 		return NodeList{}, fmt.Errorf("invalid node id: %d", rootID)
 	}
-	parsed, err := parseSelectorSequence(selector)
+	parsed, err := parseSelectorExpression(selector)
 	if err != nil {
 		return NodeList{}, err
 	}
@@ -68,27 +68,14 @@ func (s *Store) QuerySelectorAllWithin(rootID NodeID, selector string) (NodeList
 	}
 
 	matches := make([]NodeID, 0, 4)
-	if root.Kind == NodeKindElement {
-		s.walkElementPreOrder(rootID, func(node *Node) {
-			if node == nil {
-				return
-			}
-			if parsed.matchesWithScope(s, node, scopeNodeID) {
-				matches = append(matches, node.ID)
-			}
-		})
-	} else {
-		for _, childID := range root.Children {
-			s.walkElementPreOrder(childID, func(node *Node) {
-				if node == nil {
-					return
-				}
-				if parsed.matchesWithScope(s, node, scopeNodeID) {
-					matches = append(matches, node.ID)
-				}
-			})
+	s.walkElementDescendantsPreOrder(rootID, func(node *Node) {
+		if node == nil {
+			return
 		}
-	}
+		if parsed.matchesWithScope(s, node, scopeNodeID) {
+			matches = append(matches, node.ID)
+		}
+	})
 
 	return newNodeList(matches), nil
 }
@@ -151,7 +138,7 @@ func (s *Store) Matches(nodeID NodeID, selector string) (bool, error) {
 	if node == nil {
 		return false, fmt.Errorf("invalid node id: %d", nodeID)
 	}
-	parsed, err := parseSelectorSequence(selector)
+	parsed, err := parseSelectorExpression(selector)
 	if err != nil {
 		return false, err
 	}
@@ -162,7 +149,7 @@ func (s *Store) Closest(nodeID NodeID, selector string) (NodeID, bool, error) {
 	if s == nil {
 		return 0, false, fmt.Errorf("dom store is nil")
 	}
-	parsed, err := parseSelectorSequence(selector)
+	parsed, err := parseSelectorExpression(selector)
 	if err != nil {
 		return 0, false, err
 	}

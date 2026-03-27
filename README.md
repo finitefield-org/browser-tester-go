@@ -1,7 +1,8 @@
 # browser-tester Go Workspace
 
-This directory is the Go implementation track for `browser-tester`.
-It is intentionally conservative: a thin public facade, explicit builder config, typed mock families, and bounded runtime slices.
+This directory is the Go implementation track for `browser-tester`. It is intentionally
+conservative: a thin public facade, explicit builder config, typed mock families, and bounded
+runtime slices.
 
 ## Public Surface
 
@@ -77,32 +78,116 @@ It is intentionally conservative: a thin public facade, explicit builder config,
   - `sessionStorageKey`
 - bounded current-script helper for inline scripts:
   - `documentCurrentScript`
-- bounded browser-global bridge for raw HTML bootstrap: `window` / `self` / `globalThis` / `top` / `parent` / `frames`, `document`, `location`, `history`, `navigator`, `URL`, `Intl.NumberFormat`, `localStorage`, `sessionStorage`, `matchMedia`, `console`, `clipboard`, and bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`)
+- bounded browser-global bridge for raw HTML bootstrap: `window` / `self` / `globalThis` / `top` /
+  `parent` / `frames`, `document`, `location`, `history`, `navigator`, `URL`, `Intl.NumberFormat`,
+  `localStorage`, `sessionStorage`, `matchMedia`, `console`, `clipboard`, and bounded timer globals
+  (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `requestAnimationFrame`,
+  `cancelAnimationFrame`, `queueMicrotask`)
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:
   - `expr(...)`
-- classic-JS inline script calls, bounded array and object literals, including array literal elisions, bounded object literal shorthand properties and methods, bounded object literal computed property names and methods, bounded object literal getter/setter accessors, bounded `throw` statements with catch-bound values and catch binding patterns, bounded `delete` expressions on local object, array, and string bindings including optional chaining and array `length`, unary `typeof` and logical negation `!`, bounded relational `in` operators on bounded object and array values, bounded relational `instanceof` operators on bounded class objects and bounded constructible plain function values, bounded conditional `?:` operator, bounded exponentiation `**` / `**=` operators, bounded bitwise and shift operators, bounded property assignment on existing local object/array bindings, private class fields, bounded private `in` operator on bounded class private fields, and bounded `super` property assignment, including class field initializers and computed class member names that can read `super`, even in base classes without `extends`, bounded prefix/postfix increment and decrement expressions on local bindings and object/array property chains, bounded spread/rest syntax in array/object literals and `let` / `const` / `var` binding patterns, with object literal spread also accepting string and array values, array/object destructuring patterns in `let` / `const` / `var` declarations with default binding values, including computed object binding keys, bounded `using` / `await using` declarations, bounded function-like parameter destructuring patterns with default values and rest identifiers, with malformed parameter syntax now rejecting with parse errors, bounded arrow functions with simple identifier/rest parameters and concise or block bodies, bounded async arrow functions with `await` expressions, plain `async function` declarations and expressions with `await` across bounded values, bounded async generator functions and async class methods with `await` / `yield` / `yield*` statements, plain `function` declarations with `return` statements and default parameter values plus bounded constructible plain function constructors with `this` property creation and `instanceof`, bounded `new.target` inside function and constructor bodies, top-level `await` at the dispatch entrypoint, bounded generator functions and expressions with standalone `yield` statements, `yield` expressions, and `yield*` delegation, including string values and final return values from iterator-like objects, plus nested `yield` in bounded block bodies, bounded loop bodies with explicit terminators, plus single-statement loop bodies with explicit terminators, bounded single-statement `if` / `else` control flow with explicit terminators, bounded `for...of` loops over arrays, bounded `for await...of` loops over arrays of awaited values, bounded `for...in` loops over object/array keys, bounded `switch` clauses, bounded `try` / `catch` / `finally` blocks, bounded `break` / `continue` statements across those control-flow bodies, including labeled loop / switch / try forms, named self-binding, and iterator result objects from `next()`, bounded module syntax through inline module scripts (`<script type="module" id="...">`), including `import` declarations, optional import attributes / options objects on bounded import syntax, `export` declarations and export specifier lists with `default` aliasing such as `import { default as name }` and `export { value as default }`, `export default class` declarations and anonymous default-exported async function / async generator forms, re-export syntax with `from`, including namespace re-exports like `export * as ns from ...`, dynamic `import()` with string-compatible specifiers and optional attributes objects against the bounded module registry, nullish coalescing with `??` across bounded values, numeric literals across decimal, hexadecimal, binary, and octal forms including numeric separators, plus `BigInt` literals, local `let` / `const` / `var` bindings, logical assignment operators and other bounded compound assignment operators on local bindings and object/array property chains, class declarations with `static` blocks, public `static` fields, malformed class body member sequences that reject with parse errors, class getter/setter accessors including private and computed names, async class methods, generator class methods, private fields and methods, computed fields and methods, instance fields, bounded static/prototype methods, bounded `extends` inheritance for class and constructible function values, bounded `super` property, method, and constructor calls, and bounded `new Class()` / `new (class {...})()` / `new (class extends Base {...})()` instantiation, template literals with bounded `${...}` interpolation plus tagged template literals with bounded function tags, bounded object-property access, bounded bracket access on object, array, and string values, array `length` lookups, and optional chaining plus optional calls across those bounded chains:
-  - bounded comma operator / sequence expressions are supported in classic-JS expressions, while commas inside array/object literals and call arguments still act as separators.
-  - unary `+` / `-` and `void` now work on bounded scalar values, with `+BigInt` still rejected explicitly in this slice.
+  - classic-JS inline script calls, bounded array and object literals, including array literal
+    elisions, bounded object literal shorthand properties and methods with any bound value, bounded
+    object literal computed property names and methods, bounded object literal getter/setter
+    accessors, bounded `throw` statements with catch-bound values and catch binding patterns,
+    bounded `delete` expressions on local object, array, string, and primitive number/boolean/bigint
+    bindings including optional chaining and array `length`, unary `typeof`, logical negation `!`,
+    and logical `&&`/`||`, bounded relational `in` operators on bounded object and array values,
+    bounded relational `instanceof` operators on bounded class objects and bounded constructible
+    plain function values, bounded equality operators `==`, `!=`, `===`, and `!==` across bounded
+    values, bounded conditional `?:` operator, bounded exponentiation `**` / `**=` operators,
+    bounded bitwise and shift operators, bounded property assignment on existing local object/array
+    bindings with getter-only property assignments failing with runtime errors, private class
+    fields, bounded private `in` operator on bounded class private fields, and bounded `super`
+    property assignment, including class field initializers and computed class member names that can
+    read `super`, even in base classes without `extends`, while `super` outside bounded class/object
+    methods rejects with parse errors, bounded prefix/postfix increment and decrement expressions on
+    local bindings and object/array property chains, bounded spread/rest syntax in array/object
+    literals and `let` / `const` / `var` binding patterns, with object literal spread also accepting
+    string and array values, array/object destructuring patterns in `let` / `const` / `var`
+    declarations with default binding values, including computed object binding keys, bounded
+    `using` / `await using` declarations, bounded function-like parameter destructuring patterns
+    with default values and rest identifiers, with malformed parameter syntax now rejecting with
+    parse errors, bounded arrow functions with simple identifier/rest parameters and concise or
+    block bodies, bounded async arrow functions with `await` expressions, plain `async function`
+    declarations and expressions with `await` across bounded values, bounded async generator
+    functions and async class methods with `await` / `yield` / `yield*` statements, plain `function`
+    declarations with `return` statements and default parameter values plus bounded constructible
+    plain function constructors with `this` property creation and `instanceof`, bounded `new.target`
+    inside function and constructor bodies, top-level `await` at the dispatch entrypoint, bounded
+    generator functions and expressions with standalone `yield` statements, `yield` expressions, and
+    `yield*` delegation, including string values and final return values from iterator-like objects,
+    with scalar inputs failing with runtime errors in this slice, plus nested `yield` in bounded
+    block bodies, bounded loop bodies with explicit terminators, plus single-statement loop bodies
+    with explicit terminators, bounded single-statement `if` / `else` control flow with explicit
+    terminators, bounded `for...of` loops over arrays, bounded `for await...of` loops over arrays of
+    awaited values inside bounded async bodies, bounded `for...in` loops over object/array keys,
+    bounded `switch` clauses, bounded `try` / `catch` / `finally` blocks, bounded `break` /
+    `continue` statements across those control-flow bodies, including labeled loop / switch / try
+    forms, named self-binding, and iterator result objects from `next()`, bounded module syntax
+    through inline module scripts (`<script type="module" id="...">`), including `import`
+    declarations, optional import attributes / options objects on bounded import syntax, `export`
+    declarations and export specifier lists with `default` aliasing such as `import { default as
+    name }` and `export { value as default }`, `export default class` declarations and anonymous
+    default-exported plain function / async function / async generator forms, re-export syntax with
+    `from`, including optional import attributes / options objects and namespace re-exports like
+    `export * as ns from ...`, dynamic `import()` with string-compatible specifiers and optional
+    attributes objects, including bare expression statements, against the bounded module registry,
+    nullish coalescing with `??` across bounded values, numeric literals across decimal,
+    hexadecimal, binary, and octal forms including numeric separators, plus `BigInt` literals, local
+    `let` / `const` / `var` bindings, logical assignment operators and other bounded compound
+    assignment operators on local bindings and object/array property chains, class declarations with
+    `static` blocks, public `static` fields, malformed class body member sequences that reject with
+    parse errors, class getter/setter accessors including private and computed names, async class
+    methods, generator class methods, private fields and methods, computed fields and methods,
+    instance fields, bounded static/prototype methods, bounded extends inheritance for class and
+    constructible function values, bounded super property, method, and constructor calls, and
+    bounded `new Class()` / `new (class {...})()` / `new (class extends Base {...})()`
+    instantiation, template literals with bounded `${...}` interpolation plus tagged template
+    literals with bounded function tags and interpolation, with non-callable tags failing explicitly
+    at runtime, bounded object-property access, bounded bracket access on object, array, string, and
+    primitive number/boolean/bigint values, dot access on number/boolean/bigint/string/array values
+    yielding `undefined` for unknown properties, array `length` lookups, and optional chaining plus
+    optional calls across those bounded chains:
+  - bounded comma operator / sequence expressions are supported in classic-JS expressions, while
+    commas inside array/object literals and call arguments still act as separators.
+  - unary `+` / `-` and `void` now work on bounded scalar values, with `+BigInt` still rejected
+    explicitly in this slice.
   - object literal async / generator methods are supported in the same bounded object-literal slice.
-  - object literal methods with private names reject with parse errors in this bounded object-literal slice.
-  - malformed object literal shorthand sequences reject with parse errors in this bounded object-literal slice.
-  - object literal methods can read `super` through bounded prototype targets in the same bounded object-literal slice.
-- object literal methods can also read `super` through bounded null-prototype object literals in the same bounded object-literal slice.
-- object literal methods can also write `super` through bounded null-prototype object literals in the same bounded object-literal slice, including compound assignments.
-- object literal and class methods can also delete `super` through bounded prototype targets and bounded null-prototype object literals in the same bounded object-literal/class-method slice.
-- class expressions are supported in the same bounded class slice, can be instantiated directly with bounded `new` expressions, and can be used as bounded `extends` bases, including class-valued expressions returned from bounded functions and bounded constructible function values with bounded `.prototype` access.
-  - static class members named `prototype` are supported in the same bounded class slice without breaking class instantiation, including setter-only `prototype` members that read back as `undefined` while keeping the hidden class prototype slot intact.
+  - object literal methods with private names reject with parse errors in this bounded
+    object-literal slice.
+  - malformed object literal shorthand sequences reject with parse errors in this bounded
+    object-literal slice.
+  - object literal methods can read `super` through bounded prototype targets in the same bounded
+    object-literal slice.
+- object literal methods can also read `super` through bounded null-prototype object literals in the
+  same bounded object-literal slice.
+- object literal methods can also write `super` through bounded null-prototype object literals in
+  the same bounded object-literal slice, including compound assignments.
+- object literal and class methods can also delete `super` through bounded prototype targets and
+  bounded null-prototype object literals in the same bounded object-literal/class-method slice.
+- class expressions are supported in the same bounded class slice, can be instantiated directly with
+  bounded `new` expressions, and can be used as bounded `extends` bases, including class-valued
+  expressions returned from bounded functions and bounded constructible function values with bounded
+  `.prototype` access.
+  - static class members named `prototype` are supported in the same bounded class slice without
+    breaking class instantiation, including setter-only `prototype` members that read back as
+    `undefined` while keeping the hidden class prototype slot intact.
   - `extends null` is accepted as a bounded class inheritance form.
-  - classic-script `import.meta` syntax outside module scripts is rejected with a parse error.
-  - reserved declaration names such as `this`, `void`, `function`, and `class` reject with parse errors in declaration positions and binding patterns.
+  - classic-script `import.meta` syntax outside module scripts is rejected with a parse error, while
+    bounded module scripts expose `import.meta` as an object with a `url` property.
+  - module import attributes / options objects also apply to default + namespace import combinations
+    such as `import seeded, * as ns from ... with { ... }`.
+  - reserved declaration names such as `this`, `void`, `function`, and `class` reject with parse
+    errors in declaration positions and binding patterns.
   - `new.target` outside function or constructor bodies is rejected with a parse error.
   - `host.method(...)`
   - `host?.method(...)`
   - `host?.["method"](...)`
   - bounded `new Class(...args)` constructor arguments in the class instantiation slice
-  - bounded `this` expressions resolve to the current receiver inside function and method bodies and to `undefined` at top level
+  - bounded `this` expressions resolve to the current receiver inside function and method bodies and
+    to `undefined` at top level
   - `obj.prop`
   - `obj["prop"]`
   - `str[0]`
@@ -111,49 +196,121 @@ It is intentionally conservative: a thin public facade, explicit builder config,
   - `obj?.["prop"]`
   - `obj.write?.()`
   - plain backtick-delimited string literals
-- remaining JS syntax gaps are tracked in `TODO.md` until the bounded classic-JS slice expands further.
-- bounded module syntax also supports default import plus namespace import combinations such as `import seeded, * as ns from ...`.
-- bounded loop headers also support `using` declarations inside `for...of` and `for...in` loops, plus `await using` declarations inside `for await...of` loops.
-- bounded call argument spread accepts string values, bounded array values, and iterator-like objects with a `next()` method.
-- bounded array spread and array destructuring also accept string values and iterator-like objects with a `next()` method.
-- bounded `for...of` loops accept bounded string values, bounded array values, and iterator-like objects with a `next()` method, and bounded `for await...of` loops also accept async iterator-like objects whose `next()` returns a promise value, including destructuring binding patterns.
-- bounded `for...in` loops accept bounded string values, bounded object values, and bounded array values.
-- bounded object spread treats `null` and `undefined` as no-op spreads, while still accepting string, array, object, and other primitive values as no-op spreads.
-- bounded bracket access also reads string values by index and exposes string `length`.
-- nested `yield*` delegation inside bounded generator block bodies is supported for both sync and async generators, including async iterator-like objects whose `next()` returns a promise value and the final return value from iterator-like objects when delegation completes.
-- bounded generator `next(arg)` calls accept arguments in this slice, with sent values forwarded into declaration initializers, plain binding assignments, and object and array property-assignment RHSs, plus currently suspended `yield*` delegated iterators; undeclared assignments remain unsupported in this slice; `return(value)` closes the iterator in this slice, and `throw(value)` remains an explicit runtime error in this slice, with an omitted argument treated as `undefined`.
+- remaining JS syntax gaps are tracked in `TODO.md` until the bounded classic-JS slice expands
+  further.
+- bounded module syntax also supports default import plus namespace import combinations such as
+  `import seeded, * as ns from ...`.
+- bare `import(...)` expression statements also use the bounded dynamic-import path in classic
+  scripts.
+- anonymous default-exported plain function forms are also supported in the bounded module syntax
+  slice.
+- bounded loop headers also support `using` declarations inside `for...of` and `for...in` loops,
+  plus `await using` declarations inside `for await...of` loops.
+- bounded call argument spread accepts string values, bounded array values, and iterator-like
+  objects with a `next()` method.
+- bounded array spread and array destructuring also accept string values and iterator-like objects
+  with a `next()` method.
+- bounded `for...of` loops accept bounded string values, bounded array values, and iterator-like
+  objects with a `next()` method, and bounded `for await...of` loops also accept async iterator-like
+  objects whose `next()` returns a promise value, including destructuring binding patterns.
+- bounded `for...in` loops accept bounded string values, bounded object values, and bounded array
+  values.
+- bounded object spread treats `null` and `undefined` as no-op spreads, while still accepting
+  string, array, object, and other primitive values as no-op spreads.
+- bounded bracket access also reads string values by index and exposes string `length`, and dot
+  access on string and array values yields `undefined` for unknown properties.
+- bounded equality comparisons (`==`, `!=`, `===`, `!==`) now work across bounded values, including
+  object and array alias identity and scalar coercion.
+- bounded relational `in` operators now report runtime errors on non-object right-hand values
+  instead of generic unsupported errors, bounded relational `instanceof` operators now report
+  runtime errors on non-class right-hand values instead of generic unsupported errors, bounded
+  `for...of` and `for...in` loops now report runtime errors on non-iterable and non-object
+  right-hand values respectively instead of generic unsupported errors, and dynamic `import()`
+  optional attributes now report runtime errors when the attributes value is not an object.
+- nested `yield*` delegation inside bounded generator block bodies is supported for both sync and
+  async generators, including async iterator-like objects whose `next()` returns a promise value and
+  the final return value from iterator-like objects when delegation completes.
+- bounded generator `next(arg)` calls accept arguments in this slice, with sent values forwarded
+  into declaration initializers, plain binding assignments, and object and array property-assignment
+  RHSs, plus currently suspended `yield*` delegated iterators; undeclared assignments remain
+  unsupported in this slice; `return(value)` closes the iterator in this slice, and `throw(value)`
+  remains an explicit runtime error in this slice, with an omitted argument treated as `undefined`.
 - bounded `window.name` helpers for inline scripts:
   - `windowName`
   - `setWindowName`
 - `Prompt` returns the submitted text plus a boolean that is `false` when the prompt is canceled.
-- `DebugView` is read-only and exposes inspection state such as `URL`, location parts (`LocationOrigin`, `LocationProtocol`, `LocationHost`, `LocationHostname`, `LocationPort`, `LocationPathname`, `LocationSearch`, `LocationHash`), `HTML`, `InitialHTML`, `DOMReady`, `DOMError`, `NowMs`, `DumpDOM`, `NodeCount`, `ScriptCount`, `ImageCount`, `FormCount`, `FocusedSelector`, `FocusedNodeID`, `TargetNodeID`, `HistoryLength`, `HistoryState`, `HistoryIndex`, `HistoryEntries`, `VisitedURLs`, `HistoryScrollRestoration`, `PendingTimers`, `PendingAnimationFrames`, `PendingMicrotasks`, `ScrollPosition`, `WindowName`, `Clipboard`, `MatchMediaRules`, `EventListeners`, `LocalStorage`, `SessionStorage`, `DocumentCookie`, `CookieJar`, `NavigationLog`, `Interactions`, and the configured `RandomSeed` when one was set on the builder.
-- `DebugView` also exposes the configured failure seed readouts `OpenFailure`, `CloseFailure`, `PrintFailure`, and `ScrollFailure` when those builder fields are set.
-- `DebugView.NodeCount()` exposes the current DOM node count as a read-only inspection integer after the DOM has been bootstrapped.
-- `DebugView.ScriptCount()` exposes the current script element count as a read-only inspection integer after the DOM has been bootstrapped, `DebugView.ImageCount()` does the same for the current image element count, `DebugView.FormCount()` does the same for the current form element count, and `DebugView.SelectCount()` does the same for the current select element count.
-- `DebugView.TemplateCount()` exposes the current template element count as a read-only inspection integer, `DebugView.TableCount()` does the same for the current table element count, `DebugView.ButtonCount()` does the same for the current button element count, `DebugView.TextAreaCount()` does the same for the current textarea element count, `DebugView.InputCount()` does the same for the current input element count, `DebugView.FieldsetCount()` does the same for the current fieldset element count, `DebugView.LegendCount()` does the same for the current legend element count, `DebugView.OutputCount()` does the same for the current output element count, `DebugView.LabelCount()` does the same for the current label element count, `DebugView.ProgressCount()` does the same for the current progress element count, `DebugView.MeterCount()` does the same for the current meter element count, `DebugView.AudioCount()` / `DebugView.VideoCount()` do the same for the current audio and video element counts, `DebugView.IframeCount()` does the same for the current iframe element count, `DebugView.EmbedCount()` does the same for the current embed element count, and `DebugView.TrackCount()` does the same for the current track element count.
-- `DebugView.PictureCount()` exposes the current picture element count as a read-only inspection integer.
-- `DebugView.SourceCount()` exposes the current source element count as a read-only inspection integer.
-- `DebugView.DialogCount()` exposes the current dialog element count as a read-only inspection integer.
-- `DebugView.DetailsCount()` exposes the current details element count as a read-only inspection integer.
-- `DebugView.SummaryCount()` exposes the current summary element count as a read-only inspection integer.
-- `DebugView.SectionCount()` exposes the current section element count as a read-only inspection integer.
+- `DebugView` is read-only and exposes inspection state such as `URL`, location parts
+  (`LocationOrigin`, `LocationProtocol`, `LocationHost`, `LocationHostname`, `LocationPort`,
+  `LocationPathname`, `LocationSearch`, `LocationHash`), `HTML`, `InitialHTML`, `DOMReady`,
+  `DOMError`, `NowMs`, `DumpDOM`, `NodeCount`, `ScriptCount`, `ImageCount`, `FormCount`,
+  `FocusedSelector`, `FocusedNodeID`, `TargetNodeID`, `HistoryLength`, `HistoryState`,
+  `HistoryIndex`, `HistoryEntries`, `VisitedURLs`, `HistoryScrollRestoration`, `PendingTimers`,
+  `PendingAnimationFrames`, `PendingMicrotasks`, `ScrollPosition`, `WindowName`, `Clipboard`,
+  `MatchMediaRules`, `EventListeners`, `LocalStorage`, `SessionStorage`, `DocumentCookie`,
+  `CookieJar`, `NavigationLog`, `Interactions`, and the configured `RandomSeed` when one was set on
+  the builder.
+- `DebugView` also exposes the configured failure seed readouts `OpenFailure`, `CloseFailure`,
+  `PrintFailure`, and `ScrollFailure` when those builder fields are set.
+- `DebugView.NodeCount()` exposes the current DOM node count as a read-only inspection integer after
+  the DOM has been bootstrapped.
+- `DebugView.ScriptCount()` exposes the current script element count as a read-only inspection
+  integer after the DOM has been bootstrapped, `DebugView.ImageCount()` does the same for the
+  current image element count, `DebugView.FormCount()` does the same for the current form element
+  count, and `DebugView.SelectCount()` does the same for the current select element count.
+- `DebugView.TemplateCount()` exposes the current template element count as a read-only inspection
+  integer, `DebugView.TableCount()` does the same for the current table element count,
+  `DebugView.ButtonCount()` does the same for the current button element count,
+  `DebugView.TextAreaCount()` does the same for the current textarea element count,
+  `DebugView.InputCount()` does the same for the current input element count,
+  `DebugView.FieldsetCount()` does the same for the current fieldset element count,
+  `DebugView.LegendCount()` does the same for the current legend element count,
+  `DebugView.OutputCount()` does the same for the current output element count,
+  `DebugView.LabelCount()` does the same for the current label element count,
+  `DebugView.ProgressCount()` does the same for the current progress element count,
+  `DebugView.MeterCount()` does the same for the current meter element count,
+  `DebugView.AudioCount()` / `DebugView.VideoCount()` do the same for the current audio and video
+  element counts, `DebugView.IframeCount()` does the same for the current iframe element count,
+  `DebugView.EmbedCount()` does the same for the current embed element count, and
+  `DebugView.TrackCount()` does the same for the current track element count.
+- `DebugView.PictureCount()` exposes the current picture element count as a read-only inspection
+  integer.
+- `DebugView.SourceCount()` exposes the current source element count as a read-only inspection
+  integer.
+- `DebugView.DialogCount()` exposes the current dialog element count as a read-only inspection
+  integer.
+- `DebugView.DetailsCount()` exposes the current details element count as a read-only inspection
+  integer.
+- `DebugView.SummaryCount()` exposes the current summary element count as a read-only inspection
+  integer.
+- `DebugView.SectionCount()` exposes the current section element count as a read-only inspection
+  integer.
 - `DebugView.MainCount()` exposes the current main element count as a read-only inspection integer.
-- `DebugView.ArticleCount()` exposes the current article element count as a read-only inspection integer.
+- `DebugView.ArticleCount()` exposes the current article element count as a read-only inspection
+  integer.
 - `DebugView.NavCount()` exposes the current nav element count as a read-only inspection integer.
-- `DebugView.AsideCount()` exposes the current aside element count as a read-only inspection integer.
-- `DebugView.FigureCount()` exposes the current figure element count as a read-only inspection integer.
-- `DebugView.FigcaptionCount()` exposes the current figcaption element count as a read-only inspection integer.
-- `DebugView.HeaderCount()` exposes the current header element count as a read-only inspection integer.
-- `DebugView.FooterCount()` exposes the current footer element count as a read-only inspection integer.
-- `DebugView.AddressCount()` exposes the current address element count as a read-only inspection integer.
-- `DebugView.BlockquoteCount()` exposes the current blockquote element count as a read-only inspection integer.
-- `DebugView.ParagraphCount()` exposes the current paragraph element count as a read-only inspection integer.
+- `DebugView.AsideCount()` exposes the current aside element count as a read-only inspection
+  integer.
+- `DebugView.FigureCount()` exposes the current figure element count as a read-only inspection
+  integer.
+- `DebugView.FigcaptionCount()` exposes the current figcaption element count as a read-only
+  inspection integer.
+- `DebugView.HeaderCount()` exposes the current header element count as a read-only inspection
+  integer.
+- `DebugView.FooterCount()` exposes the current footer element count as a read-only inspection
+  integer.
+- `DebugView.AddressCount()` exposes the current address element count as a read-only inspection
+  integer.
+- `DebugView.BlockquoteCount()` exposes the current blockquote element count as a read-only
+  inspection integer.
+- `DebugView.ParagraphCount()` exposes the current paragraph element count as a read-only inspection
+  integer.
 - `DebugView.PreCount()` exposes the current pre element count as a read-only inspection integer.
 - `DebugView.MarkCount()` exposes the current mark element count as a read-only inspection integer.
 - `DebugView.QCount()` exposes the current q element count as a read-only inspection integer.
 - `DebugView.CiteCount()` exposes the current cite element count as a read-only inspection integer.
 - `DebugView.AbbrCount()` exposes the current abbr element count as a read-only inspection integer.
-- `DebugView.StrongCount()` exposes the current strong element count as a read-only inspection integer.
+- `DebugView.StrongCount()` exposes the current strong element count as a read-only inspection
+  integer.
 - `DebugView.SpanCount()` exposes the current span element count as a read-only inspection integer.
 - `DebugView.DataCount()` exposes the current data element count as a read-only inspection integer.
 - `DebugView.DfnCount()` exposes the current dfn element count as a read-only inspection integer.
@@ -163,34 +320,53 @@ It is intentionally conservative: a thin public facade, explicit builder config,
 - `DebugView.RtCount()` exposes the current rt element count as a read-only inspection integer.
 - `DebugView.VarCount()` exposes the current var element count as a read-only inspection integer.
 - `DebugView.CodeCount()` exposes the current code element count as a read-only inspection integer.
-- `DebugView.SmallCount()` exposes the current small element count as a read-only inspection integer.
+- `DebugView.SmallCount()` exposes the current small element count as a read-only inspection
+  integer.
 - `DebugView.TimeCount()` exposes the current time element count as a read-only inspection integer.
-- `DebugView.OptionCount()` exposes the current option count as a read-only inspection integer, and `DebugView.SelectedOptionCount()` does the same for the selected option count.
+- `DebugView.OptionCount()` exposes the current option count as a read-only inspection integer, and
+  `DebugView.SelectedOptionCount()` does the same for the selected option count.
 - `DebugView.OptgroupCount()` exposes the current optgroup count as a read-only inspection integer.
-- `DebugView.LinkCount()` exposes the current link count as a read-only inspection integer, and `DebugView.AnchorCount()` does the same for the current anchor count.
+- `DebugView.LinkCount()` exposes the current link count as a read-only inspection integer, and
+  `DebugView.AnchorCount()` does the same for the current anchor count.
 - `DebugView.OptionLabels()` exposes the current option labels as a read-only inspection slice.
-- `DebugView.SelectedOptionLabels()` exposes the current selected option labels as a read-only inspection slice.
+- `DebugView.SelectedOptionLabels()` exposes the current selected option labels as a read-only
+  inspection slice.
 - `DebugView.OptionValues()` exposes the current option values as a read-only inspection slice.
-- `DebugView.SelectedOptionValues()` exposes the current selected option values as a read-only inspection slice.
+- `DebugView.SelectedOptionValues()` exposes the current selected option values as a read-only
+  inspection slice.
 - `DebugView.OptgroupLabels()` exposes the current optgroup labels as a read-only inspection slice.
 - `DebugView.HistoryEntries()` exposes the current history stack as a read-only inspection slice.
 - `DebugView.HistoryIndex()` exposes the current history cursor as a read-only inspection integer.
-- `DebugView.VisitedURLs()` exposes the current visited URL snapshot as a read-only inspection slice derived from the session history.
-- `DebugView.DOMReady()` and `DOMError()` expose DOM initialization readiness and the latest DOM parse/runtime failure text as read-only inspection data.
-- `DebugView.LastInlineScriptHTML()` exposes the most recently executed classic inline script outerHTML as read-only inspection data.
-- `DebugView.InitialHTML()` exposes the original builder HTML input as read-only inspection data without bootstrapping the DOM.
-- `DebugView.PendingTimers()` and `PendingAnimationFrames()` expose scheduled timer and animation-frame snapshots as read-only inspection slices.
-- `DebugView.PendingMicrotasks()` exposes the current queued microtask sources as a read-only inspection slice.
+- `DebugView.VisitedURLs()` exposes the current visited URL snapshot as a read-only inspection slice
+  derived from the session history.
+- `DebugView.DOMReady()` and `DOMError()` expose DOM initialization readiness and the latest DOM
+  parse/runtime failure text as read-only inspection data.
+- `DebugView.LastInlineScriptHTML()` exposes the most recently executed classic inline script
+  outerHTML as read-only inspection data.
+- `DebugView.InitialHTML()` exposes the original builder HTML input as read-only inspection data
+  without bootstrapping the DOM.
+- `DebugView.PendingTimers()` and `PendingAnimationFrames()` expose scheduled timer and
+  animation-frame snapshots as read-only inspection slices.
+- `DebugView.PendingMicrotasks()` exposes the current queued microtask sources as a read-only
+  inspection slice.
 - `DebugView.FetchCalls()` exposes the captured fetch call trace as a read-only inspection slice.
 - `DebugView.CookieJar()` exposes the current cookie jar as a read-only inspection map.
-- `DebugView.DialogAlerts()`, `DialogConfirmMessages()`, and `DialogPromptMessages()` expose captured dialog messages as read-only inspection slices.
-- `DebugView.DownloadArtifacts()` and `FileInputSelections()` expose captured download and file-input traces as read-only inspection slices.
-- `DebugView.StorageEvents()` exposes the captured storage change trace as a read-only inspection slice.
-- `DebugView.OpenCalls()`, `CloseCalls()`, `PrintCalls()`, `ScrollCalls()`, and `MatchMediaCalls()` expose browser-action and matchMedia call traces as read-only inspection slices.
-- `DebugView.MatchMediaListenerCalls()` exposes the captured matchMedia listener trace as a read-only inspection slice.
-- `DebugView.ClipboardWrites()` exposes the captured clipboard write trace as a read-only inspection slice.
-- `DebugView.EventListeners()` exposes the captured DOM event listener registrations as a read-only inspection slice.
-- `DebugView.FetchResponseRules()` and `FetchErrorRules()` expose configured fetch response/error rules as read-only inspection slices.
+- `DebugView.DialogAlerts()`, `DialogConfirmMessages()`, and `DialogPromptMessages()` expose
+  captured dialog messages as read-only inspection slices.
+- `DebugView.DownloadArtifacts()` and `FileInputSelections()` expose captured download and
+  file-input traces as read-only inspection slices.
+- `DebugView.StorageEvents()` exposes the captured storage change trace as a read-only inspection
+  slice.
+- `DebugView.OpenCalls()`, `CloseCalls()`, `PrintCalls()`, `ScrollCalls()`, and `MatchMediaCalls()`
+  expose browser-action and matchMedia call traces as read-only inspection slices.
+- `DebugView.MatchMediaListenerCalls()` exposes the captured matchMedia listener trace as a
+  read-only inspection slice.
+- `DebugView.ClipboardWrites()` exposes the captured clipboard write trace as a read-only inspection
+  slice.
+- `DebugView.EventListeners()` exposes the captured DOM event listener registrations as a read-only
+  inspection slice.
+- `DebugView.FetchResponseRules()` and `FetchErrorRules()` expose configured fetch response/error
+  rules as read-only inspection slices.
 - assertion helpers:
   - `AssertText`
   - `AssertValue`
@@ -233,20 +409,70 @@ It is intentionally conservative: a thin public facade, explicit builder config,
 ## Current Scope
 
 - remaining JS syntax gaps are tracked in `TODO.md`.
-- The `DebugView` readouts also include the configured builder failure seed state via `OpenFailure`, `CloseFailure`, `PrintFailure`, and `ScrollFailure`.
+- The `DebugView` readouts also include the configured builder failure seed state via `OpenFailure`,
+  `CloseFailure`, `PrintFailure`, and `ScrollFailure`.
 - `DebugView.HistoryEntries()` exposes the current history stack as a read-only inspection slice.
-- The selector engine also supports a bounded attribute selector slice (`[attr]`, `[attr=value]`, `[attr~=value]`, `[attr|=value]`, `[attr^=value]`, `[attr$=value]`, and `[attr*=value]`, plus bounded `i` / `s` flags on value operators) plus a bounded descendant/child/sibling combinator slice on top of the simple tag/id/class forms, plus a bounded pseudo-class slice (`:root`, `:scope`, `:defined`, `:state(identifier)`, `:active`, `:hover`, `:empty`, `:checked`, `:indeterminate`, `:autofill`, `:-webkit-autofill`, `:default`, `:enabled`, `:disabled`, `:required`, `:optional`, `:read-only`, `:read-write`, `:valid`, `:invalid`, `:user-valid`, `:user-invalid`, `:in-range`, `:out-of-range`, `:first-child`, `:last-child`, `:first-of-type`, `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()`, `:nth-of-type()`, `:nth-last-child()`, `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`, `:placeholder-shown`, `:blank`, `:heading`, `:heading(integer#)`, `:playing`, `:paused`, `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`, `:open`, `:focus`, `:focus-visible`, `:focus-within`, `:target`, `:target-within`, `:is()`, `:where()`, `:not()`, and `:has()`). Document queries treat `:scope` as the document root scope, while element-level `Matches` and `Closest` use the element itself as scope; `:blank` is approximated for text-like inputs and textareas with empty or whitespace-only values, `:local-link` is approximated as a same-document link against the current session URL, and `:visited` is approximated against the current session history URLs. Custom element states are approximated through a tokenized `state` attribute on custom elements.
-- Script DOM query helpers are available through host bindings for `querySelector` / `querySelectorAll` / `matches` / `closest`, `querySelectorAll` returns a minimal snapshot `NodeList`, a minimal live `HTMLCollection` covers `children`, `document.images`, `document.forms`, `form.elements`, `fieldset.elements`, `select.options`, `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`, `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and `template.content.childNodes`.
-- Inline `<script>` blocks are preserved as raw text and execute during bootstrap through the bounded script host bridge, so HTML source can mutate the live DOM.
-- Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` / `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same DOM slice through the facade.
-- Internal bounded `classList` / `dataset` helpers still live in `internal/dom` and remain the source of truth for the live views.
-- The public tree-mutation slice (`InnerHTML`, `TextContent`, `OuterHTML`, `SetInnerHTML`, `ReplaceChildren`, `CloneNode`, `SetTextContent`, `SetOuterHTML`, `InsertAdjacentHTML`, `RemoveNode`, `WriteHTML`) now delegates into `internal/dom`; on `textarea`, content mutations that change its contents keep the reset default value in sync, `CloneNode()` duplicates the selected node and inserts the clone after the source, and `WriteHTML()` provides the bounded document-write-style replay slice with rollback of DOM and session state on failure.
-- Bounded web-storage helpers for inline scripts are available through `host:localStorageGetItem()` / `host:localStorageSetItem()` / `host:localStorageRemoveItem()` / `host:localStorageClear()` / `host:localStorageLength()` / `host:localStorageKey()` and `host:sessionStorageGetItem()` / `host:sessionStorageSetItem()` / `host:sessionStorageRemoveItem()` / `host:sessionStorageClear()` / `host:sessionStorageLength()` / `host:sessionStorageKey()`, and storage mutations are captured as ordered `Events()` with explicit `seed` / `set` / `remove` / `clear` operations.
-- Phase 5 hardening already includes seeded fuzz/property coverage for the script, selector, timer/scheduler, and location/history boundaries.
-- Phase 5 hardening also includes seeded fuzz/property coverage for the cookie and `window.name` boundaries.
+- The selector engine also supports a bounded attribute selector slice (`[attr]`, `[attr=value]`,
+  `[attr~=value]`, `[attr|=value]`, `[attr^=value]`, `[attr$=value]`, and `[attr*=value]`, plus
+  bounded `i` / `s` flags on value operators) plus a bounded descendant/child/sibling combinator
+  slice on top of the simple tag/id/class forms, comma-separated selector lists, plus a bounded
+  pseudo-class slice (`:root`, `:scope`, `:defined`, `:state(identifier)`, `:active`, `:hover`,
+  `:empty`, `:checked`, `:indeterminate`, `:autofill`, `:-webkit-autofill`, `:default`, `:enabled`,
+  `:disabled`, `:required`, `:optional`, `:read-only`, `:read-write`, `:valid`, `:invalid`,
+  `:user-valid`, `:user-invalid`, `:in-range`, `:out-of-range`, `:first-child`, `:last-child`,
+  `:first-of-type`, `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()` /
+  `:nth-last-child()` with bounded `of selector-list` filters, `:nth-of-type()`,
+  `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
+  `:placeholder-shown`, `:blank`, `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
+  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
+  `:open`, `:focus`, `:focus-visible`, `:focus-within`, `:target`, `:target-within`, `:is()` /
+  `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
+  and sibling-relative selectors). Document queries treat `:scope` as the document root scope, while
+  element-level `Matches` and `Closest` use the element itself as scope and element-bound
+  `querySelector` / `querySelectorAll` search descendants only; `:blank` is approximated for
+  text-like inputs and textareas with empty or whitespace-only values, `:local-link` is approximated
+  as a same-document link against the current session URL, `:visited` is approximated against the
+  current session history URLs, and `:enabled` / `:disabled` respect disabled fieldset and optgroup
+  ancestry while disabled controls are ignored by the constraint-validation pseudo-classes. Custom
+  element states are approximated through a tokenized `state` attribute on custom elements.
+- `:read-only` / `:read-write` also honor inherited `contenteditable` on non-input/textarea
+  elements.
+- Script DOM query helpers are available through host bindings for `querySelector` /
+  `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
+  element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
+  `NodeList`, a minimal live `HTMLCollection` covers `children`, `document.images`,
+  `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
+  `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
+  `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
+  `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
+  `template.content.childNodes`.
+- Inline `<script>` blocks are preserved as raw text and execute during bootstrap through the
+  bounded script host bridge, so HTML source can mutate the live DOM.
+- Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
+  `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
+  DOM slice through the facade.
+- Internal bounded `classList` / `dataset` helpers still live in `internal/dom` and remain the
+  source of truth for the live views.
+- The public tree-mutation slice (`InnerHTML`, `TextContent`, `OuterHTML`, `SetInnerHTML`,
+  `ReplaceChildren`, `CloneNode`, `SetTextContent`, `SetOuterHTML`, `InsertAdjacentHTML`,
+  `RemoveNode`, `WriteHTML`) now delegates into `internal/dom`; on `textarea`, content mutations
+  that change its contents keep the reset default value in sync, `CloneNode()` duplicates the
+  selected node and inserts the clone after the source, and `WriteHTML()` provides the bounded
+  document-write-style replay slice with rollback of DOM and session state on failure.
+- Bounded web-storage helpers for inline scripts are available through `host:localStorageGetItem()`
+  / `host:localStorageSetItem()` / `host:localStorageRemoveItem()` / `host:localStorageClear()` /
+  `host:localStorageLength()` / `host:localStorageKey()` and `host:sessionStorageGetItem()` /
+  `host:sessionStorageSetItem()` / `host:sessionStorageRemoveItem()` / `host:sessionStorageClear()`
+  / `host:sessionStorageLength()` / `host:sessionStorageKey()`, and storage mutations are captured
+  as ordered `Events()` with explicit `seed` / `set` / `remove` / `clear` operations.
+- Phase 5 hardening already includes seeded fuzz/property coverage for the script, selector,
+  timer/scheduler, and location/history boundaries.
+- Phase 5 hardening also includes seeded fuzz/property coverage for the cookie and `window.name`
+  boundaries.
 - Phase 5 hardening also includes seeded fuzz/property coverage for the mock registry boundaries.
 - Phase 5 also has a repeatable release checklist in `doc/release-checklist.md`.
-- Legacy and deprecated spec branches are not implementation targets unless the capability matrix explicitly lists a compatibility exception.
+- Legacy and deprecated spec branches are not implementation targets unless the capability matrix
+  explicitly lists a compatibility exception.
 - Later DOM, script, and event/runtime slices will be added behind the same facade.
 
 ## Docs
@@ -261,4 +487,5 @@ It is intentionally conservative: a thin public facade, explicit builder config,
 ## Issues
 
 - Start new issue drafts from [`issues/issue-template.md`](issues/issue-template.md).
-- When you fill it out, keep the owning subsystem, test layer, reproduction steps, reproduction code, original failed command, and acceptance criteria explicit.
+- When you fill it out, keep the owning subsystem, test layer, reproduction steps, reproduction
+  code, original failed command, and acceptance criteria explicit.

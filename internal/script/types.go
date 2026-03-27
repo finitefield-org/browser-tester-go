@@ -95,7 +95,8 @@ func BigIntValue(value string) Value {
 }
 
 func ArrayValue(values []Value) Value {
-	copied := append([]Value(nil), values...)
+	copied := make([]Value, len(values))
+	copy(copied, values)
 	return Value{
 		Kind:  ValueKindArray,
 		Array: copied,
@@ -103,7 +104,8 @@ func ArrayValue(values []Value) Value {
 }
 
 func ObjectValue(entries []ObjectEntry) Value {
-	copied := append([]ObjectEntry(nil), entries...)
+	copied := make([]ObjectEntry, len(entries))
+	copy(copied, entries)
 	return Value{
 		Kind:   ValueKindObject,
 		Object: copied,

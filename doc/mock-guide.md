@@ -1,9 +1,11 @@
 # Mock Guide
 
-Mocks are part of the intended core surface for the Go workspace.
-They are not an implementation detail, and they are not a loose bag of `Set*` helpers.
+Mocks are part of the intended core surface for the Go workspace. They are not an implementation
+detail, and they are not a loose bag of `Set*` helpers.
 
-`Harness.Mocks()` should return a typed `MockRegistryView` with family objects. Use it when a test needs deterministic network, dialogs, clipboard, location, open/close/print/scroll, matchMedia, download, file-input, or storage behavior.
+`Harness.Mocks()` should return a typed `MockRegistryView` with family objects. Use it when a test
+needs deterministic network, dialogs, clipboard, location, open/close/print/scroll, matchMedia,
+download, file-input, or storage behavior.
 
 ## Current Mock Families
 
@@ -22,7 +24,8 @@ They are not an implementation detail, and they are not a loose bag of `Set*` he
 
 ## Public Mock Actions
 
-The public `Harness` surface should stay thin and expose only the user-like actions that need to route through these families:
+The public `Harness` surface should stay thin and expose only the user-like actions that need to
+route through these families:
 
 - `Fetch`
 - `Alert`
@@ -39,9 +42,11 @@ The public `Harness` surface should stay thin and expose only the user-like acti
 - `SetFiles`
 - `CaptureDownload`
 
-`MatchMedia` is configured through the builder or registry and consumed from scripts via `window.matchMedia(...)`.
-It is intentionally not a separate `Harness` action, but its listener capture can be injected directly through the mock registry for tests with `RecordListenerCall(query, method)`.
-The family also exposes the seeded rule snapshot through `Rules()`, which returns a copy of the configured query/match pairs.
+`MatchMedia` is configured through the builder or registry and consumed from scripts via
+`window.matchMedia(...)`. It is intentionally not a separate `Harness` action, but its listener
+capture can be injected directly through the mock registry for tests with `RecordListenerCall(query,
+method)`. The family also exposes the seeded rule snapshot through `Rules()`, which returns a copy
+of the configured query/match pairs.
 
 ## Design Rules Per Family
 
@@ -57,14 +62,21 @@ Examples:
 - `Fetch`: response rules, error rules, request call capture
 - `Dialogs`: queued confirm/prompt answers, alert capture, and message capture
 - `Clipboard`: seeded read state and write capture
-- `Location`: current URL seed and navigation capture, including `window.location.assign()`, `window.location.replace()`, `window.location.reload()`, and URL-property assignments; inline scripts drive the same family through `host:locationAssign(...)`, `host:locationReplace(...)`, `host:locationReload()`, and `host:locationSet(property, value)`, and navigation URLs are resolved against the current URL
-- `Downloads`: artifact capture through the registry and `Harness.CaptureDownload(...)`, plus hyperlink clicks on `a` / `area` elements with `download` attributes
+- `Location`: current URL seed and navigation capture, including `window.location.assign()`,
+  `window.location.replace()`, `window.location.reload()`, and URL-property assignments; inline
+  scripts drive the same family through `host:locationAssign(...)`, `host:locationReplace(...)`,
+  `host:locationReload()`, and `host:locationSet(property, value)`, and navigation URLs are resolved
+  against the current URL
+- `Downloads`: artifact capture through the registry and `Harness.CaptureDownload(...)`, plus
+  hyperlink clicks on `a` / `area` elements with `download` attributes
 - `FileInput`: file selection capture and the `input.files` snapshot
 - `Open`: call capture and optional bootstrap failure
 - `Close`: call capture and optional bootstrap failure
 - `Print`: call capture and optional bootstrap failure
 - `Scroll`: call capture and optional bootstrap failure
-- `MatchMedia`: query seed state, failure injection, call capture, listener call capture, listener capture injection through `RecordListenerCall(query, method)`, and a read-only `Rules()` snapshot of the configured seed queries
+- `MatchMedia`: query seed state, failure injection, call capture, listener call capture, listener
+  capture injection through `RecordListenerCall(query, method)`, and a read-only `Rules()` snapshot
+  of the configured seed queries
 - `Storage`: explicit local/session seeds plus deterministic change capture through `Events()`
 
 ## Capture Rules
@@ -115,10 +127,13 @@ func main() error {
 	if got, err := h.MatchMedia("(prefers-reduced-motion: reduce)"); err != nil || !got {
 		return fmt.Errorf("expected matchMedia to return true, got (%v, %v)", got, err)
 	}
-	if rules := mocks.MatchMedia().Rules(); len(rules) != 1 || rules[0].Query != "(prefers-reduced-motion: reduce)" || !rules[0].Matches {
+	if rules := mocks.MatchMedia().Rules(); len(rules) != 1 ||
+		rules[0].Query != "(prefers-reduced-motion: reduce)" || !rules[0].Matches {
 		return fmt.Errorf("expected one seeded matchMedia rule, got %#v", rules)
 	}
-	if events := mocks.Storage().Events(); len(events) != 1 || events[0].Op != "seed" || events[0].Scope != "local" || events[0].Key != "theme" || events[0].Value != "dark" {
+	if events := mocks.Storage().Events(); len(events) != 1 ||
+		events[0].Op != "seed" || events[0].Scope != "local" || events[0].Key != "theme" ||
+		events[0].Value != "dark" {
 		return fmt.Errorf("expected one storage change capture, got %#v", events)
 	}
 	if err := h.SetFiles("#upload", []string{"report.csv"}); err != nil {
@@ -166,7 +181,8 @@ Other failure cases the workspace should keep covered:
 - a confirm or prompt call with an empty queue
 - a clipboard read with no seed
 - an unseeded `matchMedia(...)` query
-- builder-seeded `Open`, `Close`, `Print`, `ScrollTo`, and `ScrollBy` failures, with the same seeds later available to bootstrap-time window bindings
+- builder-seeded `Open`, `Close`, `Print`, `ScrollTo`, and `ScrollBy` failures, with the same seeds
+  later available to bootstrap-time window bindings
 
 ## Adding a New Test-Only Mock
 
@@ -181,6 +197,6 @@ When a new mock family is added, the change set must include:
 - `go/doc/README.md` update
 - tests that cover the public contract and the regression case
 
-Do not bypass the registry when wiring a new mock.
-Add it in runtime, expose it through the facade, and keep the family typed.
-Legacy and deprecated spec branches are not mock targets unless the capability matrix explicitly lists a bounded compatibility exception.
+Do not bypass the registry when wiring a new mock. Add it in runtime, expose it through the facade,
+and keep the family typed. Legacy and deprecated spec branches are not mock targets unless the
+capability matrix explicitly lists a bounded compatibility exception.

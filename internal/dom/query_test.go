@@ -125,6 +125,133 @@ func TestQueryHelpersReuseSelectorEngine(t *testing.T) {
 	}
 }
 
+func TestQueryHelpersSupportSelectorListsAndDescendantScopes(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(
+		`<main id="root"><section id="wrap" data-note="a,b"><article id="a1"><span class="hit">Hit</span></article><section id="inner"><p id="leaf">Leaf</p></section></section><aside id="plain"><span class="hit">Outside</span></aside></main>`,
+	); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	innerID := mustSelectSingle(t, store, "#inner")
+	leafID := mustSelectSingle(t, store, "#leaf")
+	plainID := mustSelectSingle(t, store, "#plain")
+
+	gotID, ok, err := store.QuerySelector(`section[data-note="a,b"], #plain`)
+	if err != nil {
+		t.Fatalf("QuerySelector(selector list) error = %v", err)
+	}
+	if !ok || gotID != wrapID {
+		t.Fatalf("QuerySelector(selector list) = (%d, %v), want (%d, true)", gotID, ok, wrapID)
+	}
+
+	nodes, err := store.QuerySelectorAll(`section[data-note="a,b"], aside`)
+	if err != nil {
+		t.Fatalf("QuerySelectorAll(selector list) error = %v", err)
+	}
+	if got, want := nodes.Length(), 2; got != want {
+		t.Fatalf("QuerySelectorAll(selector list) len = %d, want %d", got, want)
+	}
+	if got, ok := nodes.Item(0); !ok || got != wrapID {
+		t.Fatalf("QuerySelectorAll(selector list).Item(0) = (%d, %v), want (%d, true)", got, ok, wrapID)
+	}
+	if got, ok := nodes.Item(1); !ok || got != plainID {
+		t.Fatalf("QuerySelectorAll(selector list).Item(1) = (%d, %v), want (%d, true)", got, ok, plainID)
+	}
+
+	withinID, ok, err := store.QuerySelectorWithin(wrapID, "section")
+	if err != nil {
+		t.Fatalf("QuerySelectorWithin(self-exclusion) error = %v", err)
+	}
+	if !ok || withinID != innerID {
+		t.Fatalf("QuerySelectorWithin(self-exclusion) = (%d, %v), want (%d, true)", withinID, ok, innerID)
+	}
+
+	withinNodes, err := store.QuerySelectorAllWithin(wrapID, "section")
+	if err != nil {
+		t.Fatalf("QuerySelectorAllWithin(self-exclusion) error = %v", err)
+	}
+	if got, want := withinNodes.Length(), 1; got != want {
+		t.Fatalf("QuerySelectorAllWithin(self-exclusion) len = %d, want %d", got, want)
+	}
+	if got, ok := withinNodes.Item(0); !ok || got != innerID {
+		t.Fatalf("QuerySelectorAllWithin(self-exclusion).Item(0) = (%d, %v), want (%d, true)", got, ok, innerID)
+	}
+
+	matched, err := store.Matches(innerID, "section, .missing")
+	if err != nil {
+		t.Fatalf("Matches(selector list) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(selector list) = false, want true")
+	}
+
+	matched, err = store.Matches(plainID, ".missing, #plain")
+	if err != nil {
+		t.Fatalf("Matches(selector list with fallback) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(selector list with fallback) = false, want true")
+	}
+
+	closestID, ok, err := store.Closest(leafID, ".missing, section")
+	if err != nil {
+		t.Fatalf("Closest(selector list) error = %v", err)
+	}
+	if !ok || closestID != innerID {
+		t.Fatalf("Closest(selector list) = (%d, %v), want (%d, true)", closestID, ok, innerID)
+	}
+}
+
+func TestQueryHelpersSupportForgivingSelectorLists(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(
+		`<main id="root"><section id="wrap" data-note="a,b"><article id="a1"><span class="hit">Hit</span></article><section id="inner"><p id="leaf">Leaf</p></section></section><aside id="plain"><span class="hit">Outside</span></aside></main>`,
+	); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	innerID := mustSelectSingle(t, store, "#inner")
+	leafID := mustSelectSingle(t, store, "#leaf")
+
+	gotID, ok, err := store.QuerySelector(`:is(:bogus, #wrap)`)
+	if err != nil {
+		t.Fatalf("QuerySelector(forgiving selector list) error = %v", err)
+	}
+	if !ok || gotID != wrapID {
+		t.Fatalf("QuerySelector(forgiving selector list) = (%d, %v), want (%d, true)", gotID, ok, wrapID)
+	}
+
+	nodes, err := store.QuerySelectorAll(`:where(, #wrap, )`)
+	if err != nil {
+		t.Fatalf("QuerySelectorAll(forgiving selector list) error = %v", err)
+	}
+	if got, want := nodes.Length(), 1; got != want {
+		t.Fatalf("QuerySelectorAll(forgiving selector list) len = %d, want %d", got, want)
+	}
+	if got, ok := nodes.Item(0); !ok || got != wrapID {
+		t.Fatalf("QuerySelectorAll(forgiving selector list).Item(0) = (%d, %v), want (%d, true)", got, ok, wrapID)
+	}
+
+	matched, err := store.Matches(wrapID, `:is(:bogus, #wrap)`)
+	if err != nil {
+		t.Fatalf("Matches(forgiving selector list) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(forgiving selector list) = false, want true")
+	}
+
+	closestID, ok, err := store.Closest(leafID, `:where(:bogus, section)`)
+	if err != nil {
+		t.Fatalf("Closest(forgiving selector list) error = %v", err)
+	}
+	if !ok || closestID != innerID {
+		t.Fatalf("Closest(forgiving selector list) = (%d, %v), want (%d, true)", closestID, ok, innerID)
+	}
+}
+
 func TestQueryHelpersSupportDefinedPseudoClass(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main id="root"><div id="known"></div><x-widget id="widget" defined></x-widget><x-ghost id="ghost"></x-ghost></main>`); err != nil {
@@ -813,7 +940,7 @@ func TestQueryHelpersSupportOfTypePseudoClasses(t *testing.T) {
 
 func TestQueryHelpersSupportHasPseudoClass(t *testing.T) {
 	store := NewStore()
-	if err := store.BootstrapHTML(`<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="plain"><span class="hit">Outside</span></aside></main>`); err != nil {
+	if err := store.BootstrapHTML(`<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="adjacent" class="hit"><span class="hit">Sibling</span></aside><aside id="plain"><span class="hit">Outside</span></aside></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
 	}
 
@@ -823,6 +950,18 @@ func TestQueryHelpersSupportHasPseudoClass(t *testing.T) {
 
 	if got, ok, err := store.QuerySelector("section:has(.hit)"); err != nil || !ok || got != wrapID {
 		t.Fatalf("QuerySelector(section:has(.hit)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, wrapID)
+	}
+	if got, ok, err := store.QuerySelector("section:has(:bogus, .hit)"); err != nil || !ok || got != wrapID {
+		t.Fatalf("QuerySelector(section:has(:bogus, .hit)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, wrapID)
+	}
+	if got, ok, err := store.QuerySelector("section:has(> article > .hit)"); err != nil || !ok || got != wrapID {
+		t.Fatalf("QuerySelector(section:has(> article > .hit)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, wrapID)
+	}
+	if got, ok, err := store.QuerySelector("section:has(+ aside.hit)"); err != nil || !ok || got != wrapID {
+		t.Fatalf("QuerySelector(section:has(+ aside.hit)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, wrapID)
+	}
+	if got, ok, err := store.QuerySelector("section:has(~ aside.hit)"); err != nil || !ok || got != wrapID {
+		t.Fatalf("QuerySelector(section:has(~ aside.hit)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, wrapID)
 	}
 
 	nodes, err := store.QuerySelectorAll("article:has(.hit, .miss)")
@@ -836,11 +975,26 @@ func TestQueryHelpersSupportHasPseudoClass(t *testing.T) {
 	if matched, err := store.Matches(wrapID, "section:has(article > .hit)"); err != nil || !matched {
 		t.Fatalf("Matches(section:has(article > .hit)) = (%v, %v), want (true, nil)", matched, err)
 	}
+	if matched, err := store.Matches(wrapID, "section:has(:bogus, .hit)"); err != nil || !matched {
+		t.Fatalf("Matches(section:has(:bogus, .hit)) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(wrapID, "section:has(> article > .hit)"); err != nil || !matched {
+		t.Fatalf("Matches(section:has(> article > .hit)) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(wrapID, "section:has(+ aside.hit)"); err != nil || !matched {
+		t.Fatalf("Matches(section:has(+ aside.hit)) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(wrapID, "section:has(~ aside.hit)"); err != nil || !matched {
+		t.Fatalf("Matches(section:has(~ aside.hit)) = (%v, %v), want (true, nil)", matched, err)
+	}
 	if matched, err := store.Matches(a1ID, "article:has(.hit)"); err != nil || !matched {
 		t.Fatalf("Matches(article:has(.hit)) = (%v, %v), want (true, nil)", matched, err)
 	}
 	if matched, err := store.Matches(a2ID, "article:has(.hit)"); err != nil || matched {
 		t.Fatalf("Matches(article:has(.hit)) for #a2 = (%v, %v), want (false, nil)", matched, err)
+	}
+	if got, ok, err := store.QuerySelector("section:has(:bogus)"); err != nil || ok || got != 0 {
+		t.Fatalf("QuerySelector(section:has(:bogus)) = (%d, %v, %v), want (0, false, nil)", got, ok, err)
 	}
 }
 
@@ -855,6 +1009,9 @@ func TestQueryHelpersSupportNotPseudoClass(t *testing.T) {
 	if got, ok, err := store.QuerySelector("section:not(.missing)"); err != nil || !ok || got != mustSelectSingle(t, store, "#wrap") {
 		t.Fatalf("QuerySelector(section:not(.missing)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, mustSelectSingle(t, store, "#wrap"))
 	}
+	if got, ok, err := store.QuerySelector("section:not(:bogus)"); err != nil || !ok || got != mustSelectSingle(t, store, "#wrap") {
+		t.Fatalf("QuerySelector(section:not(:bogus)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, mustSelectSingle(t, store, "#wrap"))
+	}
 
 	nodes, err := store.QuerySelectorAll("article:not(.match, .other)")
 	if err != nil {
@@ -863,12 +1020,28 @@ func TestQueryHelpersSupportNotPseudoClass(t *testing.T) {
 	if got, want := nodes.Length(), 1; got != want {
 		t.Fatalf("QuerySelectorAll(article:not(.match, .other)) len = %d, want %d", got, want)
 	}
+	nodes, err = store.QuerySelectorAll("article:not(:bogus, .match)")
+	if err != nil {
+		t.Fatalf("QuerySelectorAll(article:not(:bogus, .match)) error = %v", err)
+	}
+	if got, want := nodes.Length(), 1; got != want {
+		t.Fatalf("QuerySelectorAll(article:not(:bogus, .match)) len = %d, want %d", got, want)
+	}
 
 	if matched, err := store.Matches(a2ID, "article:not(.match)"); err != nil || !matched {
 		t.Fatalf("Matches(article:not(.match)) for #a2 = (%v, %v), want (true, nil)", matched, err)
 	}
 	if matched, err := store.Matches(mustSelectSingle(t, store, "#a1"), "article:not(.match)"); err != nil || matched {
 		t.Fatalf("Matches(article:not(.match)) for #a1 = (%v, %v), want (false, nil)", matched, err)
+	}
+	if matched, err := store.Matches(mustSelectSingle(t, store, "#wrap"), "section:not(:bogus)"); err != nil || !matched {
+		t.Fatalf("Matches(section:not(:bogus)) for #wrap = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(a2ID, "article:not(:bogus, .match)"); err != nil || !matched {
+		t.Fatalf("Matches(article:not(:bogus, .match)) for #a2 = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(mustSelectSingle(t, store, "#a1"), "article:not(:bogus, .match)"); err != nil || matched {
+		t.Fatalf("Matches(article:not(:bogus, .match)) for #a1 = (%v, %v), want (false, nil)", matched, err)
 	}
 }
 
@@ -934,11 +1107,13 @@ func TestQueryHelpersSupportScopePseudoClass(t *testing.T) {
 
 func TestQueryHelpersSupportNthPseudoClasses(t *testing.T) {
 	store := NewStore()
-	if err := store.BootstrapHTML(`<main id="root"><ul id="list"><li id="one">1</li><li id="two">2</li><li id="three">3</li><li id="four">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`); err != nil {
+	if err := store.BootstrapHTML(`<main id="root"><ul id="list"><li id="one" class="selected">1</li><li id="two">2</li><li id="three" class="selected">3</li><li id="four" class="selected">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
 	}
 
 	threeID := mustSelectSingle(t, store, "#three")
+	twoID := mustSelectSingle(t, store, "#two")
+	fourID := mustSelectSingle(t, store, "#four")
 	paraCID := mustSelectSingle(t, store, "#para-c")
 	midID := mustSelectSingle(t, store, "#mid")
 	fiveID := mustSelectSingle(t, store, "#five")
@@ -948,8 +1123,17 @@ func TestQueryHelpersSupportNthPseudoClasses(t *testing.T) {
 	if got, ok, err := store.QuerySelector("li:nth-child(3)"); err != nil || !ok || got != threeID {
 		t.Fatalf("QuerySelector(li:nth-child(3)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, threeID)
 	}
+	if got, ok, err := store.QuerySelector("li:nth-child(2 of .selected)"); err != nil || !ok || got != threeID {
+		t.Fatalf("QuerySelector(li:nth-child(2 of .selected)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, threeID)
+	}
+	if got, ok, err := store.QuerySelector("li:nth-child(2 of .selected, #two)"); err != nil || !ok || got != twoID {
+		t.Fatalf("QuerySelector(li:nth-child(2 of .selected, #two)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, twoID)
+	}
 	if got, ok, err := store.QuerySelector("li:nth-last-child(1)"); err != nil || !ok || got != fiveID {
 		t.Fatalf("QuerySelector(li:nth-last-child(1)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, fiveID)
+	}
+	if got, ok, err := store.QuerySelector("li:nth-last-child(1 of .selected)"); err != nil || !ok || got != fourID {
+		t.Fatalf("QuerySelector(li:nth-last-child(1 of .selected)) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, fourID)
 	}
 
 	nodes, err := store.QuerySelectorAll("li:nth-child(odd)")
@@ -959,9 +1143,22 @@ func TestQueryHelpersSupportNthPseudoClasses(t *testing.T) {
 	if got, want := nodes.Length(), 3; got != want {
 		t.Fatalf("QuerySelectorAll(li:nth-child(odd)) len = %d, want %d", got, want)
 	}
+	nodes, err = store.QuerySelectorAll("li:nth-child(odd of .selected)")
+	if err != nil {
+		t.Fatalf("QuerySelectorAll(li:nth-child(odd of .selected)) error = %v", err)
+	}
+	if got, want := nodes.Length(), 2; got != want {
+		t.Fatalf("QuerySelectorAll(li:nth-child(odd of .selected)) len = %d, want %d", got, want)
+	}
 
 	if matched, err := store.Matches(paraCID, "p:nth-of-type(3)"); err != nil || !matched {
 		t.Fatalf("Matches(p:nth-of-type(3)) for #para-c = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(threeID, "li:nth-child(2 of .selected)"); err != nil || !matched {
+		t.Fatalf("Matches(li:nth-child(2 of .selected)) for #three = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(fourID, "li:nth-last-child(1 of .selected)"); err != nil || !matched {
+		t.Fatalf("Matches(li:nth-last-child(1 of .selected)) for #four = (%v, %v), want (true, nil)", matched, err)
 	}
 	if matched, err := store.Matches(midID, "span:nth-of-type(1)"); err != nil || !matched {
 		t.Fatalf("Matches(span:nth-of-type(1)) for #mid = (%v, %v), want (true, nil)", matched, err)
@@ -1149,6 +1346,130 @@ func TestQueryHelpersSupportMoreBoundedPseudoClasses(t *testing.T) {
 	}
 	if !matched {
 		t.Fatalf("Matches(:heading) = false, want true")
+	}
+}
+
+func TestQueryHelpersSupportDisabledFieldsetAndOptgroupPseudoClasses(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><form id="profile"><fieldset id="outer" disabled><legend id="legend"><span><input id="legend-input" type="text"></span></legend><input id="disabled-required" type="text" required><input id="disabled-optional" type="text"><textarea id="disabled-textarea"></textarea><select id="mode"><optgroup id="disabled-group" disabled label="Disabled"><option id="disabled-option" value="a">A</option></optgroup><optgroup id="enabled-group" label="Enabled"><option id="enabled-option" value="b">B</option></optgroup></select><fieldset id="inner"><input id="inner-input" type="text"></fieldset></fieldset><fieldset id="plain-fieldset"><input id="plain-input" type="text"></fieldset><input id="outside-required" type="text" required value="Ada"><input id="outside-optional" type="text"><textarea id="outside-textarea"></textarea></form></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	outerID := mustSelectSingle(t, store, "#outer")
+	legendInputID := mustSelectSingle(t, store, "#legend-input")
+	disabledRequiredID := mustSelectSingle(t, store, "#disabled-required")
+	disabledTextareaID := mustSelectSingle(t, store, "#disabled-textarea")
+	disabledOptionID := mustSelectSingle(t, store, "#disabled-option")
+	enabledOptionID := mustSelectSingle(t, store, "#enabled-option")
+	modeID := mustSelectSingle(t, store, "#mode")
+	plainFieldsetID := mustSelectSingle(t, store, "#plain-fieldset")
+	outsideRequiredID := mustSelectSingle(t, store, "#outside-required")
+	profileID := mustSelectSingle(t, store, "#profile")
+
+	if got, ok, err := store.QuerySelector("fieldset:disabled"); err != nil || !ok || got != outerID {
+		t.Fatalf("QuerySelector(fieldset:disabled) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, outerID)
+	}
+	if got, ok, err := store.QuerySelector("fieldset:enabled"); err != nil || !ok || got != plainFieldsetID {
+		t.Fatalf("QuerySelector(fieldset:enabled) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, plainFieldsetID)
+	}
+	if got, ok, err := store.QuerySelector("input:required"); err != nil || !ok || got != outsideRequiredID {
+		t.Fatalf("QuerySelector(input:required) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, outsideRequiredID)
+	}
+	if got, ok, err := store.QuerySelector("option:disabled"); err != nil || !ok || got != disabledOptionID {
+		t.Fatalf("QuerySelector(option:disabled) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, disabledOptionID)
+	}
+	if got, ok, err := store.QuerySelector("option:enabled"); err != nil || !ok || got != enabledOptionID {
+		t.Fatalf("QuerySelector(option:enabled) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, enabledOptionID)
+	}
+	if got, ok, err := store.QuerySelector("select:disabled"); err != nil || !ok || got != modeID {
+		t.Fatalf("QuerySelector(select:disabled) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, modeID)
+	}
+	if got, ok, err := store.QuerySelector("textarea:read-only"); err != nil || !ok || got != disabledTextareaID {
+		t.Fatalf("QuerySelector(textarea:read-only) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, disabledTextareaID)
+	}
+	if matched, err := store.Matches(legendInputID, "input:disabled"); err != nil || matched {
+		t.Fatalf("Matches(input:disabled) for #legend-input = (%v, %v), want (false, nil)", matched, err)
+	}
+	if matched, err := store.Matches(legendInputID, "input:enabled"); err != nil || !matched {
+		t.Fatalf("Matches(input:enabled) for #legend-input = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(disabledRequiredID, "input:required"); err != nil || matched {
+		t.Fatalf("Matches(input:required) for #disabled-required = (%v, %v), want (false, nil)", matched, err)
+	}
+	if matched, err := store.Matches(disabledRequiredID, "input:read-only"); err != nil || !matched {
+		t.Fatalf("Matches(input:read-only) for #disabled-required = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(modeID, "select:disabled"); err != nil || !matched {
+		t.Fatalf("Matches(select:disabled) for #mode = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(profileID, "form:valid"); err != nil || !matched {
+		t.Fatalf("Matches(form:valid) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(profileID, "form:invalid"); err != nil || matched {
+		t.Fatalf("Matches(form:invalid) = (%v, %v), want (false, nil)", matched, err)
+	}
+	if closestID, ok, err := store.Closest(disabledRequiredID, "fieldset:disabled"); err != nil || !ok || closestID != outerID {
+		t.Fatalf("Closest(fieldset:disabled) for #disabled-required = (%d, %v, %v), want (%d, true, nil)", closestID, ok, err, outerID)
+	}
+}
+
+func TestQueryHelpersSupportContentEditablePseudoClasses(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><section id="editable" contenteditable><p id="inherited">Editable</p><div id="false" contenteditable="false"><span id="blocked">Blocked</span></div><div id="plaintext" contenteditable="plaintext-only"><em id="plain-child">Plain</em></div></section><input id="name" type="text"><textarea id="story"></textarea><input id="readonly" type="text" readonly><div id="plain">Plain</div></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	editableID := mustSelectSingle(t, store, "#editable")
+	inheritedID := mustSelectSingle(t, store, "#inherited")
+	falseID := mustSelectSingle(t, store, "#false")
+	blockedID := mustSelectSingle(t, store, "#blocked")
+	plaintextID := mustSelectSingle(t, store, "#plaintext")
+	plainChildID := mustSelectSingle(t, store, "#plain-child")
+	inputID := mustSelectSingle(t, store, "#name")
+	textareaID := mustSelectSingle(t, store, "#story")
+	readonlyID := mustSelectSingle(t, store, "#readonly")
+	plainID := mustSelectSingle(t, store, "#plain")
+
+	if got, ok, err := store.QuerySelector("section:read-write"); err != nil || !ok || got != editableID {
+		t.Fatalf("QuerySelector(section:read-write) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, editableID)
+	}
+	if got, ok, err := store.QuerySelector("div:read-write"); err != nil || !ok || got != plaintextID {
+		t.Fatalf("QuerySelector(div:read-write) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, plaintextID)
+	}
+	if got, ok, err := store.QuerySelector("input:read-write"); err != nil || !ok || got != inputID {
+		t.Fatalf("QuerySelector(input:read-write) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, inputID)
+	}
+	if got, ok, err := store.QuerySelector("textarea:read-write"); err != nil || !ok || got != textareaID {
+		t.Fatalf("QuerySelector(textarea:read-write) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, textareaID)
+	}
+	if got, ok, err := store.QuerySelector("#plain:read-only"); err != nil || !ok || got != plainID {
+		t.Fatalf("QuerySelector(#plain:read-only) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, plainID)
+	}
+
+	if matched, err := store.Matches(inheritedID, ":read-write"); err != nil || !matched {
+		t.Fatalf("Matches(#inherited, :read-write) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(falseID, ":read-only"); err != nil || !matched {
+		t.Fatalf("Matches(#false, :read-only) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(blockedID, ":read-write"); err != nil || matched {
+		t.Fatalf("Matches(#blocked, :read-write) = (%v, %v), want (false, nil)", matched, err)
+	}
+	if matched, err := store.Matches(plainChildID, ":read-write"); err != nil || !matched {
+		t.Fatalf("Matches(#plain-child, :read-write) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if closestID, ok, err := store.Closest(blockedID, "section:read-write"); err != nil || !ok || closestID != editableID {
+		t.Fatalf("Closest(section:read-write) for #blocked = (%d, %v, %v), want (%d, true, nil)", closestID, ok, err, editableID)
+	}
+	if closestID, ok, err := store.Closest(plainChildID, "div:read-write"); err != nil || !ok || closestID != plaintextID {
+		t.Fatalf("Closest(div:read-write) for #plain-child = (%d, %v, %v), want (%d, true, nil)", closestID, ok, err, plaintextID)
+	}
+
+	if got, ok, err := store.QuerySelector("div:read-only"); err != nil || !ok || got != falseID {
+		t.Fatalf("QuerySelector(div:read-only) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, falseID)
+	}
+	if got, ok, err := store.QuerySelector("input:read-only"); err != nil || !ok || got != readonlyID {
+		t.Fatalf("QuerySelector(input:read-only) = (%d, %v, %v), want (%d, true, nil)", got, ok, err, readonlyID)
 	}
 }
 

@@ -103,6 +103,28 @@ func TestSessionAssertionsSupportStatePseudoClass(t *testing.T) {
 	}
 }
 
+func TestSessionAssertionsSupportSelectorLists(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><section id="wrap" data-note="a,b"><article id="a1"></article><section id="inner"><p id="leaf">Leaf</p></section></section><aside id="plain"></aside></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists(`section[data-note="a,b"], #missing`); err != nil {
+		t.Fatalf(`AssertExists(section[data-note="a,b"], #missing) error = %v`, err)
+	}
+	if err := s.AssertExists(`.missing, #plain`); err != nil {
+		t.Fatalf(`AssertExists(.missing, #plain) error = %v`, err)
+	}
+
+	err := s.AssertExists("section,")
+	if err == nil {
+		t.Fatalf(`AssertExists(section,) error = nil, want SelectorError`)
+	}
+	var sel SelectorError
+	if !errors.As(err, &sel) {
+		t.Fatalf(`AssertExists(section,) error = %T, want SelectorError`, err)
+	}
+}
+
 func TestSessionAssertionsSupportAutofillPseudoClass(t *testing.T) {
 	cfg := DefaultSessionConfig()
 	cfg.HTML = `<main id="root"><input id="name" autofill value="Ada"><input id="other" value="Bob"></main>`
@@ -364,9 +386,83 @@ func TestSessionAssertionsSupportMoreBoundedPseudoClasses(t *testing.T) {
 	}
 }
 
+func TestSessionAssertionsSupportDisabledFieldsetAndOptgroupPseudoClasses(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><form id="profile"><fieldset id="outer" disabled><legend id="legend"><span><input id="legend-input" type="text"></span></legend><input id="disabled-required" type="text" required><input id="disabled-optional" type="text"><textarea id="disabled-textarea"></textarea><select id="mode"><optgroup id="disabled-group" disabled label="Disabled"><option id="disabled-option" value="a">A</option></optgroup><optgroup id="enabled-group" label="Enabled"><option id="enabled-option" value="b">B</option></optgroup></select><fieldset id="inner"><input id="inner-input" type="text"></fieldset></fieldset><fieldset id="plain-fieldset"><input id="plain-input" type="text"></fieldset><input id="outside-required" type="text" required value="Ada"><input id="outside-optional" type="text"><textarea id="outside-textarea"></textarea></form></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists("fieldset:disabled"); err != nil {
+		t.Fatalf("AssertExists(fieldset:disabled) error = %v", err)
+	}
+	if err := s.AssertExists("fieldset:enabled"); err != nil {
+		t.Fatalf("AssertExists(fieldset:enabled) error = %v", err)
+	}
+	if err := s.AssertExists("input:required"); err != nil {
+		t.Fatalf("AssertExists(input:required) error = %v", err)
+	}
+	if err := s.AssertExists("option:disabled"); err != nil {
+		t.Fatalf("AssertExists(option:disabled) error = %v", err)
+	}
+	if err := s.AssertExists("option:enabled"); err != nil {
+		t.Fatalf("AssertExists(option:enabled) error = %v", err)
+	}
+	if err := s.AssertExists("select:disabled"); err != nil {
+		t.Fatalf("AssertExists(select:disabled) error = %v", err)
+	}
+	if err := s.AssertExists("textarea:read-only"); err != nil {
+		t.Fatalf("AssertExists(textarea:read-only) error = %v", err)
+	}
+	if err := s.AssertExists("form:valid"); err != nil {
+		t.Fatalf("AssertExists(form:valid) error = %v", err)
+	}
+	if err := s.AssertExists("#legend-input:disabled"); err == nil {
+		t.Fatalf("AssertExists(#legend-input:disabled) error = nil, want no match")
+	}
+	if err := s.AssertExists("#disabled-required:required"); err == nil {
+		t.Fatalf("AssertExists(#disabled-required:required) error = nil, want no match")
+	}
+	if err := s.AssertExists("form:invalid"); err == nil {
+		t.Fatalf("AssertExists(form:invalid) error = nil, want no match")
+	}
+}
+
+func TestSessionAssertionsSupportContentEditablePseudoClasses(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><section id="editable" contenteditable><p id="inherited">Editable</p><div id="false" contenteditable="false"><span id="blocked">Blocked</span></div><div id="plaintext" contenteditable="plaintext-only"><em id="plain-child">Plain</em></div></section><input id="name" type="text"><textarea id="story"></textarea><input id="readonly" type="text" readonly><div id="plain">Plain</div></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists("section:read-write"); err != nil {
+		t.Fatalf("AssertExists(section:read-write) error = %v", err)
+	}
+	if err := s.AssertExists("div:read-write"); err != nil {
+		t.Fatalf("AssertExists(div:read-write) error = %v", err)
+	}
+	if err := s.AssertExists("input:read-write"); err != nil {
+		t.Fatalf("AssertExists(input:read-write) error = %v", err)
+	}
+	if err := s.AssertExists("textarea:read-write"); err != nil {
+		t.Fatalf("AssertExists(textarea:read-write) error = %v", err)
+	}
+	if err := s.AssertExists("#blocked:read-only"); err != nil {
+		t.Fatalf("AssertExists(#blocked:read-only) error = %v", err)
+	}
+	if err := s.AssertExists("#plain-child:read-write"); err != nil {
+		t.Fatalf("AssertExists(#plain-child:read-write) error = %v", err)
+	}
+	if err := s.AssertExists("#plain:read-only"); err != nil {
+		t.Fatalf("AssertExists(#plain:read-only) error = %v", err)
+	}
+	if err := s.AssertExists("#blocked:read-write"); err == nil {
+		t.Fatalf("AssertExists(#blocked:read-write) error = nil, want no match")
+	}
+	if err := s.AssertExists("#plain:read-write"); err == nil {
+		t.Fatalf("AssertExists(#plain:read-write) error = nil, want no match")
+	}
+}
+
 func TestSessionAssertionsSupportHasPseudoClass(t *testing.T) {
 	cfg := DefaultSessionConfig()
-	cfg.HTML = `<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="plain"><span class="hit">Outside</span></aside></main>`
+	cfg.HTML = `<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="adjacent" class="hit"><span class="hit">Sibling</span></aside><aside id="plain"><span class="hit">Outside</span></aside></main>`
 	s := NewSession(cfg)
 
 	if err := s.AssertExists("section:has(.hit)"); err != nil {
@@ -374,6 +470,18 @@ func TestSessionAssertionsSupportHasPseudoClass(t *testing.T) {
 	}
 	if err := s.AssertExists("section:has(article > .hit)"); err != nil {
 		t.Fatalf("AssertExists(section:has(article > .hit)) error = %v", err)
+	}
+	if err := s.AssertExists("section:has(:bogus, .hit)"); err != nil {
+		t.Fatalf("AssertExists(section:has(:bogus, .hit)) error = %v", err)
+	}
+	if err := s.AssertExists("section:has(> article > .hit)"); err != nil {
+		t.Fatalf("AssertExists(section:has(> article > .hit)) error = %v", err)
+	}
+	if err := s.AssertExists("section:has(+ aside.hit)"); err != nil {
+		t.Fatalf("AssertExists(section:has(+ aside.hit)) error = %v", err)
+	}
+	if err := s.AssertExists("section:has(~ aside.hit)"); err != nil {
+		t.Fatalf("AssertExists(section:has(~ aside.hit)) error = %v", err)
 	}
 	if err := s.AssertExists("article:has(.hit, .miss)"); err != nil {
 		t.Fatalf("AssertExists(article:has(.hit, .miss)) error = %v", err)
@@ -391,8 +499,14 @@ func TestSessionAssertionsSupportNotPseudoClass(t *testing.T) {
 	if err := s.AssertExists("section:not(.missing)"); err != nil {
 		t.Fatalf("AssertExists(section:not(.missing)) error = %v", err)
 	}
+	if err := s.AssertExists("section:not(:bogus)"); err != nil {
+		t.Fatalf("AssertExists(section:not(:bogus)) error = %v", err)
+	}
 	if err := s.AssertExists("article:not(.match, .other)"); err != nil {
 		t.Fatalf("AssertExists(article:not(.match, .other)) error = %v", err)
+	}
+	if err := s.AssertExists("section:not(:bogus, #wrap)"); err == nil {
+		t.Fatalf("AssertExists(section:not(:bogus, #wrap)) error = nil, want no match")
 	}
 	if err := s.AssertExists("#a1:not(.match)"); err == nil {
 		t.Fatalf("AssertExists(#a1:not(.match)) error = nil, want no match")
@@ -707,7 +821,7 @@ func TestSessionAssertionsSupportOfTypePseudoClasses(t *testing.T) {
 
 func TestSessionAssertionsSupportNthPseudoClasses(t *testing.T) {
 	cfg := DefaultSessionConfig()
-	cfg.HTML = `<main id="root"><ul id="list"><li id="one">1</li><li id="two">2</li><li id="three">3</li><li id="four">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`
+	cfg.HTML = `<main id="root"><ul id="list"><li id="one" class="selected">1</li><li id="two">2</li><li id="three" class="selected">3</li><li id="four" class="selected">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`
 	s := NewSession(cfg)
 
 	if err := s.AssertText("li:nth-child(3)", "3"); err != nil {
@@ -716,11 +830,20 @@ func TestSessionAssertionsSupportNthPseudoClasses(t *testing.T) {
 	if err := s.AssertExists("li:nth-child(odd)"); err != nil {
 		t.Fatalf("AssertExists(li:nth-child(odd)) error = %v", err)
 	}
+	if err := s.AssertText("li:nth-child(2 of .selected)", "3"); err != nil {
+		t.Fatalf("AssertText(li:nth-child(2 of .selected)) error = %v", err)
+	}
+	if err := s.AssertText("li:nth-child(2 of .selected, #two)", "2"); err != nil {
+		t.Fatalf("AssertText(li:nth-child(2 of .selected, #two)) error = %v", err)
+	}
 	if err := s.AssertText("p:nth-of-type(3)", "C"); err != nil {
 		t.Fatalf("AssertText(p:nth-of-type(3)) error = %v", err)
 	}
 	if err := s.AssertText("li:nth-last-child(1)", "5"); err != nil {
 		t.Fatalf("AssertText(li:nth-last-child(1)) error = %v", err)
+	}
+	if err := s.AssertText("li:nth-last-child(1 of .selected)", "4"); err != nil {
+		t.Fatalf("AssertText(li:nth-last-child(1 of .selected)) error = %v", err)
 	}
 	if err := s.AssertText("p:nth-last-of-type(2)", "B"); err != nil {
 		t.Fatalf("AssertText(p:nth-last-of-type(2)) error = %v", err)

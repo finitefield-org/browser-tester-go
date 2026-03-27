@@ -77,6 +77,33 @@ func TestSelectBoundedCombinators(t *testing.T) {
 	}
 }
 
+func TestSelectSelectorLists(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><section id="wrap" data-note="a,b"><article id="a1"><span class="hit">Hit</span></article><section id="inner"><p id="leaf">Leaf</p></section></section><aside id="plain"><span class="hit">Outside</span></aside></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	tests := []struct {
+		selector string
+		wantLen  int
+	}{
+		{selector: `section[data-note="a,b"], #plain`, wantLen: 2},
+		{selector: `section[data-note="a,b"], aside`, wantLen: 2},
+		{selector: `section, aside`, wantLen: 3},
+		{selector: `.missing, [data-note="a,b"]`, wantLen: 1},
+	}
+
+	for _, tc := range tests {
+		got, err := store.Select(tc.selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", tc.selector, err)
+		}
+		if len(got) != tc.wantLen {
+			t.Fatalf("Select(%q) len = %d, want %d", tc.selector, len(got), tc.wantLen)
+		}
+	}
+}
+
 func TestSelectBoundedPseudoClasses(t *testing.T) {
 	store := NewStore()
 	err := store.BootstrapHTML(
@@ -367,7 +394,7 @@ func TestSelectIndeterminatePseudoClass(t *testing.T) {
 func TestSelectHasPseudoClass(t *testing.T) {
 	store := NewStore()
 	err := store.BootstrapHTML(
-		`<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="plain"><span class="hit">Outside</span></aside></main>`,
+		`<main id="root"><section id="wrap"><article id="a1"><span class="hit">Hit</span></article><article id="a2"><span class="miss">Miss</span></article></section><aside id="adjacent" class="hit"><span class="hit">Sibling</span></aside><aside id="plain"><span class="hit">Outside</span></aside></main>`,
 	)
 	if err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -379,8 +406,13 @@ func TestSelectHasPseudoClass(t *testing.T) {
 	}{
 		{selector: "section:has(.hit)", wantLen: 1},
 		{selector: "section:has(article > .hit)", wantLen: 1},
+		{selector: "section:has(> article > .hit)", wantLen: 1},
+		{selector: "section:has(+ aside.hit)", wantLen: 1},
+		{selector: "section:has(~ aside.hit)", wantLen: 1},
 		{selector: "article:has(.hit, .miss)", wantLen: 2},
+		{selector: "section:has(:bogus, .hit)", wantLen: 1},
 		{selector: "section:has(.missing)", wantLen: 0},
+		{selector: "section:has(:bogus)", wantLen: 0},
 	}
 
 	for _, tc := range tests {
@@ -394,7 +426,7 @@ func TestSelectHasPseudoClass(t *testing.T) {
 	}
 }
 
-func TestSelectHasPseudoClassRejectsInvalidSelectors(t *testing.T) {
+func TestSelectHasPseudoClassIgnoresInvalidSelectors(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main><section><article><span class="hit"></span></article></section></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -402,10 +434,15 @@ func TestSelectHasPseudoClassRejectsInvalidSelectors(t *testing.T) {
 
 	for _, selector := range []string{
 		"section:has()",
-		"section:has(> .hit)",
+		"section:has(+)",
+		"section:has(:bogus)",
 	} {
-		if _, err := store.Select(selector); err == nil {
-			t.Fatalf("Select(%q) error = nil, want selector error", selector)
+		got, err := store.Select(selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", selector, err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("Select(%q) len = %d, want 0", selector, len(got))
 		}
 	}
 }
@@ -427,6 +464,8 @@ func TestSelectNotPseudoClass(t *testing.T) {
 		{selector: "article:not(.match)", wantLen: 1},
 		{selector: "article:not(.match, .other)", wantLen: 1},
 		{selector: "#a1:not(.match)", wantLen: 0},
+		{selector: "section:not(:bogus)", wantLen: 1},
+		{selector: "section:not(:bogus, #wrap)", wantLen: 0},
 	}
 
 	for _, tc := range tests {
@@ -440,7 +479,7 @@ func TestSelectNotPseudoClass(t *testing.T) {
 	}
 }
 
-func TestSelectNotPseudoClassRejectsInvalidSelectors(t *testing.T) {
+func TestSelectNotPseudoClassIgnoresInvalidSelectors(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main><section><article><span class="hit"></span></article></section></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -449,16 +488,21 @@ func TestSelectNotPseudoClassRejectsInvalidSelectors(t *testing.T) {
 	for _, selector := range []string{
 		"section:not()",
 		"section:not(.hit, )",
+		"section:not(:bogus)",
 	} {
-		if _, err := store.Select(selector); err == nil {
-			t.Fatalf("Select(%q) error = nil, want selector error", selector)
+		got, err := store.Select(selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", selector, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Select(%q) len = %d, want 1", selector, len(got))
 		}
 	}
 }
 
 func TestSelectIsAndWherePseudoClasses(t *testing.T) {
 	store := NewStore()
-	if err := store.BootstrapHTML(`<main id="root"><section id="wrap" class="match"><article id="a1" class="hit">One</article><article id="a2" class="miss">Two</article></section><aside id="plain"><span class="hit">Outside</span></aside></main>`); err != nil {
+	if err := store.BootstrapHTML(`<main id="root"><section id="wrap" class="match" data-note="a,b"><article id="a1" class="hit">One</article><article id="a2" class="miss">Two</article></section><aside id="plain"><span class="hit">Outside</span></aside></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
 	}
 
@@ -467,10 +511,16 @@ func TestSelectIsAndWherePseudoClasses(t *testing.T) {
 		wantLen  int
 	}{
 		{selector: "section:is(#wrap, .missing)", wantLen: 1},
+		{selector: `section:is([data-note="a,b"], .missing)`, wantLen: 1},
+		{selector: "section:is(:bogus, #wrap)", wantLen: 1},
+		{selector: "section:is(, #wrap, )", wantLen: 1},
 		{selector: "section:where(#wrap)", wantLen: 1},
+		{selector: "section:where(:bogus, #wrap)", wantLen: 1},
+		{selector: "section:where(, #wrap, )", wantLen: 1},
 		{selector: "article:where(.hit, .miss)", wantLen: 2},
 		{selector: "article:is(.hit)", wantLen: 1},
 		{selector: "#plain:is(.hit)", wantLen: 0},
+		{selector: "#plain:where(:bogus)", wantLen: 0},
 	}
 
 	for _, tc := range tests {
@@ -484,7 +534,7 @@ func TestSelectIsAndWherePseudoClasses(t *testing.T) {
 	}
 }
 
-func TestSelectIsAndWherePseudoClassesRejectInvalidSelectors(t *testing.T) {
+func TestSelectIsAndWherePseudoClassesIgnoreInvalidSelectors(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main><section id="wrap"></section></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -495,6 +545,32 @@ func TestSelectIsAndWherePseudoClassesRejectInvalidSelectors(t *testing.T) {
 		":where()",
 		":is(> .hit)",
 		":where(> .hit)",
+		":is(:bogus)",
+		":where(:bogus)",
+		":is(,)",
+		":where(,)",
+	} {
+		got, err := store.Select(selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", selector, err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("Select(%q) len = %d, want 0", selector, len(got))
+		}
+	}
+}
+
+func TestSelectSelectorListsRejectInvalidSelectors(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main><section id="wrap"></section><aside id="plain"></aside></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	for _, selector := range []string{
+		"section,",
+		",section",
+		"section,,aside",
+		`section[data-note="a,b"],`,
 	} {
 		if _, err := store.Select(selector); err == nil {
 			t.Fatalf("Select(%q) error = nil, want selector error", selector)
@@ -552,6 +628,84 @@ func TestSelectMoreBoundedPseudoClasses(t *testing.T) {
 		{selector: "h6:heading", wantLen: 0},
 		{selector: "details:open", wantLen: 1},
 		{selector: "dialog:open", wantLen: 1},
+	}
+
+	for _, tc := range tests {
+		got, err := store.Select(tc.selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", tc.selector, err)
+		}
+		if len(got) != tc.wantLen {
+			t.Fatalf("Select(%q) len = %d, want %d", tc.selector, len(got), tc.wantLen)
+		}
+	}
+}
+
+func TestSelectDisabledFieldsetAndOptgroupPseudoClasses(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><form id="profile"><fieldset id="outer" disabled><legend id="legend"><span><input id="legend-input" type="text"></span></legend><input id="disabled-required" type="text" required><input id="disabled-optional" type="text"><textarea id="disabled-textarea"></textarea><select id="mode"><optgroup id="disabled-group" disabled label="Disabled"><option id="disabled-option" value="a">A</option></optgroup><optgroup id="enabled-group" label="Enabled"><option id="enabled-option" value="b">B</option></optgroup></select><fieldset id="inner"><input id="inner-input" type="text"></fieldset></fieldset><fieldset id="plain-fieldset"><input id="plain-input" type="text"></fieldset><input id="outside-required" type="text" required value="Ada"><input id="outside-optional" type="text"><textarea id="outside-textarea"></textarea></form></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	tests := []struct {
+		selector string
+		wantLen  int
+	}{
+		{selector: "fieldset:disabled", wantLen: 2},
+		{selector: "fieldset:enabled", wantLen: 1},
+		{selector: "input:disabled", wantLen: 3},
+		{selector: "input:enabled", wantLen: 4},
+		{selector: "input:required", wantLen: 1},
+		{selector: "input:optional", wantLen: 3},
+		{selector: "input:read-write", wantLen: 4},
+		{selector: "input:read-only", wantLen: 3},
+		{selector: "textarea:read-write", wantLen: 1},
+		{selector: "textarea:read-only", wantLen: 1},
+		{selector: "select:disabled", wantLen: 1},
+		{selector: "optgroup:disabled", wantLen: 1},
+		{selector: "option:disabled", wantLen: 1},
+		{selector: "option:enabled", wantLen: 1},
+		{selector: "#legend-input:disabled", wantLen: 0},
+		{selector: "#disabled-required:required", wantLen: 0},
+		{selector: "#disabled-textarea:read-write", wantLen: 0},
+	}
+
+	for _, tc := range tests {
+		got, err := store.Select(tc.selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", tc.selector, err)
+		}
+		if len(got) != tc.wantLen {
+			t.Fatalf("Select(%q) len = %d, want %d", tc.selector, len(got), tc.wantLen)
+		}
+	}
+}
+
+func TestSelectContentEditablePseudoClasses(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><section id="editable" contenteditable><p id="inherited">Editable</p><div id="false" contenteditable="false"><span id="blocked">Blocked</span></div><div id="plaintext" contenteditable="plaintext-only"><em id="plain-child">Plain</em></div></section><input id="name" type="text"><textarea id="story"></textarea><input id="readonly" type="text" readonly><div id="plain">Plain</div></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	tests := []struct {
+		selector string
+		wantLen  int
+	}{
+		{selector: "section:read-write", wantLen: 1},
+		{selector: "p:read-write", wantLen: 1},
+		{selector: "div:read-write", wantLen: 1},
+		{selector: "em:read-write", wantLen: 1},
+		{selector: "input:read-write", wantLen: 1},
+		{selector: "textarea:read-write", wantLen: 1},
+		{selector: "input:read-only", wantLen: 1},
+		{selector: "#editable:read-write", wantLen: 1},
+		{selector: "#false:read-only", wantLen: 1},
+		{selector: "#blocked:read-only", wantLen: 1},
+		{selector: "#plaintext:read-write", wantLen: 1},
+		{selector: "#plain-child:read-write", wantLen: 1},
+		{selector: "#plain:read-only", wantLen: 1},
+		{selector: "#blocked:read-write", wantLen: 0},
+		{selector: "#plain:read-write", wantLen: 0},
 	}
 
 	for _, tc := range tests {
@@ -1001,7 +1155,7 @@ func TestSelectOfTypePseudoClasses(t *testing.T) {
 func TestSelectNthPseudoClasses(t *testing.T) {
 	store := NewStore()
 	err := store.BootstrapHTML(
-		`<main id="root"><ul id="list"><li id="one">1</li><li id="two">2</li><li id="three">3</li><li id="four">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`,
+		`<main id="root"><ul id="list"><li id="one" class="selected">1</li><li id="two">2</li><li id="three" class="selected">3</li><li id="four" class="selected">4</li><li id="five">5</li></ul><div id="mixed"><p id="para-a">A</p><span id="mid">M</span><p id="para-b">B</p><p id="para-c">C</p></div></main>`,
 	)
 	if err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -1015,12 +1169,17 @@ func TestSelectNthPseudoClasses(t *testing.T) {
 		{selector: "li:nth-child(even)", wantLen: 2},
 		{selector: "li:nth-child(3)", wantLen: 1},
 		{selector: "li:nth-child(2n+1)", wantLen: 3},
+		{selector: "li:nth-child(2 of .selected)", wantLen: 1},
+		{selector: "li:nth-child(2 of .selected, #two)", wantLen: 1},
+		{selector: "li:nth-child(odd of .selected)", wantLen: 2},
 		{selector: "p:nth-of-type(2)", wantLen: 1},
 		{selector: "p:nth-of-type(odd)", wantLen: 2},
 		{selector: "span:nth-of-type(1)", wantLen: 1},
 		{selector: "li:nth-last-child(1)", wantLen: 1},
 		{selector: "li:nth-last-child(2)", wantLen: 1},
 		{selector: "li:nth-last-child(odd)", wantLen: 3},
+		{selector: "li:nth-last-child(1 of .selected)", wantLen: 1},
+		{selector: "li:nth-last-child(2 of .selected)", wantLen: 1},
 		{selector: "p:nth-last-of-type(1)", wantLen: 1},
 		{selector: "p:nth-last-of-type(2)", wantLen: 1},
 		{selector: "span:nth-last-of-type(1)", wantLen: 1},
@@ -1046,7 +1205,9 @@ func TestSelectNthPseudoClassesRejectsInvalidSelectors(t *testing.T) {
 	for _, selector := range []string{
 		"li:nth-child()",
 		"li:nth-child(foo)",
+		"li:nth-child(2 of)",
 		"li:nth-of-type(2n+)",
+		"li:nth-of-type(2 of .selected)",
 		"li:nth-last-child()",
 		"li:nth-last-child(foo)",
 		"li:nth-last-of-type(2n+)",

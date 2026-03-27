@@ -10,8 +10,12 @@ func FuzzSelectorQueries(f *testing.F) {
 		"a[href]",
 		"main > section",
 		":has(a)",
+		":has(:bogus, a)",
 		":not(.missing)",
+		":not(:bogus, .missing)",
 		":nth-child(2n+1)",
+		":nth-child(2 of .selected)",
+		":nth-last-child(1 of .selected)",
 		":is(a, button)",
 		"a:local-link",
 	}

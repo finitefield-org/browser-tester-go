@@ -49,8 +49,9 @@ const (
 type selectorHasGroup []selectorSequence
 
 type selectorNthPattern struct {
-	a int
-	b int
+	a  int
+	b  int
+	of selectorExpression
 }
 
 type selectorPseudoClass uint8
@@ -124,6 +125,8 @@ type selectorSequence struct {
 	parts []selectorSequencePart
 }
 
+type selectorExpression []selectorSequence
+
 type selectorSequencePart struct {
 	compound   simpleSelector
 	combinator selectorCombinator
@@ -133,7 +136,7 @@ func (s *Store) Select(selector string) ([]NodeID, error) {
 	if s == nil {
 		return nil, fmt.Errorf("dom store is nil")
 	}
-	parsed, err := parseSelectorSequence(selector)
+	parsed, err := parseSelectorExpression(selector)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +233,37 @@ func parseSelectorSequence(input string) (selectorSequence, error) {
 	return selectorSequence{parts: parts}, nil
 }
 
+func parseSelectorExpression(input string) (selectorExpression, error) {
+	text := strings.TrimSpace(input)
+	if text == "" {
+		return nil, fmt.Errorf("selector must not be empty")
+	}
+
+	selectorTexts, err := splitSelectorListWithErrorPrefix(text, "unsupported selector `%s`", false)
+	if err != nil {
+		return nil, err
+	}
+
+	expression := make(selectorExpression, 0, len(selectorTexts))
+	for _, selectorText := range selectorTexts {
+		parsed, err := parseSelectorSequence(selectorText)
+		if err != nil {
+			return nil, err
+		}
+		expression = append(expression, parsed)
+	}
+	return expression, nil
+}
+
+func (e selectorExpression) matchesWithScope(store *Store, node *Node, scopeNodeID NodeID) bool {
+	for _, sequence := range e {
+		if sequence.matchesWithScope(store, node, scopeNodeID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s selectorSequence) matches(store *Store, node *Node) bool {
 	return s.matchesWithScope(store, node, 0)
 }
@@ -257,6 +291,26 @@ func (s selectorSequence) matchesWithScope(store *Store, node *Node, scopeNodeID
 	}
 
 	return true
+}
+
+func selectorSequenceNeedsGlobalTraversal(sequence selectorSequence) bool {
+	if len(sequence.parts) < 2 {
+		return false
+	}
+	first := sequence.parts[0]
+	if first.combinator != selectorCombinatorAdjacentSibling && first.combinator != selectorCombinatorGeneralSibling {
+		return false
+	}
+	return simpleSelectorHasPseudoClass(first.compound, selectorPseudoScope)
+}
+
+func simpleSelectorHasPseudoClass(selector simpleSelector, expected selectorPseudoClass) bool {
+	for _, pseudo := range selector.pseudos {
+		if pseudo == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (p selectorSequencePart) matchPredecessor(store *Store, current *Node, scopeNodeID NodeID) (*Node, bool) {
@@ -577,13 +631,13 @@ func (s simpleSelector) matchesWithScope(store *Store, node *Node, scopeNodeID N
 			return false
 		}
 	}
-	if s.nthChild != nil && !pseudoClassNthChild(store, node, s.nthChild) {
+	if s.nthChild != nil && !pseudoClassNthChild(store, node, s.nthChild, scopeNodeID) {
 		return false
 	}
 	if s.nthOfType != nil && !pseudoClassNthOfType(store, node, s.nthOfType) {
 		return false
 	}
-	if s.nthLastChild != nil && !pseudoClassNthLastChild(store, node, s.nthLastChild) {
+	if s.nthLastChild != nil && !pseudoClassNthLastChild(store, node, s.nthLastChild, scopeNodeID) {
 		return false
 	}
 	if s.nthLastOfType != nil && !pseudoClassNthLastOfType(store, node, s.nthLastOfType) {
@@ -802,30 +856,114 @@ func parseSelectorAttributeValue(input, text string, index int) (string, int, er
 }
 
 func parseSelectorHasPseudoClass(input, text string, index int) (selectorHasGroup, int, error) {
-	return parseSelectorListPseudoClass(input, text, index, ":has(", "has")
+	const prefix = ":has("
+	if index < 0 || index+len(prefix) > len(text) {
+		return nil, 0, fmt.Errorf("invalid :has() pseudo-class selector `%s`", input)
+	}
+	if !strings.EqualFold(text[index:index+len(prefix)], prefix) {
+		return nil, 0, fmt.Errorf("invalid :has() pseudo-class selector `%s`", input)
+	}
+
+	start := index + len(prefix)
+	end := start
+	depth := 1
+	for end < len(text) {
+		switch text[end] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				raw := strings.TrimSpace(text[start:end])
+				if raw == "" {
+					return selectorHasGroup{}, end + 1, nil
+				}
+				selectorTexts, err := splitSelectorListWithErrorPrefix(raw, "invalid :has() pseudo-class selector `%s`", true)
+				if err != nil {
+					return nil, 0, err
+				}
+				group := make(selectorHasGroup, 0, len(selectorTexts))
+				for _, selectorText := range selectorTexts {
+					normalized := normalizeHasRelativeSelector(selectorText)
+					parsed, err := parseSelectorSequence(normalized)
+					if err != nil {
+						continue
+					}
+					group = append(group, parsed)
+				}
+				return group, end + 1, nil
+			}
+		}
+		end++
+	}
+
+	return nil, 0, fmt.Errorf("unterminated :has() pseudo-class selector `%s`", input)
 }
 
 func parseSelectorIsPseudoClass(input, text string, index int) (selectorHasGroup, int, error) {
-	return parseSelectorListPseudoClass(input, text, index, ":is(", "is")
+	return parseSelectorListPseudoClass(input, text, index, ":is(", "is", true)
 }
 
 func parseSelectorWherePseudoClass(input, text string, index int) (selectorHasGroup, int, error) {
-	return parseSelectorListPseudoClass(input, text, index, ":where(", "where")
+	return parseSelectorListPseudoClass(input, text, index, ":where(", "where", true)
 }
 
 func parseSelectorNotPseudoClass(input, text string, index int) (selectorHasGroup, int, error) {
-	return parseSelectorListPseudoClass(input, text, index, ":not(", "not")
+	return parseSelectorListPseudoClass(input, text, index, ":not(", "not", true)
+}
+
+func parseSelectorListPseudoClass(input, text string, index int, prefix, pseudoName string, forgiving bool) (selectorHasGroup, int, error) {
+	errorPrefix := fmt.Sprintf("invalid :%s() pseudo-class selector `%%s`", pseudoName)
+	if index < 0 || index+len(prefix) > len(text) {
+		return nil, 0, fmt.Errorf(errorPrefix, input)
+	}
+	if !strings.EqualFold(text[index:index+len(prefix)], prefix) {
+		return nil, 0, fmt.Errorf(errorPrefix, input)
+	}
+
+	start := index + len(prefix)
+	end := start
+	depth := 1
+	for end < len(text) {
+		switch text[end] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				raw := strings.TrimSpace(text[start:end])
+				if raw == "" {
+					if forgiving {
+						return selectorHasGroup{}, end + 1, nil
+					}
+					return nil, 0, fmt.Errorf(errorPrefix, input)
+				}
+				selectorTexts, err := splitSelectorListWithErrorPrefix(raw, errorPrefix, forgiving)
+				if err != nil {
+					return nil, 0, err
+				}
+				group := make(selectorHasGroup, 0, len(selectorTexts))
+				for _, selectorText := range selectorTexts {
+					parsed, err := parseSelectorSequence(selectorText)
+					if err != nil {
+						if forgiving {
+							continue
+						}
+						return nil, 0, err
+					}
+					group = append(group, parsed)
+				}
+				return group, end + 1, nil
+			}
+		}
+		end++
+	}
+
+	return nil, 0, fmt.Errorf("unterminated :%s() pseudo-class selector `%s`", pseudoName, input)
 }
 
 func parseSelectorNthPseudoClass(input, text string, index int, pseudoName string) (*selectorNthPattern, int, error) {
-	pattern, next, err := parseSelectorFunctionalPseudoClass(input, text, index, pseudoName)
-	if err != nil {
-		return nil, 0, err
-	}
-	return pattern, next, nil
-}
-
-func parseSelectorListPseudoClass(input, text string, index int, prefix, pseudoName string) (selectorHasGroup, int, error) {
+	prefix := ":" + pseudoName + "("
 	errorPrefix := fmt.Sprintf("invalid :%s() pseudo-class selector `%%s`", pseudoName)
 	if index < 0 || index+len(prefix) > len(text) {
 		return nil, 0, fmt.Errorf(errorPrefix, input)
@@ -848,19 +986,11 @@ func parseSelectorListPseudoClass(input, text string, index int, prefix, pseudoN
 				if raw == "" {
 					return nil, 0, fmt.Errorf(errorPrefix, input)
 				}
-				selectorTexts, err := splitSelectorList(raw, pseudoName)
+				pattern, err := parseSelectorNthPattern(raw, input, pseudoName)
 				if err != nil {
 					return nil, 0, err
 				}
-				group := make(selectorHasGroup, 0, len(selectorTexts))
-				for _, selectorText := range selectorTexts {
-					parsed, err := parseSelectorSequence(selectorText)
-					if err != nil {
-						return nil, 0, err
-					}
-					group = append(group, parsed)
-				}
-				return group, end + 1, nil
+				return pattern, end + 1, nil
 			}
 		}
 		end++
@@ -943,6 +1073,105 @@ func parseNthPattern(raw string) (*selectorNthPattern, error) {
 	}
 
 	return &selectorNthPattern{a: a, b: b}, nil
+}
+
+func parseSelectorNthPattern(raw, input, pseudoName string) (*selectorNthPattern, error) {
+	errorPrefix := fmt.Sprintf("invalid :%s() pseudo-class selector `%%s`", pseudoName)
+	patternText, selectorText, hasOf, err := splitNthPatternSelectorList(raw, input, errorPrefix, pseudoName == "nth-child" || pseudoName == "nth-last-child")
+	if err != nil {
+		return nil, err
+	}
+
+	pattern, err := parseNthPattern(patternText)
+	if err != nil {
+		return nil, fmt.Errorf(errorPrefix, input)
+	}
+
+	if !hasOf {
+		return pattern, nil
+	}
+
+	ofPattern, err := parseSelectorExpression(selectorText)
+	if err != nil {
+		return nil, fmt.Errorf(errorPrefix, input)
+	}
+	pattern.of = ofPattern
+	return pattern, nil
+}
+
+func splitNthPatternSelectorList(raw, input, errorPrefix string, allowOf bool) (string, string, bool, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return "", "", false, fmt.Errorf(errorPrefix, input)
+	}
+
+	parenDepth := 0
+	bracketDepth := 0
+	var quote byte
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 && parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			if parenDepth == 0 {
+				bracketDepth++
+			}
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		}
+		if parenDepth != 0 || bracketDepth != 0 {
+			continue
+		}
+		if i+2 > len(text) || !strings.EqualFold(text[i:i+2], "of") {
+			continue
+		}
+		if i > 0 && !isSpace(text[i-1]) {
+			continue
+		}
+		after := i + 2
+		if after < len(text) && !isSpace(text[after]) {
+			continue
+		}
+		if !allowOf {
+			return "", "", false, fmt.Errorf(errorPrefix, input)
+		}
+		patternText := strings.TrimSpace(text[:i])
+		selectorText := strings.TrimSpace(text[after:])
+		if patternText == "" || selectorText == "" {
+			return "", "", false, fmt.Errorf(errorPrefix, input)
+		}
+		return patternText, selectorText, true, nil
+	}
+
+	return text, "", false, nil
+}
+
+func normalizeHasRelativeSelector(selectorText string) string {
+	normalized := strings.TrimSpace(selectorText)
+	if normalized == "" {
+		return normalized
+	}
+	if normalized[0] == '>' || normalized[0] == '+' || normalized[0] == '~' {
+		return ":scope " + normalized
+	}
+	return normalized
 }
 
 func parseSelectorPseudoClass(name string) (selectorPseudoClass, bool) {
@@ -1082,9 +1311,9 @@ func (p selectorPseudoClass) matchesWithScope(store *Store, node *Node, scopeNod
 	case selectorPseudoChecked:
 		return pseudoClassChecked(store, node)
 	case selectorPseudoDisabled:
-		return pseudoClassDisabled(node)
+		return pseudoClassDisabled(store, node)
 	case selectorPseudoEnabled:
-		return pseudoClassEnabled(node)
+		return pseudoClassEnabled(store, node)
 	case selectorPseudoFirstChild:
 		return pseudoClassFirstChild(store, node)
 	case selectorPseudoLastChild:
@@ -1106,13 +1335,13 @@ func (p selectorPseudoClass) matchesWithScope(store *Store, node *Node, scopeNod
 	case selectorPseudoAutofill:
 		return pseudoClassAutofill(node)
 	case selectorPseudoRequired:
-		return pseudoClassRequired(node)
+		return pseudoClassRequired(store, node)
 	case selectorPseudoOptional:
-		return pseudoClassOptional(node)
+		return pseudoClassOptional(store, node)
 	case selectorPseudoReadOnly:
-		return pseudoClassReadOnly(node)
+		return pseudoClassReadOnly(store, node)
 	case selectorPseudoReadWrite:
-		return pseudoClassReadWrite(node)
+		return pseudoClassReadWrite(store, node)
 	case selectorPseudoHeading:
 		return pseudoClassHeading(node)
 	case selectorPseudoPlaying:
@@ -1191,26 +1420,38 @@ func pseudoClassChecked(store *Store, node *Node) bool {
 	}
 }
 
-func pseudoClassDisabled(node *Node) bool {
+func pseudoClassDisabled(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
 	if !isEnabledOrDisabledFormControl(node.TagName) {
 		return false
 	}
-	_, ok := attributeValue(node.Attrs, "disabled")
-	return ok
+	switch node.TagName {
+	case "option":
+		if _, ok := attributeValue(node.Attrs, "disabled"); ok {
+			return true
+		}
+		return pseudoClassOptionDisabledByOptgroup(store, node)
+	case "optgroup":
+		_, ok := attributeValue(node.Attrs, "disabled")
+		return ok
+	default:
+		if _, ok := attributeValue(node.Attrs, "disabled"); ok {
+			return true
+		}
+		return pseudoClassDisabledByAncestorFieldset(store, node)
+	}
 }
 
-func pseudoClassEnabled(node *Node) bool {
+func pseudoClassEnabled(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
 	if !isEnabledOrDisabledFormControl(node.TagName) {
 		return false
 	}
-	_, ok := attributeValue(node.Attrs, "disabled")
-	return !ok
+	return !pseudoClassDisabled(store, node)
 }
 
 func pseudoClassFirstChild(store *Store, node *Node) bool {
@@ -1395,8 +1636,11 @@ func pseudoClassAutofill(node *Node) bool {
 	return ok
 }
 
-func pseudoClassRequired(node *Node) bool {
+func pseudoClassRequired(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+	if pseudoClassDisabled(store, node) {
 		return false
 	}
 	switch node.TagName {
@@ -1414,8 +1658,11 @@ func pseudoClassRequired(node *Node) bool {
 	}
 }
 
-func pseudoClassOptional(node *Node) bool {
+func pseudoClassOptional(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+	if pseudoClassDisabled(store, node) {
 		return false
 	}
 	switch node.TagName {
@@ -1433,22 +1680,17 @@ func pseudoClassOptional(node *Node) bool {
 	}
 }
 
-func pseudoClassReadOnly(node *Node) bool {
+func pseudoClassReadOnly(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-	return !pseudoClassReadWrite(node)
+	return !pseudoClassReadWrite(store, node)
 }
 
-func pseudoClassReadWrite(node *Node) bool {
+func pseudoClassReadWrite(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-
-	if value, ok := attributeValue(node.Attrs, "contenteditable"); ok && strings.ToLower(strings.TrimSpace(value)) != "false" {
-		return true
-	}
-
 	switch node.TagName {
 	case "input":
 		if !isTextInputType(inputType(node)) {
@@ -1457,7 +1699,7 @@ func pseudoClassReadWrite(node *Node) bool {
 		if _, ok := attributeValue(node.Attrs, "readonly"); ok {
 			return false
 		}
-		if _, ok := attributeValue(node.Attrs, "disabled"); ok {
+		if pseudoClassDisabled(store, node) {
 			return false
 		}
 		return true
@@ -1465,12 +1707,12 @@ func pseudoClassReadWrite(node *Node) bool {
 		if _, ok := attributeValue(node.Attrs, "readonly"); ok {
 			return false
 		}
-		if _, ok := attributeValue(node.Attrs, "disabled"); ok {
+		if pseudoClassDisabled(store, node) {
 			return false
 		}
 		return true
 	default:
-		return false
+		return isContentEditableHostOrEditable(store, node)
 	}
 }
 
@@ -1763,18 +2005,43 @@ func pseudoClassHas(store *Store, node *Node, group selectorHasGroup, scopeNodeI
 		return false
 	}
 
+	for _, selector := range group {
+		if selectorSequenceNeedsGlobalTraversal(selector) {
+			if pseudoClassHasGlobalMatch(store, selector, node.ID) {
+				return true
+			}
+			continue
+		}
+		if pseudoClassHasDescendantMatch(store, node, selector) {
+			return true
+		}
+	}
+	return false
+}
+
+func pseudoClassHasDescendantMatch(store *Store, node *Node, selector selectorSequence) bool {
 	found := false
 	store.walkElementPreOrder(node.ID, func(current *Node) {
 		if found || current == nil || current.ID == node.ID {
 			return
 		}
-		for _, selector := range group {
-			if selector.matchesWithScope(store, current, node.ID) {
-				found = true
-				return
-			}
+		if selector.matchesWithScope(store, current, node.ID) {
+			found = true
 		}
 	})
+	return found
+}
+
+func pseudoClassHasGlobalMatch(store *Store, selector selectorSequence, scopeNodeID NodeID) bool {
+	found := false
+	for _, current := range store.Nodes() {
+		if found || current == nil || current.Kind != NodeKindElement {
+			continue
+		}
+		if selector.matchesWithScope(store, current, scopeNodeID) {
+			found = true
+		}
+	}
 	return found
 }
 
@@ -1790,11 +2057,18 @@ func pseudoClassSelectorListMatchesNode(store *Store, node *Node, group selector
 	return false
 }
 
-func pseudoClassNthChild(store *Store, node *Node, pattern *selectorNthPattern) bool {
+func pseudoClassNthChild(store *Store, node *Node, pattern *selectorNthPattern, scopeNodeID NodeID) bool {
 	if store == nil || node == nil || node.Kind != NodeKindElement || node.Parent == 0 || pattern == nil {
 		return false
 	}
-	index, ok := elementChildIndex(store, node)
+	if len(pattern.of) == 0 {
+		index, ok := elementChildIndex(store, node)
+		if !ok {
+			return false
+		}
+		return pattern.matches(index)
+	}
+	index, ok := elementFilteredChildIndex(store, node, pattern.of, scopeNodeID)
 	if !ok {
 		return false
 	}
@@ -1812,11 +2086,18 @@ func pseudoClassNthOfType(store *Store, node *Node, pattern *selectorNthPattern)
 	return pattern.matches(index)
 }
 
-func pseudoClassNthLastChild(store *Store, node *Node, pattern *selectorNthPattern) bool {
+func pseudoClassNthLastChild(store *Store, node *Node, pattern *selectorNthPattern, scopeNodeID NodeID) bool {
 	if store == nil || node == nil || node.Kind != NodeKindElement || node.Parent == 0 || pattern == nil {
 		return false
 	}
-	index, ok := elementLastChildIndex(store, node)
+	if len(pattern.of) == 0 {
+		index, ok := elementLastChildIndex(store, node)
+		if !ok {
+			return false
+		}
+		return pattern.matches(index)
+	}
+	index, ok := elementFilteredLastChildIndex(store, node, pattern.of, scopeNodeID)
 	if !ok {
 		return false
 	}
@@ -1832,6 +2113,58 @@ func pseudoClassNthLastOfType(store *Store, node *Node, pattern *selectorNthPatt
 		return false
 	}
 	return pattern.matches(index)
+}
+
+func elementFilteredChildIndex(store *Store, node *Node, filter selectorExpression, scopeNodeID NodeID) (int, bool) {
+	if store == nil || node == nil || node.Parent == 0 || len(filter) == 0 {
+		return 0, false
+	}
+	parent := store.Node(node.Parent)
+	if parent == nil {
+		return 0, false
+	}
+
+	index := 0
+	for _, childID := range parent.Children {
+		child := store.Node(childID)
+		if child == nil || child.Kind != NodeKindElement {
+			continue
+		}
+		if !filter.matchesWithScope(store, child, scopeNodeID) {
+			continue
+		}
+		index++
+		if child.ID == node.ID {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func elementFilteredLastChildIndex(store *Store, node *Node, filter selectorExpression, scopeNodeID NodeID) (int, bool) {
+	if store == nil || node == nil || node.Parent == 0 || len(filter) == 0 {
+		return 0, false
+	}
+	parent := store.Node(node.Parent)
+	if parent == nil {
+		return 0, false
+	}
+
+	index := 0
+	for i := len(parent.Children) - 1; i >= 0; i-- {
+		child := store.Node(parent.Children[i])
+		if child == nil || child.Kind != NodeKindElement {
+			continue
+		}
+		if !filter.matchesWithScope(store, child, scopeNodeID) {
+			continue
+		}
+		index++
+		if child.ID == node.ID {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func (p selectorNthPattern) matches(index int) bool {
@@ -2035,6 +2368,33 @@ func pseudoClassOnlyOfType(store *Store, node *Node) bool {
 	return pseudoClassFirstOfType(store, node) && pseudoClassLastOfType(store, node)
 }
 
+func isContentEditableHostOrEditable(store *Store, node *Node) bool {
+	if store == nil || node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+
+	current := node
+	for current != nil {
+		value, ok := attributeValue(current.Attrs, "contenteditable")
+		if ok {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "", "true", "plaintext-only":
+				return true
+			case "false":
+				return false
+			}
+		}
+		if current.Parent == 0 {
+			break
+		}
+		current = store.Node(current.Parent)
+		if current == nil || current.Kind != NodeKindElement {
+			break
+		}
+	}
+	return false
+}
+
 func elementLanguage(store *Store, node *Node) string {
 	if store == nil || node == nil || node.Kind != NodeKindElement {
 		return ""
@@ -2202,10 +2562,15 @@ func pseudoClassValid(store *Store, node *Node) bool {
 		return false
 	}
 	switch node.TagName {
-	case "form", "fieldset":
+	case "form":
+		return !hasInvalidConstraintDescendant(store, node)
+	case "fieldset":
+		if pseudoClassDisabled(store, node) {
+			return false
+		}
 		return !hasInvalidConstraintDescendant(store, node)
 	default:
-		if !isBoundedConstraintValidationControl(node) {
+		if !isBoundedConstraintValidationControl(store, node) {
 			return false
 		}
 		return controlSatisfiesBoundedConstraints(store, node)
@@ -2217,10 +2582,15 @@ func pseudoClassInvalid(store *Store, node *Node) bool {
 		return false
 	}
 	switch node.TagName {
-	case "form", "fieldset":
+	case "form":
+		return hasInvalidConstraintDescendant(store, node)
+	case "fieldset":
+		if pseudoClassDisabled(store, node) {
+			return false
+		}
 		return hasInvalidConstraintDescendant(store, node)
 	default:
-		if !isBoundedConstraintValidationControl(node) {
+		if !isBoundedConstraintValidationControl(store, node) {
 			return false
 		}
 		return !controlSatisfiesBoundedConstraints(store, node)
@@ -2254,7 +2624,7 @@ func pseudoClassUserValid(store *Store, node *Node) bool {
 	if store == nil || node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-	if !isUserValidityPseudoClassCandidate(node) || !node.UserValidity {
+	if !isUserValidityPseudoClassCandidate(store, node) || !node.UserValidity {
 		return false
 	}
 	return controlSatisfiesBoundedConstraints(store, node)
@@ -2264,7 +2634,7 @@ func pseudoClassUserInvalid(store *Store, node *Node) bool {
 	if store == nil || node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-	if !isUserValidityPseudoClassCandidate(node) || !node.UserValidity {
+	if !isUserValidityPseudoClassCandidate(store, node) || !node.UserValidity {
 		return false
 	}
 	return !controlSatisfiesBoundedConstraints(store, node)
@@ -2335,18 +2705,15 @@ func hasInvalidConstraintDescendant(store *Store, node *Node) bool {
 		if node.TagName == "form" && nearestAncestorForm(store, current.ID) != node.ID {
 			return
 		}
-		if isBoundedConstraintValidationControl(current) && !controlSatisfiesBoundedConstraints(store, current) {
+		if isBoundedConstraintValidationControl(store, current) && !controlSatisfiesBoundedConstraints(store, current) {
 			invalid = true
 		}
 	})
 	return invalid
 }
 
-func isBoundedConstraintValidationControl(node *Node) bool {
+func isBoundedConstraintValidationControl(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
-		return false
-	}
-	if _, ok := attributeValue(node.Attrs, "disabled"); ok {
 		return false
 	}
 
@@ -2360,16 +2727,16 @@ func isBoundedConstraintValidationControl(node *Node) bool {
 		if _, ok := attributeValue(node.Attrs, "readonly"); ok && isTextInputType(typeName) {
 			return false
 		}
-		return true
+		return !pseudoClassDisabled(store, node)
 	case "select":
-		return true
+		return !pseudoClassDisabled(store, node)
 	case "textarea":
 		if _, ok := attributeValue(node.Attrs, "readonly"); ok {
 			return false
 		}
-		return true
+		return !pseudoClassDisabled(store, node)
 	case "fieldset":
-		return true
+		return !pseudoClassDisabled(store, node)
 	default:
 		return false
 	}
@@ -2379,7 +2746,7 @@ func controlSatisfiesBoundedConstraints(store *Store, node *Node) bool {
 	if store == nil || node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-	if !isBoundedConstraintValidationControl(node) {
+	if !isBoundedConstraintValidationControl(store, node) {
 		return false
 	}
 
@@ -2428,11 +2795,11 @@ func controlSatisfiesBoundedConstraints(store *Store, node *Node) bool {
 	}
 }
 
-func isUserValidityPseudoClassCandidate(node *Node) bool {
+func isUserValidityPseudoClassCandidate(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
-	if !isBoundedConstraintValidationControl(node) {
+	if !isBoundedConstraintValidationControl(store, node) {
 		return false
 	}
 	switch node.TagName {
@@ -2464,7 +2831,7 @@ func radioGroupRequiresChecked(store *Store, node *Node) bool {
 		if nearestAncestorForm(store, other.ID) != currentForm {
 			continue
 		}
-		if !isBoundedConstraintValidationControl(other) {
+		if !isBoundedConstraintValidationControl(store, other) {
 			continue
 		}
 		if hasAttribute(other.Attrs, "required") {
@@ -2499,7 +2866,7 @@ func radioGroupHasChecked(store *Store, node *Node) bool {
 		if nearestAncestorForm(store, other.ID) != currentForm {
 			continue
 		}
-		if !isBoundedConstraintValidationControl(other) {
+		if !isBoundedConstraintValidationControl(store, other) {
 			continue
 		}
 		if _, ok := attributeValue(other.Attrs, "checked"); ok {
@@ -2617,6 +2984,74 @@ func isEnabledOrDisabledFormControl(tagName string) bool {
 	default:
 		return false
 	}
+}
+
+func pseudoClassDisabledByAncestorFieldset(store *Store, node *Node) bool {
+	if store == nil || node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+
+	switch node.TagName {
+	case "button", "input", "select", "textarea", "fieldset":
+		// These elements inherit disabledness from ancestor fieldsets.
+	default:
+		return false
+	}
+
+	currentID := node.Parent
+	for currentID != 0 {
+		ancestor := store.Node(currentID)
+		if ancestor == nil || ancestor.Kind != NodeKindElement {
+			return false
+		}
+		if ancestor.TagName == "fieldset" && hasAttribute(ancestor.Attrs, "disabled") {
+			legendID := firstLegendChildID(store, ancestor)
+			if legendID == 0 || !subtreeContainsNode(store, legendID, node.ID) {
+				return true
+			}
+		}
+		currentID = ancestor.Parent
+	}
+	return false
+}
+
+func pseudoClassOptionDisabledByOptgroup(store *Store, node *Node) bool {
+	if store == nil || node == nil || node.Kind != NodeKindElement || node.TagName != "option" {
+		return false
+	}
+
+	currentID := node.Parent
+	for currentID != 0 {
+		ancestor := store.Node(currentID)
+		if ancestor == nil || ancestor.Kind != NodeKindElement {
+			return false
+		}
+		switch ancestor.TagName {
+		case "option", "select", "hr", "datalist":
+			return false
+		case "optgroup":
+			_, ok := attributeValue(ancestor.Attrs, "disabled")
+			return ok
+		}
+		currentID = ancestor.Parent
+	}
+	return false
+}
+
+func firstLegendChildID(store *Store, fieldset *Node) NodeID {
+	if store == nil || fieldset == nil || fieldset.Kind != NodeKindElement || fieldset.TagName != "fieldset" {
+		return 0
+	}
+	for _, childID := range fieldset.Children {
+		child := store.Node(childID)
+		if child == nil || child.Kind != NodeKindElement {
+			continue
+		}
+		if child.TagName == "legend" {
+			return child.ID
+		}
+	}
+	return 0
 }
 
 func isRequiredApplicableInputType(typeName string) bool {
@@ -2825,31 +3260,57 @@ func containsToken(tokens []string, token string) bool {
 	return false
 }
 
-func splitSelectorList(input, pseudoName string) ([]string, error) {
+func splitSelectorListWithErrorPrefix(input, errorPrefix string, forgiving bool) ([]string, error) {
 	text := strings.TrimSpace(input)
-	errorPrefix := fmt.Sprintf("invalid :%s() pseudo-class selector `%%s`", pseudoName)
 	if text == "" {
+		if forgiving {
+			return nil, nil
+		}
 		return nil, fmt.Errorf(errorPrefix, input)
 	}
 
 	parts := make([]string, 0, 2)
-	depth := 0
+	parenDepth := 0
+	bracketDepth := 0
+	var quote byte
 	start := 0
 	for i := 0; i < len(text); i++ {
-		switch text[i] {
+		ch := text[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
 		case '(':
-			depth++
+			if bracketDepth == 0 {
+				parenDepth++
+			}
 		case ')':
-			if depth > 0 {
-				depth--
+			if bracketDepth == 0 && parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			if parenDepth == 0 {
+				bracketDepth++
+			}
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
 			}
 		case ',':
-			if depth == 0 {
+			if parenDepth == 0 && bracketDepth == 0 {
 				part := strings.TrimSpace(text[start:i])
 				if part == "" {
-					return nil, fmt.Errorf(errorPrefix, input)
+					if !forgiving {
+						return nil, fmt.Errorf(errorPrefix, input)
+					}
+				} else {
+					parts = append(parts, part)
 				}
-				parts = append(parts, part)
 				start = i + 1
 			}
 		}
@@ -2857,9 +3318,12 @@ func splitSelectorList(input, pseudoName string) ([]string, error) {
 
 	part := strings.TrimSpace(text[start:])
 	if part == "" {
-		return nil, fmt.Errorf(errorPrefix, input)
+		if !forgiving {
+			return nil, fmt.Errorf(errorPrefix, input)
+		}
+	} else {
+		parts = append(parts, part)
 	}
-	parts = append(parts, part)
 	return parts, nil
 }
 
