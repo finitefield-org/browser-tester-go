@@ -907,6 +907,9 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	if strings.HasPrefix(rest, "classList.") {
 		return resolveElementClassListPropertyValue(session, store, nodeID, strings.TrimPrefix(rest, "classList."))
 	}
+	if strings.HasPrefix(rest, "dataset.") {
+		return resolveElementDatasetPropertyValue(session, store, nodeID, strings.TrimPrefix(rest, "dataset."))
+	}
 
 	node := nodeFromStore(store, nodeID)
 	if node == nil {
@@ -934,6 +937,11 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
 		}
 		return script.HostObjectReference(base + ".classList"), nil
+	case "dataset":
+		if node.Kind != dom.NodeKindElement {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.HostObjectReference(base + ".dataset"), nil
 	case "innerText":
 		return resolveElementInnerTextValue(session, store, nodeID)
 	case "outerText":

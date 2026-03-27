@@ -141,6 +141,17 @@ func (h skipHostBindings) ResolveHostReference(path string) (Value, error) {
 	return sanitizeSkippedValue(value), nil
 }
 
+func (h skipHostBindings) DeleteHostReference(path string) error {
+	if h.delegate == nil {
+		return NewError(ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
+	}
+	deleter, ok := h.delegate.(HostReferenceDeleter)
+	if !ok {
+		return NewError(ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
+	}
+	return deleter.DeleteHostReference(path)
+}
+
 func sanitizeSkippedValue(value Value) Value {
 	switch value.Kind {
 	case ValueKindArray:
@@ -8160,7 +8171,7 @@ func (p *classicJSStatementParser) parseDeleteExpression() (jsValue, error) {
 		if baseValue.receiver.Kind != ValueKindObject {
 			return jsValue{}, NewError(ErrorKindUnsupported, "delete only works on object or array values in this bounded classic-JS slice")
 		}
-		updated, deleted, err := deleteJSValuePropertyChain(baseValue.receiver, steps, p.privateFieldPrefix)
+		updated, deleted, err := deleteJSValuePropertyChain(p, baseValue.receiver, steps, p.privateFieldPrefix)
 		if err != nil {
 			return jsValue{}, err
 		}
@@ -8186,16 +8197,20 @@ func (p *classicJSStatementParser) parseDeleteExpression() (jsValue, error) {
 	if baseValue.value.Kind != ValueKindObject &&
 		baseValue.value.Kind != ValueKindArray &&
 		baseValue.value.Kind != ValueKindString &&
+		baseValue.value.Kind != ValueKindHostReference &&
 		baseValue.value.Kind != ValueKindFunction &&
 		baseValue.value.Kind != ValueKindNumber &&
 		baseValue.value.Kind != ValueKindBool &&
 		baseValue.value.Kind != ValueKindBigInt {
-		return jsValue{}, NewError(ErrorKindUnsupported, "delete only works on object, array, string, or primitive number/boolean/bigint values in this bounded classic-JS slice")
+		return jsValue{}, NewError(ErrorKindUnsupported, "delete only works on object, array, string, host surface, or primitive number/boolean/bigint values in this bounded classic-JS slice")
 	}
 
-	updated, deleted, err := deleteJSValuePropertyChain(baseValue.value, steps, p.privateFieldPrefix)
+	updated, deleted, err := deleteJSValuePropertyChain(p, baseValue.value, steps, p.privateFieldPrefix)
 	if err != nil {
 		return jsValue{}, err
+	}
+	if baseValue.value.Kind == ValueKindHostReference {
+		return scalarJSValue(BoolValue(deleted)), nil
 	}
 	if p.env != nil {
 		if err := p.env.assign(baseName, scalarJSValue(updated)); err != nil {
@@ -9168,7 +9183,7 @@ func classicJSPrivateContainsProperty(value Value, privateName string, privateFi
 	return ok, nil
 }
 
-func deleteJSValuePropertyChain(value Value, steps []classicJSDeleteStep, privateFieldPrefix string) (Value, bool, error) {
+func deleteJSValuePropertyChain(p *classicJSStatementParser, value Value, steps []classicJSDeleteStep, privateFieldPrefix string) (Value, bool, error) {
 	if len(steps) == 0 {
 		return value, true, nil
 	}
@@ -9201,7 +9216,7 @@ func deleteJSValuePropertyChain(value Value, steps []classicJSDeleteStep, privat
 			return value, true, nil
 		}
 
-		updatedChild, deleted, err := deleteJSValuePropertyChain(child, steps[1:], privateFieldPrefix)
+		updatedChild, deleted, err := deleteJSValuePropertyChain(p, child, steps[1:], privateFieldPrefix)
 		if err != nil {
 			return UndefinedValue(), false, err
 		}
@@ -9226,7 +9241,7 @@ func deleteJSValuePropertyChain(value Value, steps []classicJSDeleteStep, privat
 			cloned[index] = UndefinedValue()
 			return ArrayValue(cloned), true, nil
 		}
-		updatedChild, deleted, err := deleteJSValuePropertyChain(value.Array[index], steps[1:], privateFieldPrefix)
+		updatedChild, deleted, err := deleteJSValuePropertyChain(p, value.Array[index], steps[1:], privateFieldPrefix)
 		if err != nil {
 			return UndefinedValue(), false, err
 		}
@@ -9258,11 +9273,38 @@ func deleteJSValuePropertyChain(value Value, steps []classicJSDeleteStep, privat
 		if index >= len(runes) {
 			return value, true, nil
 		}
-		_, deleted, err := deleteJSValuePropertyChain(StringValue(string(runes[index])), steps[1:], privateFieldPrefix)
+		_, deleted, err := deleteJSValuePropertyChain(p, StringValue(string(runes[index])), steps[1:], privateFieldPrefix)
 		if err != nil {
 			return UndefinedValue(), false, err
 		}
 		return value, deleted, nil
+	case ValueKindHostReference:
+		key, err := deleteJSPropertyKey(steps[0], privateFieldPrefix)
+		if err != nil {
+			return UndefinedValue(), false, err
+		}
+		nextPath := joinHostReferencePath(value.HostReferencePath, key)
+		if len(steps) == 1 {
+			if p.host == nil {
+				return UndefinedValue(), false, NewError(ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", nextPath))
+			}
+			deleter, ok := p.host.(HostReferenceDeleter)
+			if !ok {
+				return UndefinedValue(), false, NewError(ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", nextPath))
+			}
+			if err := deleter.DeleteHostReference(nextPath); err != nil {
+				return UndefinedValue(), false, err
+			}
+			return value, true, nil
+		}
+		resolved, err := p.resolveHostReferencePath(nextPath)
+		if err != nil {
+			return UndefinedValue(), false, err
+		}
+		if resolved.Kind != ValueKindObject && resolved.Kind != ValueKindArray && resolved.Kind != ValueKindHostReference {
+			return UndefinedValue(), false, NewError(ErrorKindUnsupported, "delete only works on object or array values in this bounded classic-JS slice")
+		}
+		return deleteJSValuePropertyChain(p, resolved, steps[1:], privateFieldPrefix)
 	case ValueKindFunction, ValueKindNumber, ValueKindBool, ValueKindBigInt:
 		return value, true, nil
 	default:

@@ -150,8 +150,10 @@ Exit criteria:
 
 - Implement the lexer/parser/evaluator slice needed for inline bootstrap.
 - Add host bindings for the initial DOM and document/window accessors, including bounded `innerHTML`
-  / `outerHTML` / `textContent` helpers, a bounded `documentCurrentScript` helper for classic inline
-  script execution, and the explicit `expr(...)` wrapper for nested host expressions. The inline
+  / `outerHTML` / `textContent` helpers, bounded `dataset` reads, writes, and deletes for template-driven
+  controls, a
+  bounded `documentCurrentScript` helper for classic inline script execution, and the explicit
+  `expr(...)` wrapper for nested host expressions. The inline
   bootstrap slice should accept a bounded classic-JS statement parser that routes `host.method(...)`
   calls into the host bridge.
 - Keep the runtime deterministic and explicit about unsupported syntax.

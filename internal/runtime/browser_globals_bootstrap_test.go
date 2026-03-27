@@ -76,6 +76,24 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsElementDatasetReadsWritesAndDeletes(t *testing.T) {
+	const rawHTML = `<main><button id="mode" data-model-mode="grid" data-source-mode="weighted" data-round-mode="nearest"></button><div id="probe"></div><script>const button = document.querySelector("#mode"); const before = button.dataset.modelMode; button.dataset.roundMode = "floor"; const deleted = delete button.dataset.roundMode; host:setTextContent("#probe", expr(before + "|" + button.dataset.sourceMode + "|" + deleted + "|" + button.dataset.roundMode + "|" + button.hasAttribute("data-round-mode")))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if got != "grid|weighted|true|undefined|false" {
+		t.Fatalf("TextContent(#probe) = %q, want grid|weighted|true|undefined|false", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after dataset bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsTemplateLocaleAndOptionalWindowGlobals(t *testing.T) {
 	const rawHTML = `<main><div id="locale"></div><div id="stamp"></div><script>const locale = navigator.language || "en-US"; const stamp = new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(1700000000000)); if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); } host:setTextContent("#locale", expr(locale)); host:setTextContent("#stamp", expr(stamp))</script></main>`
 

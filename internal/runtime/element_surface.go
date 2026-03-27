@@ -262,6 +262,31 @@ func resolveElementClassListPropertyValue(session *Session, store *dom.Store, no
 	}
 }
 
+func resolveElementDatasetPropertyValue(session *Session, store *dom.Store, nodeID dom.NodeID, property string) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".dataset"
+	if property != "" {
+		surface += "." + property
+	}
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	if node := nodeFromStore(store, nodeID); node == nil || node.Kind != dom.NodeKindElement {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	if property == "" {
+		return script.HostObjectReference("element:" + strconv.FormatInt(int64(nodeID), 10) + ".dataset"), nil
+	}
+	dataset, err := store.Dataset(nodeID)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	value, ok := dataset.Get(property)
+	if !ok {
+		return script.UndefinedValue(), nil
+	}
+	return script.StringValue(value), nil
+}
+
 func unsupportedElementSurfaceError(surface string) error {
 	return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", surface))
 }

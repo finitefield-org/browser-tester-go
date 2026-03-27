@@ -16,6 +16,14 @@ func (h *inlineScriptHost) SetHostReference(path string, value script.Value) err
 	return setBrowserHostReferenceValue(h.session, store, path, value)
 }
 
+func (h *inlineScriptHost) DeleteHostReference(path string) error {
+	store := h.currentStore()
+	if h == nil || store == nil {
+		return fmt.Errorf("inline script host is unavailable")
+	}
+	return deleteBrowserHostReferenceValue(h.session, store, path)
+}
+
 func setBrowserHostReferenceValue(session *Session, store *dom.Store, path string, value script.Value) error {
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
@@ -47,6 +55,32 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 
 	if strings.HasPrefix(normalized, "element:") {
 		return setElementReferenceValue(session, store, normalized, value)
+	}
+
+	return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
+}
+
+func deleteBrowserHostReferenceValue(session *Session, store *dom.Store, path string) error {
+	normalized := strings.TrimSpace(path)
+	if normalized == "" {
+		return script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
+	}
+
+	for _, prefix := range []string{"window.", "self.", "globalThis.", "top.", "parent.", "frames."} {
+		if strings.HasPrefix(normalized, prefix) {
+			return deleteBrowserHostReferenceValue(session, store, normalized[len(prefix):])
+		}
+	}
+
+	switch normalized {
+	case "window", "self", "globalThis", "top", "parent", "frames":
+		return script.NewError(script.ErrorKindUnsupported, "window is read-only in this bounded classic-JS slice")
+	case "name":
+		return script.NewError(script.ErrorKindUnsupported, "deletion of window.name is unsupported in this bounded classic-JS slice")
+	}
+
+	if strings.HasPrefix(normalized, "element:") {
+		return deleteElementReferenceValue(session, store, normalized)
 	}
 
 	return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
@@ -101,8 +135,52 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		return setElementStyleText(store, nodeID, script.ToJSString(value))
 	case strings.HasPrefix(rest, "style."):
 		return setElementStylePropertyValue(store, nodeID, strings.TrimPrefix(rest, "style."), script.ToJSString(value))
+	case rest == "dataset":
+		return script.NewError(script.ErrorKindUnsupported, "assignment to element.dataset is unsupported in this bounded classic-JS slice")
+	case strings.HasPrefix(rest, "dataset."):
+		dataset, err := store.Dataset(nodeID)
+		if err != nil {
+			return err
+		}
+		if err := dataset.Set(strings.TrimPrefix(rest, "dataset."), script.ToJSString(value)); err != nil {
+			return err
+		}
+		return nil
 	default:
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	}
+}
+
+func deleteElementReferenceValue(session *Session, store *dom.Store, path string) error {
+	nodeID, err := parseElementReferencePath(path)
+	if err != nil {
+		return err
+	}
+	if store == nil {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("invalid element reference %q in this bounded classic-JS slice", path))
+	}
+	rest := strings.TrimPrefix(path, "element:"+fmt.Sprintf("%d", nodeID))
+	rest = strings.TrimPrefix(rest, ".")
+	switch {
+	case rest == "":
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+	case rest == "dataset":
+		return script.NewError(script.ErrorKindUnsupported, "deletion of element.dataset is unsupported in this bounded classic-JS slice")
+	case strings.HasPrefix(rest, "dataset."):
+		dataset, err := store.Dataset(nodeID)
+		if err != nil {
+			return err
+		}
+		if err := dataset.Remove(strings.TrimPrefix(rest, "dataset.")); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
 	}
 }
 

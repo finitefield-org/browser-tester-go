@@ -34,6 +34,57 @@ func (h *fakeHost) Call(method string, args []Value) (Value, error) {
 	return UndefinedValue(), errors.New("host method is not configured")
 }
 
+type hostReferenceDeleteHost struct {
+	calls         []hostCall
+	resolvedPaths []string
+	deletedPaths  []string
+	values        map[string]Value
+}
+
+func (h *hostReferenceDeleteHost) Call(method string, args []Value) (Value, error) {
+	copiedArgs := make([]Value, len(args))
+	copy(copiedArgs, args)
+	h.calls = append(h.calls, hostCall{method: method, args: copiedArgs})
+
+	switch method {
+	case "echo":
+		if len(args) != 1 {
+			return UndefinedValue(), fmt.Errorf("echo expects 1 argument")
+		}
+		return args[0], nil
+	default:
+		return UndefinedValue(), errors.New("host method is not configured")
+	}
+}
+
+func (h *hostReferenceDeleteHost) ResolveHostReference(path string) (Value, error) {
+	h.resolvedPaths = append(h.resolvedPaths, path)
+
+	switch path {
+	case "button.dataset":
+		return HostObjectReference(path), nil
+	}
+
+	if h.values != nil {
+		if value, ok := h.values[path]; ok {
+			return value, nil
+		}
+	}
+	return UndefinedValue(), nil
+}
+
+func (h *hostReferenceDeleteHost) DeleteHostReference(path string) error {
+	h.deletedPaths = append(h.deletedPaths, path)
+
+	if path != "button.dataset.foo" {
+		return fmt.Errorf("unexpected delete path %q", path)
+	}
+	if h.values != nil {
+		delete(h.values, path)
+	}
+	return nil
+}
+
 type echoHost struct {
 	calls []hostCall
 }
@@ -997,6 +1048,40 @@ func TestDispatchSupportsDeleteExpressionsOnArrayPropertiesInClassicJS(t *testin
 	}
 	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "true|2" {
 		t.Fatalf("host.calls[0].args[0] = %#v, want array delete of unknown property to return true", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchSupportsDeleteExpressionsOnHostReferencesInClassicJS(t *testing.T) {
+	host := &hostReferenceDeleteHost{
+		values: map[string]Value{
+			"button.dataset.foo": StringValue("seed"),
+		},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"button": HostObjectReference("button"),
+		},
+		Source: "let deleted = delete button.dataset.foo; host.echo(" + "`" + "${deleted}|${button.dataset.foo}" + "`" + ")",
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(delete on host reference) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "true|undefined" {
+		t.Fatalf("Dispatch(delete on host reference) result = %#v, want string true|undefined", result.Value)
+	}
+	if len(host.deletedPaths) != 1 {
+		t.Fatalf("host.deletedPaths = %#v, want one delete path", host.deletedPaths)
+	}
+	if host.deletedPaths[0] != "button.dataset.foo" {
+		t.Fatalf("host.deletedPaths[0] = %q, want button.dataset.foo", host.deletedPaths[0])
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host.calls = %#v, want one echo call", host.calls)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "true|undefined" {
+		t.Fatalf("host.calls[0].args = %#v, want one true|undefined string", host.calls[0].args)
 	}
 }
 

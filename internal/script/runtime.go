@@ -28,6 +28,10 @@ type HostReferenceMutator interface {
 	SetHostReference(path string, value Value) error
 }
 
+type HostReferenceDeleter interface {
+	DeleteHostReference(path string) error
+}
+
 type DispatchRequest struct {
 	Source        string
 	Bindings      map[string]Value

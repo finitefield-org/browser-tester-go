@@ -480,13 +480,15 @@ runtime slices.
   plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, and `childElementCount`, plus bounded element reflection reads on
-  `className`, `innerText`, `outerText`, `style`, and `attributes`, plus bounded low-level
+  `previousElementSibling`, and `childElementCount`, plus bounded element reflection reads and writes
+  on `className`, `innerText`, `outerText`, `style`, `attributes`, and `classList`, and `dataset`
+  reads, writes, and deletes through the same surface, plus
+  bounded low-level
   node-construction helpers on the `host:` bridge such as `host:createElement()`,
   `host:createTextNode()`, `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
   `host:insertAdjacentElement()`, `host:insertAdjacentText()`, and `host:removeChild()`. Inline
   scripts can also use bounded standard DOM surfaces such as `window` / `document` / `element`
-  `addEventListener`, `details.open`, `element.classList`, `input.select()`,
+  `addEventListener`, `details.open`, `element.classList`, `element.dataset`, `input.select()`,
   `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
   `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`, the
   live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()`

@@ -60,10 +60,11 @@ Exit criteria:
 - `extends null` class inheritance is accepted in the bounded class slice and still instantiates
   with bounded class object semantics.
 - Add host bindings needed for inline bootstrap, including bounded `innerHTML` / `outerHTML` /
-  `textContent` helpers, a bounded `documentCurrentScript` helper for classic inline scripts, an
-  explicit `expr(...)` wrapper for nested host expressions, and a bounded browser-global bridge for
-  raw HTML bootstrap (`window`, `document`, `location`, `history`, `navigator`, `URL`,
-  `Intl.NumberFormat`, storage, `matchMedia`, `clipboard`, timers, and `console`).
+  `textContent` helpers, bounded `dataset` reads, writes, and deletes for template-driven controls, a bounded
+  `documentCurrentScript` helper for classic inline scripts, an explicit `expr(...)` wrapper for
+  nested host expressions, and a bounded browser-global bridge for raw HTML bootstrap (`window`,
+  `document`, `location`, `history`, `navigator`, `URL`, `Intl.NumberFormat`, storage, `matchMedia`,
+  `clipboard`, timers, and `console`).
 - The current workspace already supports object literal shorthand properties and methods with any
   bound value, object literal computed property names and methods, object literal getter/setter
   accessors, bounded `throw` statements with catch-bound values and catch binding patterns, bounded

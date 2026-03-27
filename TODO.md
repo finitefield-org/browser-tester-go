@@ -138,10 +138,11 @@ failing test proves the surface is user-visible.
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, and `childElementCount`.
 - [x] Expose the bounded element reflection surfaces through the runtime bridge:
-  `className`, `innerText`, `outerText`, `style`, and `attributes`.
+  `className`, `innerText`, `outerText`, `style`, `attributes`, and `dataset`, including property
+  deletes.
 - [x] Expose the remaining template-driven standard DOM surfaces through the runtime bridge:
   standard `window` / `document` / `element` `addEventListener`, `details.open`,
-  `element.classList`, `input.select()`, `document.createElement()`, `setAttribute()`,
+  `element.classList`, `element.dataset`, `input.select()`, `document.createElement()`, `setAttribute()`,
   `appendChild()` / `removeChild()`, `document.execCommand("copy")`, and `window.confirm()`.
 - [x] Add the remaining DOM construction and low-level mutation methods only when a test needs
   them: `createTextNode`, `replaceChild`, `insertAdjacentElement`, and `insertAdjacentText`.

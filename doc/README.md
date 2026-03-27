@@ -107,9 +107,11 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `nodeType`, `nodeName`, `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`,
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, `childElementCount`,
-  `className`, `innerText`, `outerText`, `style`, and `attributes`, plus bounded standard DOM
+  bounded element reflection reads and writes for `className`, `innerText`, `outerText`, `style`,
+  `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
+  plus bounded standard DOM
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
-  `element.classList`, `input.select()`, `document.execCommand("copy")`,
+  `element.classList`, `element.dataset`, `input.select()`, `document.execCommand("copy")`,
   `document.createElement()`, `setAttribute()`, `appendChild()` / `removeChild()`, browser-global
   locale reads like `navigator.language`, the live `URL` / `URLSearchParams` query-state bridge,
   and `window.confirm()` / `window.prompt()` flows through the dialog mock family.
