@@ -91,6 +91,7 @@ runtime slices.
     elisions, bounded object literal shorthand properties and methods with any bound value, bounded
     object literal computed property names and methods, bounded object literal getter/setter
     accessors, bounded `throw` statements with catch-bound values and catch binding patterns,
+    bounded `debugger` statements as no-op statements,
     bounded `delete` expressions on local object, array, string, and primitive number/boolean/bigint
     bindings including optional chaining and array `length`, unary `typeof`, logical negation `!`,
     and logical `&&`/`||`, bounded relational `in` operators on bounded object and array values,
@@ -120,8 +121,9 @@ runtime slices.
     `yield*` delegation, including string values and final return values from iterator-like objects,
     with scalar inputs failing with runtime errors in this slice, plus nested `yield` in bounded
     block bodies, bounded loop bodies with explicit terminators, plus single-statement loop bodies
-    with explicit terminators, bounded single-statement `if` / `else` control flow with explicit
-    terminators, bounded `for...of` loops over arrays, bounded `for await...of` loops over arrays of
+    with explicit terminators, bounded standalone block statements, bounded single-statement `if` /
+    `else` control flow with explicit terminators, bounded `for...of` loops over arrays, bounded
+    `for await...of` loops over arrays of
     awaited values inside bounded async bodies, bounded `for...in` loops over object/array keys,
     bounded `switch` clauses, bounded `try` / `catch` / `finally` blocks, bounded `break` /
     `continue` statements across those control-flow bodies, including labeled loop / switch / try
@@ -145,11 +147,12 @@ runtime slices.
     constructible function values, bounded super property, method, and constructor calls, and
     bounded `new Class()` / `new (class {...})()` / `new (class extends Base {...})()`
     instantiation, template literals with bounded `${...}` interpolation plus tagged template
-    literals with bounded function tags and interpolation, with non-callable tags failing explicitly
-    at runtime, bounded object-property access, bounded bracket access on object, array, string, and
-    primitive number/boolean/bigint values, dot access on number/boolean/bigint/string/array values
-    yielding `undefined` for unknown properties, array `length` lookups, and optional chaining plus
-    optional calls across those bounded chains:
+    literals with bounded function tags and interpolation, bounded regular expression literals with
+    bounded `.test()` / `.exec()` helpers, with non-callable tags failing explicitly at runtime,
+    bounded object-property access, bounded bracket access on object, array, string, and primitive
+    number/boolean/bigint values, dot access on number/boolean/bigint/string/array values yielding
+    `undefined` for unknown properties, array `length` lookups, and optional chaining plus optional
+    calls across those bounded chains:
   - bounded comma operator / sequence expressions are supported in classic-JS expressions, while
     commas inside array/object literals and call arguments still act as separators.
   - unary `+` / `-` and `void` now work on bounded scalar values, with `+BigInt` still rejected
@@ -423,17 +426,22 @@ runtime slices.
   `:first-of-type`, `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()` /
   `:nth-last-child()` with bounded `of selector-list` filters, `:nth-of-type()`,
   `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
-  `:placeholder-shown`, `:blank`, `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
+  `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
+  empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
   `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
-  `:open`, `:focus`, `:focus-visible`, `:focus-within`, `:target`, `:target-within`, `:is()` /
+  `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
+  `:focus-within`, `:target`, `:target-within`, `:is()` /
   `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
   and sibling-relative selectors). Document queries treat `:scope` as the document root scope, while
   element-level `Matches` and `Closest` use the element itself as scope and element-bound
   `querySelector` / `querySelectorAll` search descendants only; `:blank` is approximated for
-  text-like inputs and textareas with empty or whitespace-only values, `:local-link` is approximated
-  as a same-document link against the current session URL, `:visited` is approximated against the
-  current session history URLs, and `:enabled` / `:disabled` respect disabled fieldset and optgroup
-  ancestry while disabled controls are ignored by the constraint-validation pseudo-classes. Custom
+  text-like inputs and textareas with empty or whitespace-only values, unchecked checkable inputs,
+  and selects whose current value is empty; `:local-link` is approximated as a same-document link
+  against the current session URL, `:visited` is approximated against the current session history
+  URLs, and `:enabled` / `:disabled` respect disabled fieldset and optgroup ancestry while disabled
+  controls are ignored by the constraint-validation pseudo-classes; `:active` / `:hover` also
+  include labeled controls via bounded label lookup; `:default` keeps initial checked/selected
+  snapshots for checkable controls and options. Custom
   element states are approximated through a tokenized `state` attribute on custom elements.
 - `:read-only` / `:read-write` also honor inherited `contenteditable` on non-input/textarea
   elements.

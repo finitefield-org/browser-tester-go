@@ -129,7 +129,7 @@ func TestHarnessAssertionHelpersSupportAutofillPseudoClass(t *testing.T) {
 }
 
 func TestHarnessAssertionHelpersSupportActiveHoverPseudoClasses(t *testing.T) {
-	harness, err := FromHTML(`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><p id="plain">Text</p></main>`)
+	harness, err := FromHTML(`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><label id="active-label" for="active-field" active>Field</label><input id="active-field" type="text"><label id="hover-label" hover><input id="hover-field" type="text"></label><label id="secret-label" for="secret" active>Secret</label><input id="secret" type="hidden"><p id="plain">Text</p></main>`)
 	if err != nil {
 		t.Fatalf("FromHTML() error = %v", err)
 	}
@@ -146,8 +146,54 @@ func TestHarnessAssertionHelpersSupportActiveHoverPseudoClasses(t *testing.T) {
 	if err := harness.AssertExists("div:hover"); err != nil {
 		t.Fatalf("AssertExists(div:hover) error = %v", err)
 	}
+	if err := harness.AssertExists("input:active"); err != nil {
+		t.Fatalf("AssertExists(input:active) error = %v", err)
+	}
+	if err := harness.AssertExists("input:hover"); err != nil {
+		t.Fatalf("AssertExists(input:hover) error = %v", err)
+	}
+	if err := harness.AssertExists("#active-field:active"); err != nil {
+		t.Fatalf("AssertExists(#active-field:active) error = %v", err)
+	}
+	if err := harness.AssertExists("#hover-field:hover"); err != nil {
+		t.Fatalf("AssertExists(#hover-field:hover) error = %v", err)
+	}
+	if err := harness.AssertExists("#secret:active"); err == nil {
+		t.Fatalf("AssertExists(#secret:active) error = nil, want no match")
+	}
 	if err := harness.AssertExists("#plain:active"); err == nil {
 		t.Fatalf("AssertExists(#plain:active) error = nil, want no match")
+	}
+}
+
+func TestHarnessAssertionHelpersPreserveDefaultPseudoClassAcrossControlUpdates(t *testing.T) {
+	harness, err := FromHTML(`<main id="root"><form id="profile"><input id="flag" type="checkbox" checked><button id="submit-1" type="submit">Save</button><button id="submit-2" type="submit">Extra</button><select id="mode"><option id="opt-a" value="a" selected>A</option><option id="opt-b" value="b">B</option></select></form></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.AssertExists("input:default"); err != nil {
+		t.Fatalf("AssertExists(input:default) before updates error = %v", err)
+	}
+	if err := harness.AssertExists("option:default"); err != nil {
+		t.Fatalf("AssertExists(option:default) before updates error = %v", err)
+	}
+
+	if err := harness.SetChecked("#flag", false); err != nil {
+		t.Fatalf("SetChecked(#flag) error = %v", err)
+	}
+	if err := harness.SetSelectValue("#mode", "b"); err != nil {
+		t.Fatalf("SetSelectValue(#mode, b) error = %v", err)
+	}
+
+	if err := harness.AssertExists("input:default"); err != nil {
+		t.Fatalf("AssertExists(input:default) after updates error = %v", err)
+	}
+	if err := harness.AssertExists("option:default"); err != nil {
+		t.Fatalf("AssertExists(option:default) after updates error = %v", err)
+	}
+	if err := harness.AssertExists("#opt-b:default"); err == nil {
+		t.Fatalf("AssertExists(#opt-b:default) after updates error = nil, want no match")
 	}
 }
 
@@ -345,6 +391,38 @@ func TestHarnessAssertionHelpersSupportBlankPseudoClass(t *testing.T) {
 	}
 	if err := harness.AssertExists("#filled:blank"); err == nil {
 		t.Fatalf("AssertExists(#filled:blank) error = nil, want no match")
+	}
+}
+
+func TestHarnessAssertionHelpersSupportBlankPseudoClassForCheckableAndSelectControls(t *testing.T) {
+	harness, err := FromHTML(`<main><input id="checkbox-off" type="checkbox"><input id="checkbox-on" type="checkbox" checked><input id="radio-off" type="radio" name="choice"><input id="radio-on" type="radio" name="choice" checked><select id="empty-select"><option value="a">A</option></select><select id="filled-select"><option value="b" selected>B</option></select></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.AssertExists("input:blank"); err != nil {
+		t.Fatalf("AssertExists(input:blank) error = %v", err)
+	}
+	if err := harness.AssertExists("select:blank"); err != nil {
+		t.Fatalf("AssertExists(select:blank) error = %v", err)
+	}
+	if err := harness.AssertExists("#checkbox-off:blank"); err != nil {
+		t.Fatalf("AssertExists(#checkbox-off:blank) error = %v", err)
+	}
+	if err := harness.AssertExists("#radio-off:blank"); err != nil {
+		t.Fatalf("AssertExists(#radio-off:blank) error = %v", err)
+	}
+	if err := harness.AssertExists("#checkbox-on:blank"); err == nil {
+		t.Fatalf("AssertExists(#checkbox-on:blank) error = nil, want no match")
+	}
+	if err := harness.AssertExists("#radio-on:blank"); err == nil {
+		t.Fatalf("AssertExists(#radio-on:blank) error = nil, want no match")
+	}
+	if err := harness.AssertExists("#empty-select:blank"); err != nil {
+		t.Fatalf("AssertExists(#empty-select:blank) error = %v", err)
+	}
+	if err := harness.AssertExists("#filled-select:blank"); err == nil {
+		t.Fatalf("AssertExists(#filled-select:blank) error = nil, want no match")
 	}
 }
 
@@ -588,6 +666,32 @@ func TestHarnessAssertionHelpersSupportPopoverOpenPseudoClass(t *testing.T) {
 	}
 	if err := harness.AssertExists("#closed:popover-open"); err == nil {
 		t.Fatalf("AssertExists(#closed:popover-open) error = nil, want no match")
+	}
+}
+
+func TestHarnessAssertionHelpersSupportOpenPseudoClass(t *testing.T) {
+	harness, err := FromHTML(`<main id="root"><select id="dropdown" open><option id="dropdown-option" value="a">A</option></select><select id="listbox" size="2" open><option id="listbox-option" value="b">B</option></select><input id="file" type="file" open><input id="text" type="text" open><div id="other" open></div></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.AssertExists("select:open"); err != nil {
+		t.Fatalf("AssertExists(select:open) error = %v", err)
+	}
+	if err := harness.AssertExists("#dropdown:open"); err != nil {
+		t.Fatalf("AssertExists(#dropdown:open) error = %v", err)
+	}
+	if err := harness.AssertExists("input:open"); err != nil {
+		t.Fatalf("AssertExists(input:open) error = %v", err)
+	}
+	if err := harness.AssertExists("#listbox:open"); err == nil {
+		t.Fatalf("AssertExists(#listbox:open) error = nil, want no match")
+	}
+	if err := harness.AssertExists("#text:open"); err == nil {
+		t.Fatalf("AssertExists(#text:open) error = nil, want no match")
+	}
+	if err := harness.AssertExists("#other:open"); err == nil {
+		t.Fatalf("AssertExists(#other:open) error = nil, want no match")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -20,6 +21,12 @@ const (
 )
 
 const ClassicJSModuleMetaURLBindingName = "\x00classic-js-module-url"
+
+const (
+	classicJSRegExpInternalPrefix = "\x00classic-js-regexp:"
+	classicJSRegExpPatternKey     = classicJSRegExpInternalPrefix + "pattern"
+	classicJSRegExpFlagsKey       = classicJSRegExpInternalPrefix + "flags"
+)
 
 type jsValue struct {
 	kind         jsValueKind
@@ -230,7 +237,7 @@ func evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source string,
 	if !parser.eof() {
 		return UndefinedValue(), NewError(
 			ErrorKindUnsupported,
-			"unsupported script source; this bounded classic-JS slice only supports expression statements, `let`/`const`/`var` declarations, block-bodied or single-statement `if` / `while` / `do...while` / `for` statements with explicit terminators, `switch` / `try` statements, class declarations with static blocks, public `static` fields, getter/setter accessors, computed fields and methods, instance fields, bounded `extends` inheritance, and bounded `new Class()` instantiation, member calls on `host`, and the `expr(...)` compatibility helper",
+			"unsupported script source; this bounded classic-JS slice only supports expression statements, standalone block statements, `let`/`const`/`var` declarations, block-bodied or single-statement `if` / `while` / `do...while` / `for` statements with explicit terminators, `switch` / `try` statements, class declarations with static blocks, public `static` fields, getter/setter accessors, computed fields and methods, instance fields, bounded `extends` inheritance, and bounded `new Class()` instantiation, member calls on `host`, and the `expr(...)` compatibility helper",
 		)
 	}
 
@@ -1766,6 +1773,10 @@ func (p *classicJSStatementParser) parseStatement() (Value, error) {
 		p.pos += len(keyword)
 		return p.parseThrowStatement()
 	}
+	if keyword, ok := p.peekKeyword("debugger"); ok {
+		p.pos += len(keyword)
+		return p.parseDebuggerStatement()
+	}
 	if keyword, ok := p.peekKeyword("yield"); ok && p.allowYield {
 		p.pos += len(keyword)
 		return p.parseYieldStatement()
@@ -1783,6 +1794,13 @@ func (p *classicJSStatementParser) parseStatement() (Value, error) {
 	if keyword, ok := p.peekKeyword("export"); ok {
 		p.pos += len(keyword)
 		return p.parseExportStatement()
+	}
+	if p.peekByte() == '{' {
+		bodySource, err := p.consumeBlockSource()
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		return p.evalProgramWithEnv(bodySource, p.env.clone())
 	}
 	return p.parseExpression()
 }
@@ -1923,6 +1941,11 @@ func (p *classicJSStatementParser) parseThrowStatement() (Value, error) {
 		return UndefinedValue(), err
 	}
 	return UndefinedValue(), classicJSThrowSignal{value: value}
+}
+
+func (p *classicJSStatementParser) parseDebuggerStatement() (Value, error) {
+	p.skipSpaceAndComments()
+	return UndefinedValue(), nil
 }
 
 func (p *classicJSStatementParser) parseExportStatement() (Value, error) {
@@ -8729,7 +8752,7 @@ func lookupObjectProperty(entries []ObjectEntry, name string) (Value, bool) {
 }
 
 func classicJSIsInternalObjectKey(name string) bool {
-	return strings.HasPrefix(name, "\x00classic-js-setter:") || strings.HasPrefix(name, "\x00classic-js-instanceof:") || strings.HasPrefix(name, "\x00classic-js-static-prototype:")
+	return strings.HasPrefix(name, "\x00classic-js-setter:") || strings.HasPrefix(name, "\x00classic-js-instanceof:") || strings.HasPrefix(name, "\x00classic-js-static-prototype:") || strings.HasPrefix(name, classicJSRegExpInternalPrefix)
 }
 
 func classicJSInstanceMarkerKey(marker string) string {
@@ -8770,6 +8793,21 @@ func classicJSClassPrototypeValue(value Value) (Value, bool) {
 		return UndefinedValue(), false
 	}
 	return prototypeValue, true
+}
+
+func classicJSRegExpLiteralString(value Value) (string, bool) {
+	if value.Kind != ValueKindObject {
+		return "", false
+	}
+	patternValue, ok := lookupObjectProperty(value.Object, classicJSRegExpPatternKey)
+	if !ok || patternValue.Kind != ValueKindString {
+		return "", false
+	}
+	flagsValue, ok := lookupObjectProperty(value.Object, classicJSRegExpFlagsKey)
+	if !ok || flagsValue.Kind != ValueKindString {
+		return "", false
+	}
+	return "/" + patternValue.String + "/" + flagsValue.String, true
 }
 
 func classicJSConstructibleFunctionPrototypeValue(value Value) (Value, bool) {
@@ -9740,6 +9778,12 @@ func (p *classicJSStatementParser) parsePrimary() (jsValue, error) {
 			return jsValue{}, err
 		}
 		return scalarJSValue(value), nil
+	case '/':
+		value, err := p.parseRegularExpressionLiteral()
+		if err != nil {
+			return jsValue{}, err
+		}
+		return scalarJSValue(value), nil
 	case '[':
 		value, err := p.parseArrayLiteral()
 		if err != nil {
@@ -9859,7 +9903,7 @@ func (p *classicJSStatementParser) parsePrimary() (jsValue, error) {
 	}
 
 	switch ident {
-	case "let", "const", "var", "function", "class", "if", "else", "for", "while", "do", "switch", "case", "default", "try", "catch", "finally", "return", "break", "continue", "throw", "async", "await", "import", "export", "delete", "yield", "void", "in", "instanceof":
+	case "let", "const", "var", "function", "class", "if", "else", "for", "while", "do", "switch", "case", "default", "try", "catch", "finally", "return", "break", "continue", "throw", "debugger", "async", "await", "import", "export", "delete", "yield", "void", "in", "instanceof":
 		if ident == "yield" {
 			return jsValue{}, NewError(ErrorKindParse, "`yield` is only supported inside bounded generator bodies in this slice")
 		}
@@ -11318,6 +11362,157 @@ func (p *classicJSStatementParser) parseTemplateLiteral() (Value, error) {
 	return StringValue(b.String()), nil
 }
 
+func (p *classicJSStatementParser) parseRegularExpressionLiteral() (Value, error) {
+	if p.eof() || p.peekByte() != '/' {
+		return UndefinedValue(), NewError(ErrorKindParse, "unexpected end of script source")
+	}
+
+	start := p.pos
+	p.pos++
+	var escaped bool
+	var inClass bool
+	for !p.eof() {
+		ch := p.peekByte()
+		if ch == '\n' || ch == '\r' {
+			return UndefinedValue(), NewError(ErrorKindParse, "unterminated regular expression literal")
+		}
+		if escaped {
+			escaped = false
+			p.pos++
+			continue
+		}
+		switch ch {
+		case '\\':
+			escaped = true
+			p.pos++
+		case '[':
+			inClass = true
+			p.pos++
+		case ']':
+			if inClass {
+				inClass = false
+			}
+			p.pos++
+		case '/':
+			if inClass {
+				p.pos++
+				continue
+			}
+			pattern := p.source[start+1 : p.pos]
+			p.pos++
+			flags, err := p.consumeRegularExpressionFlags()
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return classicJSRegExpLiteralValue(pattern, flags)
+		default:
+			p.pos++
+		}
+	}
+
+	return UndefinedValue(), NewError(ErrorKindParse, "unterminated regular expression literal")
+}
+
+func (p *classicJSStatementParser) consumeRegularExpressionFlags() (string, error) {
+	start := p.pos
+	seen := make(map[byte]bool, 8)
+	for !p.eof() {
+		ch := p.peekByte()
+		if ch < 'a' || ch > 'z' {
+			if isIdentPart(ch) {
+				return "", NewError(ErrorKindParse, fmt.Sprintf("unsupported regular expression flag %q in this bounded classic-JS slice", ch))
+			}
+			break
+		}
+		switch ch {
+		case 'd', 'g', 'i', 'm', 's', 'u', 'v', 'y':
+		default:
+			return "", NewError(ErrorKindParse, fmt.Sprintf("unsupported regular expression flag %q in this bounded classic-JS slice", ch))
+		}
+		if seen[ch] {
+			return "", NewError(ErrorKindParse, fmt.Sprintf("duplicate regular expression flag %q in this bounded classic-JS slice", ch))
+		}
+		seen[ch] = true
+		p.pos++
+	}
+	return p.source[start:p.pos], nil
+}
+
+func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
+	compiled, err := classicJSCompileRegExpLiteral(pattern, flags)
+	if err != nil {
+		return UndefinedValue(), NewError(ErrorKindParse, fmt.Sprintf("invalid regular expression literal: %v", err))
+	}
+
+	literal := "/" + pattern + "/" + flags
+	test := func(args []Value) (Value, error) {
+		input := UndefinedValue()
+		if len(args) > 0 {
+			input = args[0]
+		}
+		return BoolValue(compiled.MatchString(ToJSString(input))), nil
+	}
+	exec := func(args []Value) (Value, error) {
+		input := UndefinedValue()
+		if len(args) > 0 {
+			input = args[0]
+		}
+		text := ToJSString(input)
+		matches := compiled.FindStringSubmatch(text)
+		if matches == nil {
+			return NullValue(), nil
+		}
+		loc := compiled.FindStringSubmatchIndex(text)
+		entries := make([]ObjectEntry, 0, len(matches)+3)
+		for i, match := range matches {
+			entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: StringValue(match)})
+		}
+		entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(matches)))})
+		if len(loc) >= 2 {
+			entries = append(entries, ObjectEntry{Key: "index", Value: NumberValue(float64(loc[0]))})
+		}
+		entries = append(entries, ObjectEntry{Key: "input", Value: StringValue(text)})
+		return ObjectValue(entries), nil
+	}
+
+	return ObjectValue([]ObjectEntry{
+		{Key: classicJSRegExpPatternKey, Value: StringValue(pattern)},
+		{Key: classicJSRegExpFlagsKey, Value: StringValue(flags)},
+		{Key: "source", Value: StringValue(pattern)},
+		{Key: "flags", Value: StringValue(flags)},
+		{Key: "test", Value: NativeFunctionValue(test)},
+		{Key: "exec", Value: NativeFunctionValue(exec)},
+		{Key: "toString", Value: NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(literal), nil
+		})},
+	}), nil
+}
+
+func classicJSCompileRegExpLiteral(pattern, flags string) (*regexp.Regexp, error) {
+	var prefix strings.Builder
+	seen := make(map[byte]bool, len(flags))
+	for i := 0; i < len(flags); i++ {
+		flag := flags[i]
+		if seen[flag] {
+			return nil, fmt.Errorf("duplicate regular expression flag %q", flag)
+		}
+		seen[flag] = true
+		switch flag {
+		case 'i':
+			prefix.WriteString("(?i)")
+		case 'm':
+			prefix.WriteString("(?m)")
+		case 's':
+			prefix.WriteString("(?s)")
+		case 'd', 'g', 'u', 'v', 'y':
+		default:
+			return nil, fmt.Errorf("unsupported regular expression flag %q", flag)
+		}
+	}
+
+	return regexp.Compile(prefix.String() + pattern)
+}
+
 func (p *classicJSStatementParser) parseTaggedTemplateLiteral(tag jsValue) (jsValue, error) {
 	segments, substitutions, err := p.consumeTemplateLiteralParts()
 	if err != nil {
@@ -12202,7 +12397,7 @@ func hasClassicJSDeclarationKeyword(source string) bool {
 
 func isClassicJSReservedDeclarationName(name string) bool {
 	switch name {
-	case "host", "expr", "this", "true", "false", "undefined", "null", "let", "const", "var", "using", "function", "class", "if", "else", "for", "while", "do", "switch", "case", "default", "try", "catch", "finally", "return", "break", "continue", "throw", "async", "await", "import", "export", "new", "delete", "yield", "super", "typeof", "void", "in", "instanceof":
+	case "host", "expr", "this", "true", "false", "undefined", "null", "let", "const", "var", "using", "function", "class", "if", "else", "for", "while", "do", "switch", "case", "default", "try", "catch", "finally", "return", "break", "continue", "throw", "debugger", "async", "await", "import", "export", "new", "delete", "yield", "super", "typeof", "void", "in", "instanceof":
 		return true
 	default:
 		return false

@@ -221,12 +221,18 @@ Exit criteria:
   `:first-of-type`, `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()` /
   `:nth-last-child()` with bounded `of selector-list` filters, `:nth-of-type()`,
   `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
-  `:placeholder-shown`, `:blank`, `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
+  `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
+  empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
   `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
-  `:open`, `:focus`, `:focus-visible`, `:focus-within`, `:target`, `:target-within`, `:is()` /
+  `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
+  `:focus-within`, `:target`, `:target-within`, `:is()` /
   `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
-  and sibling-relative selectors, while `:enabled` / `:disabled` respect disabled fieldset and
-  optgroup ancestry and constraint-validation pseudo-classes ignore disabled controls.
+  and sibling-relative selectors, while `:blank` is approximated for text-like inputs and textareas
+  with empty or whitespace-only values, unchecked checkable inputs, and selects whose current value
+  is empty, and `:enabled` / `:disabled` respect disabled fieldset and optgroup ancestry and
+  constraint-validation pseudo-classes ignore disabled controls; `:active` / `:hover` also include
+  labeled controls via bounded label lookup, and `:default` keeps initial checked/selected
+  snapshots for checkable controls and options.
 - `:read-only` / `:read-write` also honor inherited `contenteditable` on non-input/textarea
   elements.
 - Add script-side `querySelector`, `querySelectorAll`, `matches`, and `closest`.

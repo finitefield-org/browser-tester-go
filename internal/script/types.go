@@ -212,6 +212,9 @@ func ToJSString(value Value) string {
 		}
 		return b.String()
 	case ValueKindObject:
+		if literal, ok := classicJSRegExpLiteralString(value); ok {
+			return literal
+		}
 		return "[object Object]"
 	case ValueKindPrivateName:
 		return "#" + value.PrivateName

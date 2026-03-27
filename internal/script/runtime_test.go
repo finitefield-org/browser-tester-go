@@ -199,7 +199,7 @@ func TestDispatchSupportsClassicJSStatementLists(t *testing.T) {
 	}
 	runtime := NewRuntime(host)
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `host.setTextContent("#out", "first"); host.setTextContent("#out", "second")`})
+	_, err := runtime.Dispatch(DispatchRequest{Source: `debugger; host.setTextContent("#out", "first"); host.setTextContent("#out", "second")`})
 	if err != nil {
 		t.Fatalf("Dispatch(classic JS statement list) error = %v", err)
 	}
@@ -1461,6 +1461,7 @@ func TestDispatchRejectsReservedBindingNamesAsParseErrorsInClassicJS(t *testing.
 		`let { this } = { this: 1 }`,
 		`function this() {}`,
 		`class this {}`,
+		`let debugger = 1`,
 	} {
 		_, err := runtime.Dispatch(DispatchRequest{Source: source})
 		if err == nil {
@@ -1747,6 +1748,49 @@ func TestDispatchSupportsSingleStatementIfBodiesInClassicJS(t *testing.T) {
 				t.Fatalf("Dispatch(%s) result number = %v, want %v", tc.name, got.Value.Number, tc.want.Number)
 			}
 		})
+	}
+}
+
+func TestDispatchSupportsStandaloneBlockStatementsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `{ host.setTextContent("#out", "block"); 1 }`})
+	if err != nil {
+		t.Fatalf("Dispatch(standalone block statement) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber || result.Value.Number != 1 {
+		t.Fatalf("Dispatch(standalone block statement) value = %#v, want number 1", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 2 || host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "block" {
+		t.Fatalf("host.calls[0].args = %#v, want block", host.calls[0].args)
+	}
+}
+
+func TestDispatchRejectsUnterminatedStandaloneBlockStatementsInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `{ host.setTextContent("#out", "block"); `})
+	if err == nil {
+		t.Fatalf("Dispatch(unterminated standalone block statement) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(unterminated standalone block statement) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(unterminated standalone block statement) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
 	}
 }
 
@@ -3956,6 +4000,44 @@ func TestDispatchSupportsTaggedTemplateLiterals(t *testing.T) {
 	}
 	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "hello world 2!" {
 		t.Fatalf("host.calls[0].args[0] = %#v, want hello world 2!", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchSupportsRegularExpressionLiterals(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: "let re = /a\\/b/i; host.echo(`" + "${re}|${re.test(\"A/B\")}|${re.source}|${re.flags}" + "`)"})
+	if err != nil {
+		t.Fatalf("Dispatch(regular expression literal) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "/a\\/b/i|true|a\\/b|i" {
+		t.Fatalf("Dispatch(regular expression literal) value = %#v, want regex string and helpers", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "/a\\/b/i|true|a\\/b|i" {
+		t.Fatalf("host.calls[0].args = %#v, want regex string and helpers", host.calls[0].args)
+	}
+}
+
+func TestDispatchRejectsMalformedRegularExpressionLiteralsInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let re = /(/; re`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed regular expression literal) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed regular expression literal) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed regular expression literal) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
 	}
 }
 

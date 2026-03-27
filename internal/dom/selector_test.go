@@ -150,6 +150,79 @@ func TestSelectBoundedPseudoClasses(t *testing.T) {
 	}
 }
 
+func TestSelectDefaultPseudoClassUsesInitialControlState(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><form id="profile"><input id="flag" type="checkbox" checked><button id="submit-1" type="submit">Save</button><button id="submit-2" type="submit">Extra</button><select id="mode"><option id="opt-a" value="a" selected>A</option><option id="opt-b" value="b">B</option></select></form></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	flagID := mustSelectSingle(t, store, "#flag")
+	modeID := mustSelectSingle(t, store, "#mode")
+	optAID := mustSelectSingle(t, store, "#opt-a")
+	optBID := mustSelectSingle(t, store, "#opt-b")
+
+	if got, err := store.Select("input:default"); err != nil || len(got) != 1 || got[0] != flagID {
+		t.Fatalf("Select(input:default) before updates = (%v, %v), want only #flag", got, err)
+	}
+	if got, err := store.Select("option:default"); err != nil || len(got) != 1 || got[0] != optAID {
+		t.Fatalf("Select(option:default) before updates = (%v, %v), want only #opt-a", got, err)
+	}
+
+	if err := store.SetFormControlChecked(flagID, false); err != nil {
+		t.Fatalf("SetFormControlChecked(#flag) error = %v", err)
+	}
+	if err := store.SetSelectValue(modeID, "b"); err != nil {
+		t.Fatalf("SetSelectValue(#mode, b) error = %v", err)
+	}
+
+	if got, err := store.Select("input:default"); err != nil || len(got) != 1 || got[0] != flagID {
+		t.Fatalf("Select(input:default) after updates = (%v, %v), want only #flag", got, err)
+	}
+	if got, err := store.Select("option:default"); err != nil || len(got) != 1 || got[0] != optAID {
+		t.Fatalf("Select(option:default) after updates = (%v, %v), want only #opt-a", got, err)
+	}
+	if matched, err := store.Matches(flagID, ":default"); err != nil || !matched {
+		t.Fatalf("Matches(#flag, :default) after updates = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(optAID, ":default"); err != nil || !matched {
+		t.Fatalf("Matches(#opt-a, :default) after updates = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(optBID, ":default"); err != nil || matched {
+		t.Fatalf("Matches(#opt-b, :default) after updates = (%v, %v), want (false, nil)", matched, err)
+	}
+}
+
+func TestSelectBlankPseudoClassForCheckableAndSelectControls(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><input id="checkbox-off" type="checkbox"><input id="checkbox-on" type="checkbox" checked><input id="radio-off" type="radio" name="choice"><input id="radio-on" type="radio" name="choice" checked><select id="empty-select"><option value="a">A</option></select><select id="filled-select"><option value="b" selected>B</option></select></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	tests := []struct {
+		selector string
+		wantLen  int
+	}{
+		{selector: "input:blank", wantLen: 2},
+		{selector: "select:blank", wantLen: 1},
+		{selector: "#checkbox-off:blank", wantLen: 1},
+		{selector: "#checkbox-on:blank", wantLen: 0},
+		{selector: "#radio-off:blank", wantLen: 1},
+		{selector: "#radio-on:blank", wantLen: 0},
+		{selector: "#empty-select:blank", wantLen: 1},
+		{selector: "#filled-select:blank", wantLen: 0},
+	}
+
+	for _, tc := range tests {
+		got, err := store.Select(tc.selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", tc.selector, err)
+		}
+		if len(got) != tc.wantLen {
+			t.Fatalf("Select(%q) len = %d, want %d", tc.selector, len(got), tc.wantLen)
+		}
+	}
+}
+
 func TestSelectLocalLinkPseudoClass(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main id="root"><a id="self" href="#top">Self</a><a id="next" href="/next">Next</a><map><area id="area-self" href="#top" alt="Self"></map></main>`); err != nil {
@@ -318,7 +391,7 @@ func TestSelectAutofillPseudoClass(t *testing.T) {
 func TestSelectActiveHoverPseudoClasses(t *testing.T) {
 	store := NewStore()
 	err := store.BootstrapHTML(
-		`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><p id="plain">Text</p></main>`,
+		`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><label id="active-label" for="active-field" active>Field</label><input id="active-field" type="text"><label id="hover-label" hover><input id="hover-field" type="text"></label><label id="secret-label" for="secret" active>Secret</label><input id="secret" type="hidden"><p id="plain">Text</p></main>`,
 	)
 	if err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
@@ -332,6 +405,11 @@ func TestSelectActiveHoverPseudoClasses(t *testing.T) {
 		{selector: "div:active", wantLen: 1},
 		{selector: "span:hover", wantLen: 1},
 		{selector: "div:hover", wantLen: 1},
+		{selector: "input:active", wantLen: 1},
+		{selector: "input:hover", wantLen: 1},
+		{selector: "#active-field:active", wantLen: 1},
+		{selector: "#hover-field:hover", wantLen: 1},
+		{selector: "#secret:active", wantLen: 0},
 		{selector: "#plain:active", wantLen: 0},
 	}
 
@@ -765,6 +843,36 @@ func TestSelectPopoverOpenPseudoClass(t *testing.T) {
 		{selector: "#menu:popover-open", wantLen: 1},
 		{selector: "#closed:popover-open", wantLen: 0},
 		{selector: "dialog:popover-open", wantLen: 0},
+	}
+
+	for _, tc := range tests {
+		got, err := store.Select(tc.selector)
+		if err != nil {
+			t.Fatalf("Select(%q) error = %v", tc.selector, err)
+		}
+		if len(got) != tc.wantLen {
+			t.Fatalf("Select(%q) len = %d, want %d", tc.selector, len(got), tc.wantLen)
+		}
+	}
+}
+
+func TestSelectOpenPseudoClass(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><select id="dropdown" open><option id="dropdown-option" value="a">A</option></select><select id="listbox" size="2" open><option id="listbox-option" value="b">B</option></select><input id="file" type="file" open><input id="text" type="text" open><div id="other" open></div></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	tests := []struct {
+		selector string
+		wantLen  int
+	}{
+		{selector: "select:open", wantLen: 1},
+		{selector: "#dropdown:open", wantLen: 1},
+		{selector: "#listbox:open", wantLen: 0},
+		{selector: "input:open", wantLen: 1},
+		{selector: "#file:open", wantLen: 1},
+		{selector: "#text:open", wantLen: 0},
+		{selector: "#other:open", wantLen: 0},
 	}
 
 	for _, tc := range tests {

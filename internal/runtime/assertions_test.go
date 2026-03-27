@@ -67,6 +67,37 @@ func TestSessionAssertionsSupportBlankPseudoClass(t *testing.T) {
 	}
 }
 
+func TestSessionAssertionsSupportBlankPseudoClassForCheckableAndSelectControls(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><input id="checkbox-off" type="checkbox"><input id="checkbox-on" type="checkbox" checked><input id="radio-off" type="radio" name="choice"><input id="radio-on" type="radio" name="choice" checked><select id="empty-select"><option value="a">A</option></select><select id="filled-select"><option value="b" selected>B</option></select></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists("input:blank"); err != nil {
+		t.Fatalf("AssertExists(input:blank) error = %v", err)
+	}
+	if err := s.AssertExists("select:blank"); err != nil {
+		t.Fatalf("AssertExists(select:blank) error = %v", err)
+	}
+	if err := s.AssertExists("#checkbox-off:blank"); err != nil {
+		t.Fatalf("AssertExists(#checkbox-off:blank) error = %v", err)
+	}
+	if err := s.AssertExists("#radio-off:blank"); err != nil {
+		t.Fatalf("AssertExists(#radio-off:blank) error = %v", err)
+	}
+	if err := s.AssertExists("#checkbox-on:blank"); err == nil {
+		t.Fatalf("AssertExists(#checkbox-on:blank) error = nil, want no match")
+	}
+	if err := s.AssertExists("#radio-on:blank"); err == nil {
+		t.Fatalf("AssertExists(#radio-on:blank) error = nil, want no match")
+	}
+	if err := s.AssertExists("#empty-select:blank"); err != nil {
+		t.Fatalf("AssertExists(#empty-select:blank) error = %v", err)
+	}
+	if err := s.AssertExists("#filled-select:blank"); err == nil {
+		t.Fatalf("AssertExists(#filled-select:blank) error = nil, want no match")
+	}
+}
+
 func TestSessionAssertionsSupportDefinedPseudoClass(t *testing.T) {
 	cfg := DefaultSessionConfig()
 	cfg.HTML = `<main id="root"><div id="known"></div><x-widget id="widget" defined></x-widget><x-ghost id="ghost"></x-ghost></main>`
@@ -150,7 +181,7 @@ func TestSessionAssertionsSupportAutofillPseudoClass(t *testing.T) {
 
 func TestSessionAssertionsSupportActiveHoverPseudoClasses(t *testing.T) {
 	cfg := DefaultSessionConfig()
-	cfg.HTML = `<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><p id="plain">Text</p></main>`
+	cfg.HTML = `<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><label id="active-label" for="active-field" active>Field</label><input id="active-field" type="text"><label id="hover-label" hover><input id="hover-field" type="text"></label><label id="secret-label" for="secret" active>Secret</label><input id="secret" type="hidden"><p id="plain">Text</p></main>`
 	s := NewSession(cfg)
 
 	if err := s.AssertExists("button:active"); err != nil {
@@ -165,8 +196,53 @@ func TestSessionAssertionsSupportActiveHoverPseudoClasses(t *testing.T) {
 	if err := s.AssertExists("div:hover"); err != nil {
 		t.Fatalf("AssertExists(div:hover) error = %v", err)
 	}
+	if err := s.AssertExists("input:active"); err != nil {
+		t.Fatalf("AssertExists(input:active) error = %v", err)
+	}
+	if err := s.AssertExists("input:hover"); err != nil {
+		t.Fatalf("AssertExists(input:hover) error = %v", err)
+	}
+	if err := s.AssertExists("#active-field:active"); err != nil {
+		t.Fatalf("AssertExists(#active-field:active) error = %v", err)
+	}
+	if err := s.AssertExists("#hover-field:hover"); err != nil {
+		t.Fatalf("AssertExists(#hover-field:hover) error = %v", err)
+	}
+	if err := s.AssertExists("#secret:active"); err == nil {
+		t.Fatalf("AssertExists(#secret:active) error = nil, want no match")
+	}
 	if err := s.AssertExists("#plain:active"); err == nil {
 		t.Fatalf("AssertExists(#plain:active) error = nil, want no match")
+	}
+}
+
+func TestSessionAssertionsPreserveDefaultPseudoClassAcrossControlUpdates(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><form id="profile"><input id="flag" type="checkbox" checked><button id="submit-1" type="submit">Save</button><button id="submit-2" type="submit">Extra</button><select id="mode"><option id="opt-a" value="a" selected>A</option><option id="opt-b" value="b">B</option></select></form></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists("input:default"); err != nil {
+		t.Fatalf("AssertExists(input:default) before updates error = %v", err)
+	}
+	if err := s.AssertExists("option:default"); err != nil {
+		t.Fatalf("AssertExists(option:default) before updates error = %v", err)
+	}
+
+	if err := s.SetChecked("#flag", false); err != nil {
+		t.Fatalf("SetChecked(#flag) error = %v", err)
+	}
+	if err := s.SetSelectValue("#mode", "b"); err != nil {
+		t.Fatalf("SetSelectValue(#mode, b) error = %v", err)
+	}
+
+	if err := s.AssertExists("input:default"); err != nil {
+		t.Fatalf("AssertExists(input:default) after updates error = %v", err)
+	}
+	if err := s.AssertExists("option:default"); err != nil {
+		t.Fatalf("AssertExists(option:default) after updates error = %v", err)
+	}
+	if err := s.AssertExists("#opt-b:default"); err == nil {
+		t.Fatalf("AssertExists(#opt-b:default) after updates error = nil, want no match")
 	}
 }
 
@@ -583,6 +659,31 @@ func TestSessionAssertionsSupportPopoverOpenPseudoClass(t *testing.T) {
 	}
 	if err := s.AssertExists("#closed:popover-open"); err == nil {
 		t.Fatalf("AssertExists(#closed:popover-open) error = nil, want no match")
+	}
+}
+
+func TestSessionAssertionsSupportOpenPseudoClass(t *testing.T) {
+	cfg := DefaultSessionConfig()
+	cfg.HTML = `<main id="root"><select id="dropdown" open><option id="dropdown-option" value="a">A</option></select><select id="listbox" size="2" open><option id="listbox-option" value="b">B</option></select><input id="file" type="file" open><input id="text" type="text" open><div id="other" open></div></main>`
+	s := NewSession(cfg)
+
+	if err := s.AssertExists("select:open"); err != nil {
+		t.Fatalf("AssertExists(select:open) error = %v", err)
+	}
+	if err := s.AssertExists("#dropdown:open"); err != nil {
+		t.Fatalf("AssertExists(#dropdown:open) error = %v", err)
+	}
+	if err := s.AssertExists("input:open"); err != nil {
+		t.Fatalf("AssertExists(input:open) error = %v", err)
+	}
+	if err := s.AssertExists("#listbox:open"); err == nil {
+		t.Fatalf("AssertExists(#listbox:open) error = nil, want no match")
+	}
+	if err := s.AssertExists("#text:open"); err == nil {
+		t.Fatalf("AssertExists(#text:open) error = nil, want no match")
+	}
+	if err := s.AssertExists("#other:open"); err == nil {
+		t.Fatalf("AssertExists(#other:open) error = nil, want no match")
 	}
 }
 

@@ -386,13 +386,16 @@ func TestQueryHelpersSupportAutofillPseudoClass(t *testing.T) {
 
 func TestQueryHelpersSupportActiveHoverPseudoClasses(t *testing.T) {
 	store := NewStore()
-	if err := store.BootstrapHTML(`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><p id="plain">Text</p></main>`); err != nil {
+	if err := store.BootstrapHTML(`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><label id="active-label" for="active-field" active>Field</label><input id="active-field" type="text"><label id="hover-label" hover><input id="hover-field" type="text"></label><label id="secret-label" for="secret" active>Secret</label><input id="secret" type="hidden"><p id="plain">Text</p></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
 	}
 
 	wrapID := mustSelectSingle(t, store, "#wrap")
 	btnID := mustSelectSingle(t, store, "#btn")
 	hoveredID := mustSelectSingle(t, store, "#hovered")
+	activeFieldID := mustSelectSingle(t, store, "#active-field")
+	hoverFieldID := mustSelectSingle(t, store, "#hover-field")
+	secretID := mustSelectSingle(t, store, "#secret")
 
 	gotID, ok, err := store.QuerySelector("button:active")
 	if err != nil {
@@ -417,6 +420,20 @@ func TestQueryHelpersSupportActiveHoverPseudoClasses(t *testing.T) {
 	if !ok || gotID != hoveredID {
 		t.Fatalf("QuerySelector(span:hover) = (%d, %v), want (%d, true)", gotID, ok, hoveredID)
 	}
+	gotID, ok, err = store.QuerySelector("input:active")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:active) error = %v", err)
+	}
+	if !ok || gotID != activeFieldID {
+		t.Fatalf("QuerySelector(input:active) = (%d, %v), want (%d, true)", gotID, ok, activeFieldID)
+	}
+	gotID, ok, err = store.QuerySelector("input:hover")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:hover) error = %v", err)
+	}
+	if !ok || gotID != hoverFieldID {
+		t.Fatalf("QuerySelector(input:hover) = (%d, %v), want (%d, true)", gotID, ok, hoverFieldID)
+	}
 
 	matched, err := store.Matches(wrapID, "div:active")
 	if err != nil {
@@ -431,6 +448,98 @@ func TestQueryHelpersSupportActiveHoverPseudoClasses(t *testing.T) {
 	}
 	if !matched {
 		t.Fatalf("Matches(span:hover) = false, want true")
+	}
+	matched, err = store.Matches(activeFieldID, ":active")
+	if err != nil {
+		t.Fatalf("Matches(#active-field, :active) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#active-field, :active) = false, want true")
+	}
+	matched, err = store.Matches(hoverFieldID, ":hover")
+	if err != nil {
+		t.Fatalf("Matches(#hover-field, :hover) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#hover-field, :hover) = false, want true")
+	}
+	matched, err = store.Matches(secretID, ":active")
+	if err != nil {
+		t.Fatalf("Matches(#secret, :active) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#secret, :active) = true, want false")
+	}
+}
+
+func TestQueryHelpersPreserveDefaultPseudoClassAcrossControlUpdates(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><form id="profile"><input id="flag" type="checkbox" checked><button id="submit-1" type="submit">Save</button><button id="submit-2" type="submit">Extra</button><select id="mode"><option id="opt-a" value="a" selected>A</option><option id="opt-b" value="b">B</option></select></form></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	flagID := mustSelectSingle(t, store, "#flag")
+	modeID := mustSelectSingle(t, store, "#mode")
+	optAID := mustSelectSingle(t, store, "#opt-a")
+	optBID := mustSelectSingle(t, store, "#opt-b")
+
+	gotID, ok, err := store.QuerySelector("input:default")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:default) before updates error = %v", err)
+	}
+	if !ok || gotID != flagID {
+		t.Fatalf("QuerySelector(input:default) before updates = (%d, %v), want (%d, true)", gotID, ok, flagID)
+	}
+	gotID, ok, err = store.QuerySelector("option:default")
+	if err != nil {
+		t.Fatalf("QuerySelector(option:default) before updates error = %v", err)
+	}
+	if !ok || gotID != optAID {
+		t.Fatalf("QuerySelector(option:default) before updates = (%d, %v), want (%d, true)", gotID, ok, optAID)
+	}
+
+	if err := store.SetFormControlChecked(flagID, false); err != nil {
+		t.Fatalf("SetFormControlChecked(#flag) error = %v", err)
+	}
+	if err := store.SetSelectValue(modeID, "b"); err != nil {
+		t.Fatalf("SetSelectValue(#mode, b) error = %v", err)
+	}
+
+	gotID, ok, err = store.QuerySelector("input:default")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:default) after updates error = %v", err)
+	}
+	if !ok || gotID != flagID {
+		t.Fatalf("QuerySelector(input:default) after updates = (%d, %v), want (%d, true)", gotID, ok, flagID)
+	}
+	gotID, ok, err = store.QuerySelector("option:default")
+	if err != nil {
+		t.Fatalf("QuerySelector(option:default) after updates error = %v", err)
+	}
+	if !ok || gotID != optAID {
+		t.Fatalf("QuerySelector(option:default) after updates = (%d, %v), want (%d, true)", gotID, ok, optAID)
+	}
+
+	matched, err := store.Matches(flagID, ":default")
+	if err != nil {
+		t.Fatalf("Matches(#flag, :default) after updates error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#flag, :default) after updates = false, want true")
+	}
+	matched, err = store.Matches(optAID, ":default")
+	if err != nil {
+		t.Fatalf("Matches(#opt-a, :default) after updates error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#opt-a, :default) after updates = false, want true")
+	}
+	matched, err = store.Matches(optBID, ":default")
+	if err != nil {
+		t.Fatalf("Matches(#opt-b, :default) after updates error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#opt-b, :default) after updates = true, want false")
 	}
 }
 
@@ -608,6 +717,64 @@ func TestQueryHelpersSupportExtendedPseudoClasses(t *testing.T) {
 	}
 	if !ok || closestID != mustSelectSingle(t, store, "#root") {
 		t.Fatalf("Closest(:root) = (%d, %v), want root", closestID, ok)
+	}
+}
+
+func TestQueryHelpersSupportBlankPseudoClassForCheckableAndSelectControls(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><input id="checkbox-off" type="checkbox"><input id="checkbox-on" type="checkbox" checked><input id="radio-off" type="radio" name="choice"><input id="radio-on" type="radio" name="choice" checked><select id="empty-select"><option value="a">A</option></select><select id="filled-select"><option value="b" selected>B</option></select></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	checkboxOffID := mustSelectSingle(t, store, "#checkbox-off")
+	radioOffID := mustSelectSingle(t, store, "#radio-off")
+	emptySelectID := mustSelectSingle(t, store, "#empty-select")
+	filledSelectID := mustSelectSingle(t, store, "#filled-select")
+
+	gotID, ok, err := store.QuerySelector("input:blank")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:blank) error = %v", err)
+	}
+	if !ok || gotID != checkboxOffID {
+		t.Fatalf("QuerySelector(input:blank) = (%d, %v), want (%d, true)", gotID, ok, checkboxOffID)
+	}
+
+	gotID, ok, err = store.QuerySelector("select:blank")
+	if err != nil {
+		t.Fatalf("QuerySelector(select:blank) error = %v", err)
+	}
+	if !ok || gotID != emptySelectID {
+		t.Fatalf("QuerySelector(select:blank) = (%d, %v), want (%d, true)", gotID, ok, emptySelectID)
+	}
+
+	matched, err := store.Matches(checkboxOffID, "#checkbox-off:blank")
+	if err != nil {
+		t.Fatalf("Matches(#checkbox-off:blank) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#checkbox-off:blank) = false, want true")
+	}
+	matched, err = store.Matches(radioOffID, "#radio-off:blank")
+	if err != nil {
+		t.Fatalf("Matches(#radio-off:blank) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#radio-off:blank) = false, want true")
+	}
+	matched, err = store.Matches(filledSelectID, "#filled-select:blank")
+	if err != nil {
+		t.Fatalf("Matches(#filled-select:blank) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#filled-select:blank) = true, want false")
+	}
+
+	closestID, ok, err := store.Closest(emptySelectID, "select:blank")
+	if err != nil {
+		t.Fatalf("Closest(select:blank) error = %v", err)
+	}
+	if !ok || closestID != emptySelectID {
+		t.Fatalf("Closest(select:blank) = (%d, %v), want (%d, true)", closestID, ok, emptySelectID)
 	}
 }
 
@@ -1551,6 +1718,80 @@ func TestQueryHelpersSupportPopoverOpenPseudoClass(t *testing.T) {
 	}
 	if matched {
 		t.Fatalf("Matches(#closed:popover-open) = true, want false")
+	}
+}
+
+func TestQueryHelpersSupportOpenPseudoClass(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"><select id="dropdown" open><option id="dropdown-option" value="a">A</option></select><select id="listbox" size="2" open><option id="listbox-option" value="b">B</option></select><input id="file" type="file" open><input id="text" type="text" open><div id="other" open></div></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	dropdownID := mustSelectSingle(t, store, "#dropdown")
+	listboxID := mustSelectSingle(t, store, "#listbox")
+	fileID := mustSelectSingle(t, store, "#file")
+	textID := mustSelectSingle(t, store, "#text")
+	otherID := mustSelectSingle(t, store, "#other")
+	optionID := mustSelectSingle(t, store, "#dropdown-option")
+
+	gotID, ok, err := store.QuerySelector("select:open")
+	if err != nil {
+		t.Fatalf("QuerySelector(select:open) error = %v", err)
+	}
+	if !ok || gotID != dropdownID {
+		t.Fatalf("QuerySelector(select:open) = (%d, %v), want (%d, true)", gotID, ok, dropdownID)
+	}
+
+	gotID, ok, err = store.QuerySelector("input:open")
+	if err != nil {
+		t.Fatalf("QuerySelector(input:open) error = %v", err)
+	}
+	if !ok || gotID != fileID {
+		t.Fatalf("QuerySelector(input:open) = (%d, %v), want (%d, true)", gotID, ok, fileID)
+	}
+
+	matched, err := store.Matches(dropdownID, "#dropdown:open")
+	if err != nil {
+		t.Fatalf("Matches(#dropdown:open) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#dropdown:open) = false, want true")
+	}
+	matched, err = store.Matches(listboxID, "#listbox:open")
+	if err != nil {
+		t.Fatalf("Matches(#listbox:open) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#listbox:open) = true, want false")
+	}
+	matched, err = store.Matches(fileID, "#file:open")
+	if err != nil {
+		t.Fatalf("Matches(#file:open) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(#file:open) = false, want true")
+	}
+	matched, err = store.Matches(textID, "#text:open")
+	if err != nil {
+		t.Fatalf("Matches(#text:open) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#text:open) = true, want false")
+	}
+	matched, err = store.Matches(otherID, "#other:open")
+	if err != nil {
+		t.Fatalf("Matches(#other:open) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#other:open) = true, want false")
+	}
+
+	closestID, ok, err := store.Closest(optionID, "select:open")
+	if err != nil {
+		t.Fatalf("Closest(select:open) error = %v", err)
+	}
+	if !ok || closestID != dropdownID {
+		t.Fatalf("Closest(select:open) = (%d, %v), want (%d, true)", closestID, ok, dropdownID)
 	}
 }
 

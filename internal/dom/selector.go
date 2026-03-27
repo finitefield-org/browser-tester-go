@@ -1363,7 +1363,7 @@ func (p selectorPseudoClass) matchesWithScope(store *Store, node *Node, scopeNod
 	case selectorPseudoPopoverOpen:
 		return pseudoClassPopoverOpen(node)
 	case selectorPseudoOpen:
-		return pseudoClassOpen(node)
+		return pseudoClassOpen(store, node)
 	case selectorPseudoFocus:
 		return pseudoClassFocus(store, node)
 	case selectorPseudoFocusVisible:
@@ -1573,8 +1573,7 @@ func pseudoClassDefault(store *Store, node *Node) bool {
 	case "input":
 		switch inputType(node) {
 		case "checkbox", "radio":
-			_, ok := attributeValue(node.Attrs, "checked")
-			return ok
+			return defaultHasAttribute(node, "checked")
 		}
 		if !isSubmitControlLike(node) {
 			return false
@@ -1586,8 +1585,7 @@ func pseudoClassDefault(store *Store, node *Node) bool {
 		}
 		return isDefaultSubmitControl(store, node)
 	case "option":
-		_, ok := attributeValue(node.Attrs, "selected")
-		return ok
+		return defaultHasAttribute(node, "selected")
 	default:
 		return false
 	}
@@ -1617,11 +1615,22 @@ func pseudoClassBlank(store *Store, node *Node) bool {
 
 	switch node.TagName {
 	case "input":
-		if !isTextInputType(inputType(node)) {
+		typeName := inputType(node)
+		switch {
+		case isTextInputType(typeName):
+			return strings.TrimSpace(store.ValueForNode(node.ID)) == ""
+		case isCheckableInputType(typeName):
+			checked, ok := store.CheckedForNode(node.ID)
+			if !ok {
+				return false
+			}
+			return !checked
+		default:
 			return false
 		}
-		return strings.TrimSpace(store.ValueForNode(node.ID)) == ""
 	case "textarea":
+		return strings.TrimSpace(store.ValueForNode(node.ID)) == ""
+	case "select":
 		return strings.TrimSpace(store.ValueForNode(node.ID)) == ""
 	default:
 		return false
@@ -1714,6 +1723,50 @@ func pseudoClassReadWrite(store *Store, node *Node) bool {
 	default:
 		return isContentEditableHostOrEditable(store, node)
 	}
+}
+
+func pseudoClassLabeledControlMatchesState(store *Store, node *Node, stateAttr string) bool {
+	if store == nil || node == nil || node.Kind != NodeKindElement || !isLabelableElement(node) {
+		return false
+	}
+
+	controlID, _ := attributeValue(node.Attrs, "id")
+	for currentID := node.Parent; currentID != 0; {
+		current := store.Node(currentID)
+		if current == nil {
+			return false
+		}
+		if current.Kind == NodeKindElement && current.TagName == "label" {
+			labelFor, hasFor := attributeValue(current.Attrs, "for")
+			if hasFor && labelFor != controlID {
+				currentID = current.Parent
+				continue
+			}
+			if subtreeContainsAttribute(store, current.ID, stateAttr) {
+				return true
+			}
+		}
+		currentID = current.Parent
+	}
+
+	if strings.TrimSpace(controlID) == "" {
+		return false
+	}
+
+	matched := false
+	store.walkElementPreOrder(store.documentID, func(current *Node) {
+		if matched || current == nil || current.Kind != NodeKindElement || current.TagName != "label" {
+			return
+		}
+		labelFor, ok := attributeValue(current.Attrs, "for")
+		if !ok || labelFor != controlID {
+			return
+		}
+		if subtreeContainsAttribute(store, current.ID, stateAttr) {
+			matched = true
+		}
+	})
+	return matched
 }
 
 func pseudoClassHeading(node *Node) bool {
@@ -1838,7 +1891,10 @@ func pseudoClassActive(store *Store, node *Node) bool {
 	if _, ok := attributeValue(node.Attrs, "active"); ok {
 		return true
 	}
-	return subtreeContainsAttribute(store, node.ID, "active")
+	if subtreeContainsAttribute(store, node.ID, "active") {
+		return true
+	}
+	return pseudoClassLabeledControlMatchesState(store, node, "active")
 }
 
 func pseudoClassHover(store *Store, node *Node) bool {
@@ -1848,7 +1904,10 @@ func pseudoClassHover(store *Store, node *Node) bool {
 	if _, ok := attributeValue(node.Attrs, "hover"); ok {
 		return true
 	}
-	return subtreeContainsAttribute(store, node.ID, "hover")
+	if subtreeContainsAttribute(store, node.ID, "hover") {
+		return true
+	}
+	return pseudoClassLabeledControlMatchesState(store, node, "hover")
 }
 
 func pseudoClassModal(node *Node) bool {
@@ -1934,7 +1993,7 @@ func mediaReadyState(node *Node) (int, bool) {
 	}
 }
 
-func pseudoClassOpen(node *Node) bool {
+func pseudoClassOpen(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
@@ -1942,6 +2001,52 @@ func pseudoClassOpen(node *Node) bool {
 	case "details", "dialog":
 		_, ok := attributeValue(node.Attrs, "open")
 		return ok
+	case "select":
+		if pseudoClassDisabled(store, node) || !selectIsDropdownBox(node) {
+			return false
+		}
+		_, ok := attributeValue(node.Attrs, "open")
+		return ok
+	case "input":
+		if pseudoClassDisabled(store, node) || !isOpenSupportedInputType(inputType(node)) {
+			return false
+		}
+		_, ok := attributeValue(node.Attrs, "open")
+		return ok
+	default:
+		return false
+	}
+}
+
+func selectIsDropdownBox(node *Node) bool {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "select" {
+		return false
+	}
+	if hasAttribute(node.Attrs, "multiple") {
+		return false
+	}
+	return selectDisplaySize(node) <= 1
+}
+
+func selectDisplaySize(node *Node) int {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "select" {
+		return 1
+	}
+	value, ok := attributeValue(node.Attrs, "size")
+	if !ok {
+		return 1
+	}
+	size, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || size < 0 {
+		return 1
+	}
+	return size
+}
+
+func isOpenSupportedInputType(typeName string) bool {
+	switch strings.ToLower(strings.TrimSpace(typeName)) {
+	case "color", "date", "datetime-local", "file", "month", "time", "week":
+		return true
 	default:
 		return false
 	}
@@ -2953,6 +3058,21 @@ func isSubmitControlLike(node *Node) bool {
 	}
 
 	return false
+}
+
+func isLabelableElement(node *Node) bool {
+	if node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+
+	switch node.TagName {
+	case "button", "meter", "output", "progress", "select", "textarea":
+		return true
+	case "input":
+		return inputType(node) != "hidden"
+	default:
+		return false
+	}
 }
 
 func isDefaultSubmitControl(store *Store, node *Node) bool {
