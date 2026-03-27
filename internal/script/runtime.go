@@ -24,6 +24,10 @@ type HostReferenceResolver interface {
 	ResolveHostReference(path string) (Value, error)
 }
 
+type HostReferenceMutator interface {
+	SetHostReference(path string, value Value) error
+}
+
 type DispatchRequest struct {
 	Source        string
 	Bindings      map[string]Value
@@ -41,9 +45,10 @@ type Runtime struct {
 }
 
 type classicJSEnvironment struct {
-	parent    *classicJSEnvironment
-	bindings  map[string]classicJSBinding
-	classDefs map[string]*classicJSClassDefinition
+	parent     *classicJSEnvironment
+	bindings   map[string]classicJSBinding
+	classDefs  map[string]*classicJSClassDefinition
+	withScopes []Value
 }
 
 type classicJSBinding struct {
@@ -72,8 +77,9 @@ type classicJSClassDefinition struct {
 
 func newClassicJSEnvironment() *classicJSEnvironment {
 	return &classicJSEnvironment{
-		bindings:  make(map[string]classicJSBinding),
-		classDefs: make(map[string]*classicJSClassDefinition),
+		bindings:   make(map[string]classicJSBinding),
+		classDefs:  make(map[string]*classicJSClassDefinition),
+		withScopes: nil,
 	}
 }
 
@@ -82,9 +88,10 @@ func (e *classicJSEnvironment) clone() *classicJSEnvironment {
 		return newClassicJSEnvironment()
 	}
 	return &classicJSEnvironment{
-		parent:    e,
-		bindings:  make(map[string]classicJSBinding),
-		classDefs: make(map[string]*classicJSClassDefinition),
+		parent:     e,
+		bindings:   make(map[string]classicJSBinding),
+		classDefs:  make(map[string]*classicJSClassDefinition),
+		withScopes: append([]Value(nil), e.withScopes...),
 	}
 }
 
@@ -101,9 +108,10 @@ func (e *classicJSEnvironment) cloneDetachedWithMapping(mapping map[*classicJSEn
 	}
 	clonedParent := e.parent.cloneDetachedWithMapping(mapping)
 	cloned := &classicJSEnvironment{
-		parent:    clonedParent,
-		bindings:  make(map[string]classicJSBinding, len(e.bindings)),
-		classDefs: make(map[string]*classicJSClassDefinition, len(e.classDefs)),
+		parent:     clonedParent,
+		bindings:   make(map[string]classicJSBinding, len(e.bindings)),
+		classDefs:  make(map[string]*classicJSClassDefinition, len(e.classDefs)),
+		withScopes: make([]Value, len(e.withScopes)),
 	}
 	mapping[e] = cloned
 	for name, binding := range e.bindings {
@@ -115,6 +123,18 @@ func (e *classicJSEnvironment) cloneDetachedWithMapping(mapping map[*classicJSEn
 	for name, classDef := range e.classDefs {
 		cloned.classDefs[name] = classDef.cloneDetached(mapping)
 	}
+	for i, scope := range e.withScopes {
+		cloned.withScopes[i] = cloneValueDetached(scope, mapping)
+	}
+	return cloned
+}
+
+func (e *classicJSEnvironment) withScope(value Value) *classicJSEnvironment {
+	if e == nil {
+		e = newClassicJSEnvironment()
+	}
+	cloned := e.clone()
+	cloned.withScopes = append(cloned.withScopes, value)
 	return cloned
 }
 
@@ -312,11 +332,32 @@ func cloneBindingsMap(bindings map[string]Value) map[string]Value {
 func (e *classicJSEnvironment) lookup(name string) (jsValue, bool) {
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
+			if value, ok := current.lookupWithScopes(name); ok {
+				return value, true
+			}
 			continue
 		}
 		binding, ok := current.bindings[name]
 		if ok {
 			return binding.value, true
+		}
+		if value, ok := current.lookupWithScopes(name); ok {
+			return value, true
+		}
+	}
+	return jsValue{}, false
+}
+
+func (e *classicJSEnvironment) lookupWithScopes(name string) (jsValue, bool) {
+	if e == nil || len(e.withScopes) == 0 {
+		return jsValue{}, false
+	}
+	if name == "this" || name == "super" {
+		return jsValue{}, false
+	}
+	for i := len(e.withScopes) - 1; i >= 0; i-- {
+		if value, ok := classicJSEnvironmentScopeLookup(e.withScopes[i], name); ok {
+			return value, true
 		}
 	}
 	return jsValue{}, false
@@ -325,10 +366,24 @@ func (e *classicJSEnvironment) lookup(name string) (jsValue, bool) {
 func (e *classicJSEnvironment) assign(name string, value jsValue) error {
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
+			handled, err := current.assignWithScopes(name, value)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return nil
+			}
 			continue
 		}
 		binding, ok := current.bindings[name]
 		if !ok {
+			handled, err := current.assignWithScopes(name, value)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return nil
+			}
 			continue
 		}
 		if !binding.mutable {
@@ -339,6 +394,102 @@ func (e *classicJSEnvironment) assign(name string, value jsValue) error {
 		return nil
 	}
 	return NewError(ErrorKindUnsupported, fmt.Sprintf("assignment target %q is not a declared local binding in this bounded classic-JS slice", name))
+}
+
+func (e *classicJSEnvironment) assignWithScopes(name string, value jsValue) (bool, error) {
+	if e == nil || len(e.withScopes) == 0 {
+		return false, nil
+	}
+	if name == "this" || name == "super" {
+		return false, nil
+	}
+	if value.kind != jsValueScalar {
+		return false, NewError(ErrorKindUnsupported, "assignment only works on scalar values in this bounded classic-JS slice")
+	}
+	for i := len(e.withScopes) - 1; i >= 0; i-- {
+		currentScope := e.withScopes[i]
+		updated, handled, err := classicJSEnvironmentScopeAssign(currentScope, name, value.value)
+		if err != nil {
+			return true, err
+		}
+		if !handled {
+			continue
+		}
+		switch {
+		case currentScope.Kind == ValueKindObject && updated.Kind == ValueKindObject:
+			e.replaceObjectBindings(currentScope, scalarJSValue(updated))
+		case currentScope.Kind == ValueKindArray && updated.Kind == ValueKindArray:
+			e.replaceArrayBindings(currentScope, scalarJSValue(updated))
+		}
+		e.withScopes[i] = updated
+		return true, nil
+	}
+	return false, nil
+}
+
+func classicJSEnvironmentScopeLookup(scope Value, name string) (jsValue, bool) {
+	switch scope.Kind {
+	case ValueKindObject:
+		if resolved, ok := lookupObjectProperty(scope.Object, name); ok {
+			if resolved.Kind == ValueKindFunction && resolved.Function != nil {
+				return jsValue{kind: jsValueScalar, value: resolved, receiver: scope, hasReceiver: true}, true
+			}
+			return scalarJSValue(resolved), true
+		}
+		return jsValue{}, false
+	case ValueKindArray:
+		if name == "length" {
+			return scalarJSValue(NumberValue(float64(len(scope.Array)))), true
+		}
+		if index, ok := arrayIndexFromBracketKey(name); ok && index >= 0 && index < len(scope.Array) {
+			return scalarJSValue(scope.Array[index]), true
+		}
+		return jsValue{}, false
+	default:
+		return jsValue{}, false
+	}
+}
+
+func classicJSEnvironmentScopeAssign(scope Value, name string, rhs Value) (Value, bool, error) {
+	switch scope.Kind {
+	case ValueKindObject:
+		return ObjectValue(replaceObjectProperty(scope.Object, name, rhs)), true, nil
+	case ValueKindArray:
+		if name == "length" {
+			newLength, err := classicJSArrayLengthFromValue(rhs)
+			if err != nil {
+				return UndefinedValue(), true, err
+			}
+			if newLength < len(scope.Array) {
+				return ArrayValue(scope.Array[:newLength]), true, nil
+			}
+			if newLength == len(scope.Array) {
+				return scope, true, nil
+			}
+			updated := append([]Value(nil), scope.Array...)
+			for len(updated) < newLength {
+				updated = append(updated, UndefinedValue())
+			}
+			return ArrayValue(updated), true, nil
+		}
+		index, ok := arrayIndexFromBracketKey(name)
+		if !ok {
+			return scope, false, nil
+		}
+		if index < len(scope.Array) {
+			updated := append([]Value(nil), scope.Array...)
+			updated[index] = rhs
+			return ArrayValue(updated), true, nil
+		}
+		updated := append([]Value(nil), scope.Array...)
+		for len(updated) < index {
+			updated = append(updated, UndefinedValue())
+		}
+		updated = append(updated, rhs)
+		return ArrayValue(updated), true, nil
+	default:
+		return scope, false, NewError(ErrorKindUnsupported, "with statements require object or array values in this bounded classic-JS slice")
+	}
 }
 
 func (e *classicJSEnvironment) setBindingValue(name string, value jsValue) bool {
@@ -397,22 +548,129 @@ func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsV
 	replacement := newValue.withoutAssignTarget()
 	replaced := 0
 	for current := e; current != nil; current = current.parent {
-		if len(current.bindings) == 0 {
-			continue
-		}
 		for name, binding := range current.bindings {
-			if binding.value.kind != jsValueScalar || binding.value.value.Kind != ValueKindArray {
+			updated, changed := replaceArrayReferencesInJSValue(binding.value, oldPtr, replacement.value)
+			if !changed {
 				continue
 			}
-			if reflect.ValueOf(binding.value.value.Array).Pointer() != oldPtr {
-				continue
-			}
-			binding.value = replacement
+			binding.value = updated
 			current.bindings[name] = binding
+			replaced++
+		}
+		for i, scope := range current.withScopes {
+			updated, changed := replaceArrayReferencesInValue(scope, oldPtr, replacement.value)
+			if !changed {
+				continue
+			}
+			current.withScopes[i] = updated
 			replaced++
 		}
 	}
 	return replaced
+}
+
+func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value) (jsValue, bool) {
+	changed := false
+
+	switch value.kind {
+	case jsValueScalar:
+		updated, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement)
+		if ok {
+			value.value = updated
+			changed = true
+		}
+	case jsValueSuper:
+		updatedValue, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement)
+		if ok {
+			value.value = updatedValue
+			changed = true
+		}
+		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement)
+		if ok {
+			value.receiver = updatedReceiver
+			changed = true
+		}
+		if value.hasNewTarget {
+			updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement)
+			if ok {
+				value.newTarget = updatedNewTarget
+				changed = true
+			}
+		}
+	}
+
+	if value.kind != jsValueSuper && value.hasReceiver {
+		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement)
+		if ok {
+			value.receiver = updatedReceiver
+			changed = true
+		}
+	}
+	if value.kind != jsValueSuper && value.hasNewTarget {
+		updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement)
+		if ok {
+			value.newTarget = updatedNewTarget
+			changed = true
+		}
+	}
+
+	return value, changed
+}
+
+func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+	switch value.Kind {
+	case ValueKindArray:
+		if reflect.ValueOf(value.Array).Pointer() == oldPtr {
+			return replacement, true
+		}
+		if len(value.Array) == 0 {
+			return value, false
+		}
+		updated := make([]Value, len(value.Array))
+		changed := false
+		for i, element := range value.Array {
+			next, ok := replaceArrayReferencesInValue(element, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = next
+		}
+		if !changed {
+			return value, false
+		}
+		return ArrayValue(updated), true
+	case ValueKindObject:
+		if len(value.Object) == 0 {
+			return value, false
+		}
+		updated := make([]ObjectEntry, len(value.Object))
+		changed := false
+		for i, entry := range value.Object {
+			next, ok := replaceArrayReferencesInValue(entry.Value, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+		}
+		if !changed {
+			return value, false
+		}
+		cloned := ObjectValue(updated)
+		cloned.ClassKey = value.ClassKey
+		cloned.ClassDefinition = value.ClassDefinition
+		return cloned, true
+	case ValueKindPromise:
+		if value.Promise == nil {
+			return value, false
+		}
+		next, ok := replaceArrayReferencesInValue(*value.Promise, oldPtr, replacement)
+		if !ok {
+			return value, false
+		}
+		return PromiseValue(next), true
+	default:
+		return value, false
+	}
 }
 
 func NewRuntime(host HostBindings) *Runtime {
@@ -693,6 +951,41 @@ func splitScriptStatements(source string) ([]string, error) {
 		}
 		return true
 	}
+	readKeywordAt := func(index int) (string, int) {
+		index = skipSpaceAndCommentsForward(index)
+		start := index
+		for index < len(text) && isIdentPart(text[index]) {
+			index++
+		}
+		if start == index {
+			return "", index
+		}
+		return text[start:index], index
+	}
+	statementCanEndAtBrace := func(index int) bool {
+		keyword, next := readKeywordAt(index)
+		switch keyword {
+		case "function", "class", "if", "for", "while", "switch", "try", "with", "do":
+			return true
+		case "async":
+			nextKeyword, _ := readKeywordAt(next)
+			return nextKeyword == "function"
+		case "export":
+			nextKeyword, nextIndex := readKeywordAt(next)
+			switch nextKeyword {
+			case "function", "class":
+				return true
+			case "default":
+				afterDefault, _ := readKeywordAt(nextIndex)
+				return afterDefault == "function" || afterDefault == "class"
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	canSplitAtBrace := statementCanEndAtBrace(start)
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
 		if lineComment {
@@ -758,8 +1051,29 @@ func splitScriptStatements(source string) ([]string, error) {
 		case '{':
 			braceDepth++
 		case '}':
+			wasOpenBlock := braceDepth > 0
 			if braceDepth > 0 {
 				braceDepth--
+			}
+			if !wasOpenBlock {
+				continue
+			}
+			if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+				if n := len(doStates); n > 0 && doStates[n-1] == 1 {
+					continue
+				}
+				if nextKeywordAhead(i+1, "else") || nextKeywordAhead(i+1, "catch") || nextKeywordAhead(i+1, "finally") {
+					continue
+				}
+				if !canSplitAtBrace {
+					continue
+				}
+				statement := strings.TrimSpace(text[start : i+1])
+				if statement != "" {
+					statements = append(statements, statement)
+				}
+				start = i + 1
+				canSplitAtBrace = statementCanEndAtBrace(start)
 			}
 		case '[':
 			bracketDepth++
@@ -789,6 +1103,7 @@ func splitScriptStatements(source string) ([]string, error) {
 					statements = append(statements, statement)
 				}
 				start = i + 1
+				canSplitAtBrace = statementCanEndAtBrace(start)
 			}
 		}
 	}

@@ -84,6 +84,16 @@ func (s *Store) CreateElement(tagName string) (NodeID, error) {
 	}), nil
 }
 
+func (s *Store) CreateTextNode(text string) (NodeID, error) {
+	if s == nil {
+		return 0, fmt.Errorf("dom store is nil")
+	}
+	return s.newNode(Node{
+		Kind: NodeKindText,
+		Text: text,
+	}), nil
+}
+
 func (s *Store) CurrentURL() string {
 	if s == nil {
 		return ""

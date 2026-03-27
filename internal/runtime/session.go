@@ -2,12 +2,15 @@ package runtime
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"browsertester/internal/dom"
 	"browsertester/internal/mocks"
 	"browsertester/internal/script"
 )
+
+const defaultRandomSeed int64 = 1
 
 type SessionConfig struct {
 	URL            string
@@ -47,6 +50,7 @@ type Session struct {
 	eventListeners           []eventListenerRecord
 	nextEventListenerID      int64
 	eventDispatch            *eventDispatchContext
+	selectedText             string
 	microtasks               []string
 	currentScriptHTML        string
 	lastInlineScriptHTML     string
@@ -62,6 +66,7 @@ type Session struct {
 	nextAnimationFrameID     int64
 	runningTimerID           int64
 	runningTimerCancelled    bool
+	random                   *rand.Rand
 }
 
 func NewSession(config SessionConfig) *Session {
@@ -74,6 +79,7 @@ func NewSession(config SessionConfig) *Session {
 		config:   cfg,
 		registry: mocks.NewRegistry(),
 	}
+	session.random = rand.New(rand.NewSource(session.randomSeed()))
 	session.applyConfigSeeds()
 	return session
 }
@@ -174,6 +180,27 @@ func (s *Session) ResetTime() {
 	s.clearTimers()
 	s.clearAnimationFrames()
 	s.discardMicrotasks()
+}
+
+func (s *Session) randomSeed() int64 {
+	if s == nil {
+		return defaultRandomSeed
+	}
+	if s.config.HasRandomSeed {
+		return s.config.RandomSeed
+	}
+	return defaultRandomSeed
+}
+
+func (s *Session) randomFloat64() float64 {
+	if s == nil {
+		rng := rand.New(rand.NewSource(defaultRandomSeed))
+		return rng.Float64()
+	}
+	if s.random == nil {
+		s.random = rand.New(rand.NewSource(s.randomSeed()))
+	}
+	return s.random.Float64()
 }
 
 func (s *Session) Scheduler() *Scheduler {
@@ -507,6 +534,36 @@ func (s *Session) Confirm(message string) (bool, error) {
 		return false, fmt.Errorf("confirm() requires a queued response")
 	}
 	return value, nil
+}
+
+func (s *Session) setSelectedText(text string) {
+	if s == nil {
+		return
+	}
+	s.selectedText = text
+}
+
+func (s *Session) selectedTextValue() string {
+	if s == nil {
+		return ""
+	}
+	return s.selectedText
+}
+
+func (s *Session) execCommand(command string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	normalized := strings.ToLower(strings.TrimSpace(command))
+	switch normalized {
+	case "copy":
+		if err := s.WriteClipboard(s.selectedTextValue()); err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("document.execCommand(%q) is unavailable in this bounded classic-JS slice", command)
+	}
 }
 
 func (s *Session) Prompt(message string) (string, bool, error) {

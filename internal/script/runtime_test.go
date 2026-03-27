@@ -217,6 +217,69 @@ func TestDispatchSupportsClassicJSStatementLists(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsWithStatementsInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `let obj = { value: "seed", count: 1 }; with (obj) { count++; value = value + "-" + count; } host.echo(obj.value)`})
+	if err != nil {
+		t.Fatalf("Dispatch(with statements) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "seed-2" {
+		t.Fatalf("Dispatch(with statements) result = %#v, want string seed-2", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+}
+
+func TestDispatchRejectsWithStatementTargetsOutsideObjectsInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `with (1) {}`})
+	if err == nil {
+		t.Fatalf("Dispatch(with non-object target) error = nil, want error")
+	}
+	if scriptErr, ok := err.(Error); !ok {
+		t.Fatalf("Dispatch(with non-object target) error type = %T, want script.Error", err)
+	} else if scriptErr.Kind != ErrorKindUnsupported && scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(with non-object target) error kind = %q, want unsupported or runtime", scriptErr.Kind)
+	}
+}
+
+func TestDispatchSupportsTopLevelFunctionDeclarationFollowedByStatement(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setTextContent": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	source := `function parseBooleanLike(value) {
+  return value === "yes"
+}
+const flag = parseBooleanLike("yes");
+host.setTextContent("#out", flag ? "yes" : "no")`
+	_, err := runtime.Dispatch(DispatchRequest{Source: source})
+	if err != nil {
+		t.Fatalf("Dispatch(function declaration + statement) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "setTextContent" {
+		t.Fatalf("host call method = %q, want setTextContent", host.calls[0].method)
+	}
+	if got := host.calls[0].args[1]; got.Kind != ValueKindString || got.String != "yes" {
+		t.Fatalf("host call args[1] = %#v, want yes", got)
+	}
+}
+
 func TestDispatchSupportsObjectLiteralShorthandPropertiesAndMethodsInClassicJS(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{

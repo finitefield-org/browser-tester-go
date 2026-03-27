@@ -250,3 +250,43 @@ func TestDispatchReportsUnsupportedBrowserSurfaceDirectly(t *testing.T) {
 		t.Fatalf("Dispatch(window.crypto.randomUUID()) error = %q, want browser-surface path", scriptErr.Message)
 	}
 }
+
+func TestDispatchReportsUnsupportedDocumentSurfaceDirectly(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"document": HostObjectReference("document"),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `document.title`})
+	if err == nil {
+		t.Fatalf("Dispatch(document.title) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(document.title) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(document.title) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+	if !strings.Contains(scriptErr.Message, "document.title") {
+		t.Fatalf("Dispatch(document.title) error = %q, want browser-surface path", scriptErr.Message)
+	}
+}
+
+func TestDispatchTreatsMissingHostReferencePropertiesAsAbsentInOperator(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"navigator": HostObjectReference("navigator"),
+		"window":    HostObjectReference("window"),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `host.echo(("serviceWorker" in navigator) + "|" + ("serviceWorker" in window))`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(host-reference in operator) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "false|false" {
+		t.Fatalf("Dispatch(host-reference in operator) value = %#v, want string false|false", result.Value)
+	}
+}

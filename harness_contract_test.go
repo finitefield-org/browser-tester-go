@@ -3303,6 +3303,42 @@ func TestInlineScriptsCanUseTreeMutationHelpersThroughPublicFacade(t *testing.T)
 	}
 }
 
+func TestInlineScriptsCanConstructAndReorderNodesThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main></main><script>const root = host:querySelector("main"); const span = host:createElement("span"); const em = host:createElement("em"); const strong = host:createElement("strong"); host:appendChild(expr(root), expr(span)); host:appendChild(expr(root), expr(em)); host:appendChild(expr(root), expr(strong)); host:insertBefore(expr(root), expr(span), expr(strong)); const removed = host:removeChild(expr(root), expr(span)); host:appendChild(expr(root), expr(removed))</script>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><em></em><strong></strong><span></span></main><script>const root = host:querySelector("main"); const span = host:createElement("span"); const em = host:createElement("em"); const strong = host:createElement("strong"); host:appendChild(expr(root), expr(span)); host:appendChild(expr(root), expr(em)); host:appendChild(expr(root), expr(strong)); host:insertBefore(expr(root), expr(span), expr(strong)); const removed = host:removeChild(expr(root), expr(span)); host:appendChild(expr(root), expr(removed))</script>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after node construction host helpers = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsCanCreateTextNodesReplaceChildrenAndInsertAdjacentNodesThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main id="wrap"><div id="target"><span id="keep">keep</span></div><p id="tail">tail</p></main><script>const target = host:querySelector("#target"); const keep = host:querySelector("#keep"); const seed = host:createTextNode("seed"); host:replaceChild(expr(target), expr(seed), expr(keep)); const em = host:createElement("em"); const strong = host:createElement("strong"); host:insertAdjacentElement(expr(target), "afterbegin", expr(em)); host:insertAdjacentText(expr(target), "beforeend", " tail"); host:insertAdjacentElement(expr(target), "beforebegin", expr(strong)); host:insertAdjacentText(expr(target), "afterend", "!")</script>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main id="wrap"><strong></strong><div id="target"><em></em>seed tail</div>!<p id="tail">tail</p></main><script>const target = host:querySelector("#target"); const keep = host:querySelector("#keep"); const seed = host:createTextNode("seed"); host:replaceChild(expr(target), expr(seed), expr(keep)); const em = host:createElement("em"); const strong = host:createElement("strong"); host:insertAdjacentElement(expr(target), "afterbegin", expr(em)); host:insertAdjacentText(expr(target), "beforeend", " tail"); host:insertAdjacentElement(expr(target), "beforebegin", expr(strong)); host:insertAdjacentText(expr(target), "afterend", "!")</script>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after low-level node construction host helpers = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsRejectInvalidLowLevelNodeConstructionPositionsThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	err = harness.WriteHTML(`<main id="wrap"><div id="target"><span id="keep"></span></div></main><script>const target = host:querySelector("#target"); const em = host:createElement("em"); host:insertAdjacentElement(expr(target), "sideways", expr(em))</script>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want invalid-position error")
+	}
+	if harness == nil {
+		t.Fatalf("WriteHTML() harness = nil, want harness instance")
+	}
+}
+
 func TestInlineScriptsCanReadTextContentThroughPublicFacade(t *testing.T) {
 	harness, err := FromHTML(`<main><div id="src">seed</div><div id="out"></div><script>host:setTextContent("#out", expr(host:textContent("#src")))</script></main>`)
 	if err != nil {
@@ -3311,6 +3347,152 @@ func TestInlineScriptsCanReadTextContentThroughPublicFacade(t *testing.T) {
 
 	if got, want := harness.Debug().DumpDOM(), `<main><div id="src">seed</div><div id="out">seed</div><script>host:setTextContent("#out", expr(host:textContent("#src")))</script></main>`; got != want {
 		t.Fatalf("Debug().DumpDOM() after textContent getter = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsCanReadElementReflectionSurfacesThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="box" class="alpha beta" style="color: green; background: transparent" data-x="1">Hello <strong>world</strong></div><div id="probe"></div><script>const box = document.querySelector("#box"); const firstAttr = box.attributes.item(0); const styleAttr = box.attributes.namedItem("style"); host:setTextContent("#probe", expr(box.className + "|" + box.innerText + "|" + box.outerText + "|" + box.style.cssText + "|" + box.style.length + "|" + box.style.item(0) + "|" + box.style.getPropertyValue("background") + "|" + box.attributes.length + "|" + firstAttr.name + "=" + firstAttr.value + "|" + styleAttr.value + "|" + box.attributes.namedItem("data-x").value))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="box" class="alpha beta" style="color: green; background: transparent" data-x="1">Hello <strong>world</strong></div><div id="probe">alpha beta|Hello world|Hello world|color: green; background: transparent|2|color|transparent|4|id=box|color: green; background: transparent|1</div><script>const box = document.querySelector("#box"); const firstAttr = box.attributes.item(0); const styleAttr = box.attributes.namedItem("style"); host:setTextContent("#probe", expr(box.className + "|" + box.innerText + "|" + box.outerText + "|" + box.style.cssText + "|" + box.style.length + "|" + box.style.item(0) + "|" + box.style.getPropertyValue("background") + "|" + box.attributes.length + "|" + firstAttr.name + "=" + firstAttr.value + "|" + styleAttr.value + "|" + box.attributes.namedItem("data-x").value))</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after element reflection getters = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsSupportStandardEventListenersThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><button id="btn">Go</button><div id="out"></div><script>const out = document.querySelector("#out"); const add = (label) => { const base = out.textContent; const next = base ? base + "|" + label : label; host.setTextContent("#out", next); }; const btn = document.querySelector("#btn"); btn.addEventListener("click", () => add("click")); btn.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("element"); } }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("document"); } }); window.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("window"); } });</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.Click("#btn"); err != nil {
+		t.Fatalf("Click(#btn) error = %v", err)
+	}
+	if err := harness.DispatchKeyboard("#btn"); err != nil {
+		t.Fatalf("DispatchKeyboard(#btn) error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><button id="btn">Go</button><div id="out">click|element|document|window</div><script>const out = document.querySelector("#out"); const add = (label) => { const base = out.textContent; const next = base ? base + "|" + label : label; host.setTextContent("#out", next); }; const btn = document.querySelector("#btn"); btn.addEventListener("click", () => add("click")); btn.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("element"); } }); document.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("document"); } }); window.addEventListener("keydown", (event) => { if (event.key === "Escape") { add("window"); } });</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after standard event listeners = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsSupportClassListAndDetailsOpenThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><details id="panel" class="beta"><summary>More</summary><div>Body</div></details><div id="box" class="base"></div><div id="state"></div><script>const panel = document.querySelector("#panel"); panel.classList.add("expanded"); panel.classList.remove("beta"); panel.classList.toggle("ready"); panel.setAttribute("open", ""); host.setTextContent("#state", panel.open ? "open" : "closed"); const box = document.querySelector("#box"); box.classList.toggle("active");</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><details id="panel" class="expanded ready" open=""><summary>More</summary><div>Body</div></details><div id="box" class="base active"></div><div id="state">open</div><script>const panel = document.querySelector("#panel"); panel.classList.add("expanded"); panel.classList.remove("beta"); panel.classList.toggle("ready"); panel.setAttribute("open", ""); host.setTextContent("#state", panel.open ? "open" : "closed"); const box = document.querySelector("#box"); box.classList.toggle("active");</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after classList/open mutation = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsSupportStandardNodeConstructionThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main id="root"></main><script>const root = document.querySelector("#root"); const span = document.createElement("span"); span.setAttribute("data-x", "1"); root.appendChild(span); root.removeChild(span); root.appendChild(span);</script>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main id="root"><span data-x="1"></span></main><script>const root = document.querySelector("#root"); const span = document.createElement("span"); span.setAttribute("data-x", "1"); root.appendChild(span); root.removeChild(span); root.appendChild(span);</script>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after standard node construction = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsSupportSelectAndExecCommandCopyThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	harness.Mocks().Clipboard().SeedText("initial")
+	err = harness.WriteHTML(`<main><input id="copy" value="seed"><script>const field = document.querySelector("#copy"); field.select(); document.execCommand("copy");</script></main>`)
+	if err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	got, err := harness.ReadClipboard()
+	if err != nil {
+		t.Fatalf("ReadClipboard() error = %v", err)
+	}
+	if got != "seed" {
+		t.Fatalf("ReadClipboard() = %q, want seed", got)
+	}
+}
+
+func TestInlineScriptsSupportConfirmThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	harness.Mocks().Dialogs().QueueConfirm(true)
+	err = harness.WriteHTML(`<main><div id="out"></div><script>const ok = window.confirm("Continue?"); host.setTextContent("#out", ok ? "yes" : "no")</script></main>`)
+	if err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="out">yes</div><script>const ok = window.confirm("Continue?"); host.setTextContent("#out", ok ? "yes" : "no")</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after confirm = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsRejectConfirmWithoutQueuedResponseThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	err = harness.WriteHTML(`<main><script>window.confirm("missing")</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want queued response error")
+	}
+	if !strings.Contains(err.Error(), "queued response") {
+		t.Fatalf("WriteHTML() error = %q, want queued response error", err)
+	}
+}
+
+func TestInlineScriptsSupportPromptThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	harness.Mocks().Dialogs().QueuePromptText("Ada")
+	err = harness.WriteHTML(`<main><div id="out"></div><script>const value = window.prompt("Your name?"); host.setTextContent("#out", value === null ? "canceled" : value)</script></main>`)
+	if err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="out">Ada</div><script>const value = window.prompt("Your name?"); host.setTextContent("#out", value === null ? "canceled" : value)</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after prompt = %q, want %q", got, want)
+	}
+}
+
+func TestInlineScriptsRejectPromptWithoutQueuedResponseThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	err = harness.WriteHTML(`<main><script>window.prompt("missing")</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want queued response error")
+	}
+	if !strings.Contains(err.Error(), "queued response") {
+		t.Fatalf("WriteHTML() error = %q, want queued response error", err)
+	}
+}
+
+func TestInlineScriptsTreatMissingNavigatorServiceWorkerAsAbsentThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	err = harness.WriteHTML(`<main><div id="out"></div><script>if (!("serviceWorker" in navigator)) { host.setTextContent("#out", "skipped") } else { host.setTextContent("#out", "registered") }</script></main>`)
+	if err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="out">skipped</div><script>if (!("serviceWorker" in navigator)) { host.setTextContent("#out", "skipped") } else { host.setTextContent("#out", "registered") }</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after navigator.serviceWorker guard = %q, want %q", got, want)
 	}
 }
 
@@ -4799,6 +4981,135 @@ func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestInlineScriptsCanReadDocumentPropertiesThroughPublicActions(t *testing.T) {
+	const initialURL = "https://example.test/app?mode=preview#section"
+	const rawHTML = `<html dir="rtl"><head><title>Doc Title</title></head><body><main id="root"><div id="title"></div><div id="ready"></div><div id="view"></div><div id="base"></div><div id="url"></div><div id="uri"></div><div id="compat"></div><div id="content"></div><div id="design"></div><div id="dir"></div><div id="doctype"></div><script>host:setTextContent("#title", expr(document.title)); host:setTextContent("#ready", expr(document.readyState)); host:setTextContent("#view", expr(document.defaultView.location.href)); host:setTextContent("#base", expr(document.baseURI)); host:setTextContent("#url", expr(document.URL)); host:setTextContent("#uri", expr(document.documentURI)); host:setTextContent("#compat", expr(document.compatMode)); host:setTextContent("#content", expr(document.contentType)); host:setTextContent("#design", expr(document.designMode)); host:setTextContent("#dir", expr(document.dir)); host:setTextContent("#doctype", expr(document.doctype === null ? "true" : "false"))</script></main></body></html>`
+
+	harness, err := FromHTMLWithURL(initialURL, rawHTML)
+	if err != nil {
+		t.Fatalf("FromHTMLWithURL() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#title"); err != nil {
+		t.Fatalf("TextContent(#title) error = %v", err)
+	} else if got != "Doc Title" {
+		t.Fatalf("TextContent(#title) = %q, want Doc Title", got)
+	}
+	if got, err := harness.TextContent("#ready"); err != nil {
+		t.Fatalf("TextContent(#ready) error = %v", err)
+	} else if got != "loading" {
+		t.Fatalf("TextContent(#ready) = %q, want loading", got)
+	}
+	if got, err := harness.TextContent("#view"); err != nil {
+		t.Fatalf("TextContent(#view) error = %v", err)
+	} else if got != initialURL {
+		t.Fatalf("TextContent(#view) = %q, want %q", got, initialURL)
+	}
+	if got, err := harness.TextContent("#base"); err != nil {
+		t.Fatalf("TextContent(#base) error = %v", err)
+	} else if got != initialURL {
+		t.Fatalf("TextContent(#base) = %q, want %q", got, initialURL)
+	}
+	if got, err := harness.TextContent("#url"); err != nil {
+		t.Fatalf("TextContent(#url) error = %v", err)
+	} else if got != initialURL {
+		t.Fatalf("TextContent(#url) = %q, want %q", got, initialURL)
+	}
+	if got, err := harness.TextContent("#uri"); err != nil {
+		t.Fatalf("TextContent(#uri) error = %v", err)
+	} else if got != initialURL {
+		t.Fatalf("TextContent(#uri) = %q, want %q", got, initialURL)
+	}
+	if got, err := harness.TextContent("#compat"); err != nil {
+		t.Fatalf("TextContent(#compat) error = %v", err)
+	} else if got != "CSS1Compat" {
+		t.Fatalf("TextContent(#compat) = %q, want CSS1Compat", got)
+	}
+	if got, err := harness.TextContent("#content"); err != nil {
+		t.Fatalf("TextContent(#content) error = %v", err)
+	} else if got != "text/html" {
+		t.Fatalf("TextContent(#content) = %q, want text/html", got)
+	}
+	if got, err := harness.TextContent("#design"); err != nil {
+		t.Fatalf("TextContent(#design) error = %v", err)
+	} else if got != "off" {
+		t.Fatalf("TextContent(#design) = %q, want off", got)
+	}
+	if got, err := harness.TextContent("#dir"); err != nil {
+		t.Fatalf("TextContent(#dir) error = %v", err)
+	} else if got != "rtl" {
+		t.Fatalf("TextContent(#dir) = %q, want rtl", got)
+	}
+	if got, err := harness.TextContent("#doctype"); err != nil {
+		t.Fatalf("TextContent(#doctype) error = %v", err)
+	} else if got != "true" {
+		t.Fatalf("TextContent(#doctype) = %q, want true", got)
+	}
+	if !harness.Debug().DOMReady() {
+		t.Fatalf("Debug().DOMReady() = false, want true after document property bootstrap")
+	}
+	if got := harness.Debug().DOMError(); got != "" {
+		t.Fatalf("Debug().DOMError() = %q, want empty after document property bootstrap", got)
+	}
+}
+
+func TestInlineScriptsCanReadNodeTreeNavigationThroughPublicActions(t *testing.T) {
+	const rawHTML = `<html><body><section id="out"><div id="doc-node-type"></div><div id="doc-node-name"></div><div id="doc-parent-node"></div><div id="doc-parent-element"></div><div id="doc-next-sibling"></div><div id="doc-previous-sibling"></div><div id="doc-owner"></div><div id="doc-child-count"></div><div id="doc-first-element"></div><div id="doc-last-element"></div><div id="doc-root-parent"></div><div id="doc-root-owner"></div><div id="doc-root-parent-element"></div><div id="mixed-node-type"></div><div id="mixed-node-name"></div><div id="mixed-node-value"></div><div id="mixed-owner"></div><div id="mixed-first-child"></div><div id="mixed-last-child"></div><div id="mixed-child-count"></div><div id="first-next-sibling"></div><div id="first-next-element-sibling"></div><div id="second-previous-sibling"></div><div id="second-previous-element-sibling"></div></section><main id="root"><div id="mixed">alpha<span id="child"></span>omega</div><div id="siblings"><span id="first"></span>middle<em id="second"></em></div></main><script>host:setTextContent("#doc-node-type", expr(document.nodeType)); host:setTextContent("#doc-node-name", expr(document.nodeName)); host:setTextContent("#doc-parent-node", expr(document.parentNode === null)); host:setTextContent("#doc-parent-element", expr(document.parentElement === null)); host:setTextContent("#doc-next-sibling", expr(document.nextSibling === null)); host:setTextContent("#doc-previous-sibling", expr(document.previousSibling === null)); host:setTextContent("#doc-owner", expr(document.ownerDocument === null)); host:setTextContent("#doc-child-count", expr(document.childElementCount)); host:setTextContent("#doc-first-element", expr(document.firstElementChild.nodeName)); host:setTextContent("#doc-last-element", expr(document.lastElementChild.nodeName)); host:setTextContent("#doc-root-parent", expr(document.documentElement.parentNode === document)); host:setTextContent("#doc-root-owner", expr(document.documentElement.ownerDocument === document)); host:setTextContent("#doc-root-parent-element", expr(document.documentElement.parentElement === null)); host:setTextContent("#mixed-node-type", expr(document.getElementById("mixed").nodeType)); host:setTextContent("#mixed-node-name", expr(document.getElementById("mixed").nodeName)); host:setTextContent("#mixed-node-value", expr(document.getElementById("mixed").nodeValue === null)); host:setTextContent("#mixed-owner", expr(document.getElementById("mixed").ownerDocument === document)); host:setTextContent("#mixed-first-child", expr(document.getElementById("mixed").firstChild.nodeValue)); host:setTextContent("#mixed-last-child", expr(document.getElementById("mixed").lastChild.nodeValue)); host:setTextContent("#mixed-child-count", expr(document.getElementById("mixed").childElementCount)); host:setTextContent("#first-next-sibling", expr(document.getElementById("first").nextSibling.nodeValue)); host:setTextContent("#first-next-element-sibling", expr(document.getElementById("first").nextElementSibling.id)); host:setTextContent("#second-previous-sibling", expr(document.getElementById("second").previousSibling.nodeValue)); host:setTextContent("#second-previous-element-sibling", expr(document.getElementById("second").previousElementSibling.id))</script></body></html>`
+
+	harness, err := FromHTML(rawHTML)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	checks := map[string]string{
+		"#doc-node-type":                   "9",
+		"#doc-node-name":                   "#document",
+		"#doc-parent-node":                 "true",
+		"#doc-parent-element":              "true",
+		"#doc-next-sibling":                "true",
+		"#doc-previous-sibling":            "true",
+		"#doc-owner":                       "true",
+		"#doc-child-count":                 "1",
+		"#doc-first-element":               "HTML",
+		"#doc-last-element":                "HTML",
+		"#doc-root-parent":                 "true",
+		"#doc-root-owner":                  "true",
+		"#doc-root-parent-element":         "true",
+		"#mixed-node-type":                 "1",
+		"#mixed-node-name":                 "DIV",
+		"#mixed-node-value":                "true",
+		"#mixed-owner":                     "true",
+		"#mixed-first-child":               "alpha",
+		"#mixed-last-child":                "omega",
+		"#mixed-child-count":               "1",
+		"#first-next-sibling":              "middle",
+		"#first-next-element-sibling":      "second",
+		"#second-previous-sibling":         "middle",
+		"#second-previous-element-sibling": "first",
+	}
+
+	for selector, want := range checks {
+		if got, err := harness.TextContent(selector); err != nil {
+			t.Fatalf("TextContent(%s) error = %v", selector, err)
+		} else if got != want {
+			t.Fatalf("TextContent(%s) = %q, want %q", selector, got, want)
+		}
+	}
+}
+
+func TestInlineScriptsCanUseNodeListCollectionParityThroughPublicActions(t *testing.T) {
+	harness, err := FromHTML(`<main><ul><li id="a"></li><li id="b"></li></ul><div id="probe"></div><script>const nodes = document.querySelectorAll("li"); let forEachOut = ""; nodes.forEach((node, index, list) => { forEachOut += (forEachOut === "" ? "" : "|") + index + ":" + node.id + ":" + list.length; }); let keysOut = ""; for (let key of nodes.keys()) { keysOut += (keysOut === "" ? "" : "|") + key; }; let valuesOut = ""; for (let node of nodes.values()) { valuesOut += (valuesOut === "" ? "" : "|") + node.id; }; let entriesOut = ""; for (let entry of nodes.entries()) { entriesOut += (entriesOut === "" ? "" : "|") + entry[0] + ":" + entry[1].id; }; host:setTextContent("#probe", expr(forEachOut + ";" + keysOut + ";" + valuesOut + ";" + entriesOut))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := "0:a:2|1:b:2;0|1;a|b;0:a|1:b"; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
 func TestInlineScriptsCanExposeCurrentScriptThroughPublicActions(t *testing.T) {
 	harness, err := FromHTML(`<main><div id="out">old</div><script id="boot">host:setInnerHTML("#out", expr(host:documentCurrentScript()))</script></main>`)
 	if err != nil {
@@ -5774,6 +6085,27 @@ func TestMutationContractsSetTextContentPreservesFocusAndClearsTargetDescendants
 	}
 	if got, want := harness.Debug().DumpDOM(), `<main><div id="target">plain</div><p id="other">y</p></main>`; got != want {
 		t.Fatalf("Debug().DumpDOM() after SetTextContent = %q, want %q", got, want)
+	}
+}
+
+func TestMutationContractsKeepLiveCollectionsCoherentAfterPublicMutations(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="target"><span id="first"></span>gap</div><div id="before"></div><div id="after"></div><script>const target = document.querySelector("#target"); host:setTextContent("#before", expr(target.children.length + ":" + target.childNodes.length)); host:replaceChildren("#target", "<em id=\"next\">fresh</em>tail"); host:setTextContent("#after", expr(target.children.length + ":" + target.childNodes.length + ":" + target.children.item(0).id + ":" + target.childNodes.item(1).nodeValue))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#before"); err != nil {
+		t.Fatalf("TextContent(#before) error = %v", err)
+	} else if want := "1:2"; got != want {
+		t.Fatalf("TextContent(#before) = %q, want %q", got, want)
+	}
+	if got, err := harness.TextContent("#after"); err != nil {
+		t.Fatalf("TextContent(#after) error = %v", err)
+	} else if want := "1:2:next:tail"; got != want {
+		t.Fatalf("TextContent(#after) = %q, want %q", got, want)
+	}
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="target"><em id="next">fresh</em>tail</div><div id="before">1:2</div><div id="after">1:2:next:tail</div><script>const target = document.querySelector("#target"); host:setTextContent("#before", expr(target.children.length + ":" + target.childNodes.length)); host:replaceChildren("#target", "<em id=\"next\">fresh</em>tail"); host:setTextContent("#after", expr(target.children.length + ":" + target.childNodes.length + ":" + target.children.item(0).id + ":" + target.childNodes.item(1).nodeValue))</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after live collection mutation contract = %q, want %q", got, want)
 	}
 }
 
@@ -6972,6 +7304,19 @@ func TestHarnessInlineScriptsSupportDeleteExpressionsWithOptionalChaining(t *tes
 		t.Fatalf("TextContent(#out) after delete expressions with optional chaining error = %v", err)
 	} else if want := "true|true|undefined"; got != want {
 		t.Fatalf("TextContent(#out) after delete expressions with optional chaining = %q, want %q", got, want)
+	}
+}
+
+func TestHarnessInlineScriptsSupportWithStatements(t *testing.T) {
+	harness, err := FromHTML("<main><div id=\"out\">old</div><script>let obj = { value: \"seed\", count: 1 }; with (obj) { count++; value = value + \"-\" + count; } host.setTextContent(\"#out\", obj.value)</script></main>")
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after with statements error = %v", err)
+	} else if want := "seed-2"; got != want {
+		t.Fatalf("TextContent(#out) after with statements = %q, want %q", got, want)
 	}
 }
 

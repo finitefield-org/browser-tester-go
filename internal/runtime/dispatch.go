@@ -41,7 +41,7 @@ func (s *Session) DispatchKeyboard(selector string) (err error) {
 		}
 	}()
 	for _, event := range []string{"keydown", "keypress", "keyup"} {
-		if _, err := s.dispatchEventListeners(store, nodeID, event); err != nil {
+		if _, err := s.dispatchEventListenersWithPropagation(store, nodeID, event, "Escape", true, true); err != nil {
 			return err
 		}
 	}

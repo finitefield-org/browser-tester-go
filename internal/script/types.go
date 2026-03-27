@@ -212,6 +212,9 @@ func ToJSString(value Value) string {
 		}
 		return b.String()
 	case ValueKindObject:
+		if ms, ok := BrowserDateTimestamp(value); ok {
+			return BrowserDateISOString(ms)
+		}
 		if literal, ok := classicJSRegExpLiteralString(value); ok {
 			return literal
 		}

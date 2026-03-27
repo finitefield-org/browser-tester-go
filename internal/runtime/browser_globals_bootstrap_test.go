@@ -75,3 +75,26 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 		t.Fatalf("StorageEvents() = %#v, want two storage writes", got)
 	}
 }
+
+func TestSessionBootstrapsTemplateLocaleAndOptionalWindowGlobals(t *testing.T) {
+	const rawHTML = `<main><div id="locale"></div><div id="stamp"></div><script>const locale = navigator.language || "en-US"; const stamp = new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(1700000000000)); if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); } host:setTextContent("#locale", expr(locale)); host:setTextContent("#stamp", expr(stamp))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#locale"); err != nil {
+		t.Fatalf("TextContent(#locale) error = %v", err)
+	} else if got != "en-US" {
+		t.Fatalf("TextContent(#locale) = %q, want en-US", got)
+	}
+	if got, err := session.TextContent("#stamp"); err != nil {
+		t.Fatalf("TextContent(#stamp) error = %v", err)
+	} else if got != "11/14/2023, 10:13 PM" {
+		t.Fatalf("TextContent(#stamp) = %q, want 11/14/2023, 10:13 PM", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after optional browser globals bootstrap", got)
+	}
+}

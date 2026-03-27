@@ -806,6 +806,72 @@ func TestSessionClipboardTracksSeedAndWrites(t *testing.T) {
 	}
 }
 
+func TestSessionInlineScriptsCanConfirmDialogs(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	s.Registry().Dialogs().QueueConfirm(true)
+
+	if err := s.WriteHTML(`<main><div id="out"></div><script>const ok = window.confirm("Continue?"); host.setTextContent("#out", ok ? "yes" : "no")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "yes" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "yes")
+	}
+}
+
+func TestSessionInlineScriptsCanPromptDialogs(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	s.Registry().Dialogs().QueuePromptText("Ada")
+
+	if err := s.WriteHTML(`<main><div id="out"></div><script>const value = prompt("Your name?"); host.setTextContent("#out", value === null ? "canceled" : value)</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "Ada" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "Ada")
+	}
+}
+
+func TestSessionRejectsPromptWithoutQueuedResponse(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+
+	if err := s.WriteHTML(`<main><script>prompt("missing")</script></main>`); err == nil {
+		t.Fatalf("WriteHTML() error = nil, want queued response error")
+	}
+}
+
+func TestSessionInlineScriptsCanCopySelectedInputValue(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main><input id="name" value="Ada"><script>const input = document.querySelector("#name"); input.select(); document.execCommand("copy")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	got, err := s.ReadClipboard()
+	if err != nil {
+		t.Fatalf("ReadClipboard() error = %v", err)
+	}
+	if got != "Ada" {
+		t.Fatalf("ReadClipboard() = %q, want %q", got, "Ada")
+	}
+}
+
+func TestSessionInlineScriptsCanMutateDetailsOpenAndClassList(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main><details id="panel"><summary>More</summary><div id="out"></div></details><script>const panel = document.querySelector("#panel"); panel.open = true; panel.classList.add("active"); panel.classList.toggle("inactive", false); host.setTextContent("#out", panel.open + ":" + panel.classList.contains("active") + ":" + panel.classList.contains("inactive"))</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true:true:false" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "true:true:false")
+	}
+}
+
 func TestSessionRejectsMalformedDocumentCookieFromInlineScript(t *testing.T) {
 	s := NewSession(SessionConfig{
 		URL:  "https://example.test/start",
@@ -1090,6 +1156,22 @@ func TestSessionDispatchesCustomEventListeners(t *testing.T) {
 	}
 }
 
+func TestSessionDispatchesStandardEventListenersOnWindowDocumentAndElement(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="btn">Go</button><div id="log"></div><script>const log = document.querySelector("#log"); const add = (label) => { const base = log.textContent; const next = base ? base + "|" + label : "|" + label; host.setTextContent("#log", next); }; window.addEventListener("custom", () => { add("window-capture") }, true); document.addEventListener("custom", () => { add("doc-capture") }, true); document.addEventListener("custom", () => { add("doc-bubble") }); document.querySelector("#btn").addEventListener("custom", () => { add("target") }); window.addEventListener("custom", () => { add("window-bubble") })</script></main>`,
+	})
+
+	if err := s.Dispatch("#btn", "custom"); err != nil {
+		t.Fatalf("Dispatch(#btn, custom) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#log"); err != nil {
+		t.Fatalf("TextContent(#log) error = %v", err)
+	} else if got != "|window-capture|doc-capture|target|doc-bubble|window-bubble" {
+		t.Fatalf("TextContent(#log) = %q, want %q", got, "|window-capture|doc-capture|target|doc-bubble|window-bubble")
+	}
+}
+
 func TestSessionDispatchRejectsBlankEventType(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><button id="btn">Go</button></main>`,
@@ -1111,6 +1193,22 @@ func TestSessionDispatchKeyboardFiresKeyboardEventSequence(t *testing.T) {
 
 	if got, want := s.DumpDOM(), `<main><button id="btn">Go</button><div id="log"><span>down</span><span>press</span><span>up</span></div><script>host:addEventListener("#btn", "keydown", 'host:insertAdjacentHTML("#log", "beforeend", "<span>down</span>")'); host:addEventListener("#btn", "keypress", 'host:insertAdjacentHTML("#log", "beforeend", "<span>press</span>")'); host:addEventListener("#btn", "keyup", 'host:insertAdjacentHTML("#log", "beforeend", "<span>up</span>")')</script></main>`; got != want {
 		t.Fatalf("DumpDOM() after keyboard dispatch = %q, want %q", got, want)
+	}
+}
+
+func TestSessionDispatchKeyboardExposesEventKeyToStandardListeners(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="btn">Go</button><div id="log"></div><script>window.addEventListener("keydown", (event) => { if (event.key === "Escape") { host.setTextContent("#log", "escape") } })</script></main>`,
+	})
+
+	if err := s.DispatchKeyboard("#btn"); err != nil {
+		t.Fatalf("DispatchKeyboard(#btn) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#log"); err != nil {
+		t.Fatalf("TextContent(#log) error = %v", err)
+	} else if got != "escape" {
+		t.Fatalf("TextContent(#log) = %q, want %q", got, "escape")
 	}
 }
 

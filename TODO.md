@@ -93,7 +93,7 @@ upkeep.
   including `host?.method(...)` and `host?.["method"](...)`.
 - [x] Optional call syntax `?.()` and bracket access `?.[expr]`.
 - [x] Import attributes / options objects on bounded import syntax.
-- [ ] `with` statements.
+- [x] `with` statements.
 - [x] Standalone block statements.
 - [x] Regular expression literals.
 
@@ -130,19 +130,22 @@ The DOM store and selector layers are already in place. The remaining backlog is
 DOM surface exposure through the runtime bridge; keep this list bounded and add to it only when a
 failing test proves the surface is user-visible.
 
-- [ ] Expose the remaining `document` properties through the runtime bridge: `title`, `readyState`,
+- [x] Expose the remaining `document` properties through the runtime bridge: `title`, `readyState`,
   `activeElement`, `baseURI`, `URL`, `doctype`, `documentURI`, `defaultView`, `compatMode`,
   `contentType`, `designMode`, and `dir`.
-- [ ] Expose the remaining `Node` / `Element` tree-navigation properties through the runtime bridge:
+- [x] Expose the remaining `Node` / `Element` tree-navigation properties through the runtime bridge:
   `nodeType`, `nodeName`, `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`,
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, and `childElementCount`.
-- [ ] Expose the remaining element reflection surfaces through the runtime bridge when a concrete
-  gap appears: `className`, `style`, `attributes`, `innerText`, and `outerText`.
-- [ ] Add DOM construction and low-level mutation methods only when a test needs them:
-  `createElement`, `createTextNode`, `appendChild`, `insertBefore`, `removeChild`, `replaceChild`,
-  `cloneNode`, `insertAdjacentElement`, and `insertAdjacentText`.
-- [ ] Add collection/member parity only as bounded slices: `NodeList.forEach()`, `NodeList.entries()`,
+- [x] Expose the bounded element reflection surfaces through the runtime bridge:
+  `className`, `innerText`, `outerText`, `style`, and `attributes`.
+- [x] Expose the remaining template-driven standard DOM surfaces through the runtime bridge:
+  standard `window` / `document` / `element` `addEventListener`, `details.open`,
+  `element.classList`, `input.select()`, `document.createElement()`, `setAttribute()`,
+  `appendChild()` / `removeChild()`, `document.execCommand("copy")`, and `window.confirm()`.
+- [x] Add the remaining DOM construction and low-level mutation methods only when a test needs
+  them: `createTextNode`, `replaceChild`, `insertAdjacentElement`, and `insertAdjacentText`.
+- [x] Add collection/member parity only as bounded slices: `NodeList.forEach()`, `NodeList.entries()`,
   `NodeList.keys()`, `NodeList.values()`, and any other live-collection helper that a failing test
   proves visible.
 - [ ] Keep legacy or deprecated DOM branches such as `document.all` out of scope unless the
@@ -152,9 +155,9 @@ failing test proves the surface is user-visible.
 
 - [ ] Fill any missing bounded reflection helpers or tree-mutation slices only when tests expose a
   gap.
-- [ ] Keep `textarea` reset-default synchronization covered by tests.
-- [ ] Keep `WriteHTML()` rollback behavior covered by tests.
-- [ ] Verify live collections remain coherent after mutation.
+- [x] Keep `textarea` reset-default synchronization covered by tests.
+- [x] Keep `WriteHTML()` rollback behavior covered by tests.
+- [x] Verify live collections remain coherent after mutation.
 
 ## P3 - Mock Families And Debug Surfaces
 

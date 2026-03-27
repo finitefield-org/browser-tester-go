@@ -97,13 +97,35 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `host:sessionStorageRemoveItem()` / `host:sessionStorageClear()` / `host:sessionStorageLength()` /
   `host:sessionStorageKey()`, can use bounded DOM mutation helpers such as `host:setTextContent()` /
   `host:replaceChildren()` / `host:cloneNode()` / `host:setInnerHTML()` / `host:setOuterHTML()` /
-  `host:insertAdjacentHTML()` / `host:removeNode()`, can read or write a bounded cookie jar through
+  `host:insertAdjacentHTML()` / `host:removeNode()` / `host:createElement()` /
+  `host:createTextNode()` / `host:appendChild()` / `host:insertBefore()` / `host:replaceChild()` /
+  `host:insertAdjacentElement()` / `host:insertAdjacentText()` / `host:removeChild()`, can read or write a bounded cookie jar through
   `host:documentCookie()` / `host:setDocumentCookie()` plus `host:navigatorCookieEnabled()`, and can
-  read or write a bounded `window.name` state through `host:windowName()` / `host:setWindowName()`.
+  read or write a bounded `window.name` state through `host:windowName()` / `host:setWindowName()`,
+  and can read bounded tree-navigation and reflection properties through `document` /
+  `element:<id>` handles:
+  `nodeType`, `nodeName`, `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`,
+  `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
+  `previousSibling`, `nextElementSibling`, `previousElementSibling`, `childElementCount`,
+  `className`, `innerText`, `outerText`, `style`, and `attributes`, plus bounded standard DOM
+  surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
+  `element.classList`, `input.select()`, `document.execCommand("copy")`,
+  `document.createElement()`, `setAttribute()`, `appendChild()` / `removeChild()`, browser-global
+  locale reads like `navigator.language`, and `window.confirm()` / `window.prompt()` flows through
+  the dialog mock family.
   Location URLs are resolved against the current URL just like navigation links, and history updates
   feed the same navigation log. It can also trigger bounded synthetic event helpers such as
   `Dispatch` and `DispatchKeyboard` for custom and keyboard event sequences, and it can query
-  bounded `matchMedia` state through `MatchMedia()`. The `MatchMedia` mock family also exposes
+  bounded `matchMedia` state through `MatchMedia()`. The same bridge also exposes a bounded
+  browser stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` /
+  `Boolean` / `Math` / `Date`, including template-facing helpers such as `Array.from()` /
+  `Array.isArray()`, `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
+  `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
+  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()`,
+  `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
+  `toExponential()`, the bounded array/string/number/date prototype helpers used by
+  template-driven bootstrap, and `URL.searchParams.keys()` for query-string handling. The
+  `MatchMedia` mock family also exposes
   listener capture injection through the registry for tests, and the `Storage` mock family exposes
   deterministic change capture through `Events()` with ordered `seed` / `set` / `remove` / `clear`
   operations.
@@ -224,14 +246,20 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
 - Script DOM query helpers are available through host bindings for `querySelector` /
   `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
   element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
-  `NodeList`, a minimal live `HTMLCollection` covers `children`, `document.images`,
+  `NodeList` with bounded `forEach()` / `entries()` / `keys()` / `values()` parity, a minimal live `HTMLCollection` covers `children`, `document.images`,
   `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
   `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
   `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
   `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
   `template.content.childNodes`.
 - Inline `<script>` blocks are preserved as raw text and execute during bootstrap through the
-  bounded script host bridge, so source HTML can mutate the live DOM.
+  bounded script host bridge, so source HTML can mutate the live DOM. That bridge also exposes
+  bounded `document` property reads for `title`, `readyState`, `activeElement`, `baseURI`, `URL`,
+  `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`, `designMode`, and `dir`,
+  plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
+  `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
+  `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
+  `previousElementSibling`, and `childElementCount`.
 - Bounded attribute reflection helpers are available for `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

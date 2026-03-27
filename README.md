@@ -79,10 +79,23 @@ runtime slices.
 - bounded current-script helper for inline scripts:
   - `documentCurrentScript`
 - bounded browser-global bridge for raw HTML bootstrap: `window` / `self` / `globalThis` / `top` /
-  `parent` / `frames`, `document`, `location`, `history`, `navigator`, `URL`, `Intl.NumberFormat`,
-  `localStorage`, `sessionStorage`, `matchMedia`, `console`, `clipboard`, and bounded timer globals
-  (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `requestAnimationFrame`,
-  `cancelAnimationFrame`, `queueMicrotask`)
+  `parent` / `frames`, `document` (including `title`, `readyState`, `activeElement`, `baseURI`,
+  `URL`, `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`, `designMode`, and
+  `dir`, plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`,
+  `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`,
+  `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
+  `previousElementSibling`, and `childElementCount`), `location`, `history`, `navigator`, `URL`,
+  `Intl.NumberFormat`, `localStorage`, `sessionStorage`, `matchMedia`, `console`, `clipboard`, and
+  bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
+  `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
+  stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` / `Boolean`
+  / `Math` / `Date`, including the template-facing `Array.from()` / `Array.isArray()`,
+  `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
+  `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
+  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()`,
+  `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
+  `toExponential()`, and the bounded array/string/number/date prototype helpers used by
+  template-driven bootstrap, plus `URL.searchParams.keys()` for template query handling
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:
@@ -448,14 +461,29 @@ runtime slices.
 - Script DOM query helpers are available through host bindings for `querySelector` /
   `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
   element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
-  `NodeList`, a minimal live `HTMLCollection` covers `children`, `document.images`,
+  `NodeList` with bounded `forEach()` / `entries()` / `keys()` / `values()` parity, a minimal live `HTMLCollection` covers `children`, `document.images`,
   `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
   `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
   `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
   `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
   `template.content.childNodes`.
 - Inline `<script>` blocks are preserved as raw text and execute during bootstrap through the
-  bounded script host bridge, so HTML source can mutate the live DOM.
+  bounded script host bridge, so HTML source can mutate the live DOM. That bridge also exposes
+  bounded `document` property reads for `title`, `readyState`, `activeElement`, `baseURI`, `URL`,
+  `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`, `designMode`, and `dir`,
+  plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
+  `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
+  `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
+  `previousElementSibling`, and `childElementCount`, plus bounded element reflection reads on
+  `className`, `innerText`, `outerText`, `style`, and `attributes`, plus bounded low-level
+  node-construction helpers on the `host:` bridge such as `host:createElement()`,
+  `host:createTextNode()`, `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
+  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, and `host:removeChild()`. Inline
+  scripts can also use bounded standard DOM surfaces such as `window` / `document` / `element`
+  `addEventListener`, `details.open`, `element.classList`, `input.select()`,
+  `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
+  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`, and
+  `window.confirm()` / `window.prompt()`-driven dialog flows through the typed dialog mock family.
 - Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

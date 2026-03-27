@@ -53,6 +53,61 @@ func (s *Store) ReplaceChildren(nodeID NodeID, markup string) error {
 	return s.SetInnerHTML(nodeID, markup)
 }
 
+func (s *Store) ReplaceChild(parentID, newChildID, oldChildID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+	oldChild := s.Node(oldChildID)
+	if oldChild == nil {
+		return fmt.Errorf("invalid old child node id: %d", oldChildID)
+	}
+	if oldChild.Parent != parentID {
+		return fmt.Errorf("node %d is not a child of parent %d", oldChildID, parentID)
+	}
+	newChild := s.Node(newChildID)
+	if newChild == nil {
+		return fmt.Errorf("invalid new child node id: %d", newChildID)
+	}
+	if newChildID == oldChildID {
+		return nil
+	}
+	if parent.Kind == NodeKindDocument && newChild.Kind != NodeKindElement {
+		return fmt.Errorf("document node can only contain element children")
+	}
+	if subtreeContainsNode(s, newChildID, parentID) {
+		return fmt.Errorf("node %d cannot be replaced into its own descendant %d", newChildID, parentID)
+	}
+
+	oldIndex := indexOfNodeID(parent.Children, oldChildID)
+	if oldIndex < 0 {
+		return fmt.Errorf("node %d is not attached to its parent", oldChildID)
+	}
+	newOldParentID := newChild.Parent
+	newOldIndex := -1
+	if newOldParentID != 0 {
+		if newOldParent := s.Node(newOldParentID); newOldParent != nil {
+			newOldIndex = indexOfNodeID(newOldParent.Children, newChildID)
+			newOldParent.Children = removeNodeID(newOldParent.Children, newChildID)
+		}
+	}
+	if newOldParentID == parentID && newOldIndex >= 0 && newOldIndex < oldIndex {
+		oldIndex--
+	}
+
+	s.clearFocusedNodeIfSubtreeContains(oldChildID, true)
+	s.clearTargetNodeIfSubtreeContains(oldChildID, true)
+	parent.Children = spliceNodeIDs(parent.Children, oldIndex, 1, []NodeID{newChildID})
+	newChild.Parent = parentID
+	oldChild.Parent = 0
+	s.deleteSubtree(oldChildID)
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
 func (s *Store) SetOuterHTML(nodeID NodeID, markup string) error {
 	if s == nil {
 		return fmt.Errorf("dom store is nil")
@@ -195,6 +250,84 @@ func (s *Store) InsertAdjacentHTML(nodeID NodeID, position, markup string) error
 	return nil
 }
 
+func (s *Store) InsertAdjacentElement(nodeID NodeID, position string, childID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node, err := s.elementNode(nodeID)
+	if err != nil {
+		return err
+	}
+	child := s.Node(childID)
+	if child == nil {
+		return fmt.Errorf("invalid child node id: %d", childID)
+	}
+	if childID == nodeID {
+		return fmt.Errorf("node %d cannot be inserted adjacent to itself", childID)
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(position))
+	switch normalized {
+	case "beforebegin":
+		parentID := node.Parent
+		if parentID == 0 {
+			return fmt.Errorf("node %d has no parent for beforebegin", nodeID)
+		}
+		parent := s.Node(parentID)
+		if parent == nil {
+			return fmt.Errorf("invalid parent node id: %d", parentID)
+		}
+		if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+			return fmt.Errorf("document node can only contain element children")
+		}
+		return s.InsertBefore(parentID, childID, nodeID)
+	case "afterbegin":
+		if len(node.Children) == 0 {
+			return s.AppendChild(nodeID, childID)
+		}
+		return s.InsertBefore(nodeID, childID, node.Children[0])
+	case "beforeend":
+		return s.AppendChild(nodeID, childID)
+	case "afterend":
+		parentID := node.Parent
+		if parentID == 0 {
+			return fmt.Errorf("node %d has no parent for afterend", nodeID)
+		}
+		parent := s.Node(parentID)
+		if parent == nil {
+			return fmt.Errorf("invalid parent node id: %d", parentID)
+		}
+		if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+			return fmt.Errorf("document node can only contain element children")
+		}
+		index := indexOfNodeID(parent.Children, nodeID)
+		if index < 0 {
+			return fmt.Errorf("node %d is not attached to its parent", nodeID)
+		}
+		if index+1 < len(parent.Children) {
+			return s.InsertBefore(parentID, childID, parent.Children[index+1])
+		}
+		return s.AppendChild(parentID, childID)
+	default:
+		return fmt.Errorf("invalid insertAdjacentElement position %q", position)
+	}
+}
+
+func (s *Store) InsertAdjacentText(nodeID NodeID, position, text string) (NodeID, error) {
+	if s == nil {
+		return 0, fmt.Errorf("dom store is nil")
+	}
+	textID, err := s.CreateTextNode(text)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.InsertAdjacentElement(nodeID, position, textID); err != nil {
+		s.deleteSubtree(textID)
+		return 0, err
+	}
+	return textID, nil
+}
+
 func (s *Store) RemoveNode(nodeID NodeID) error {
 	if s == nil {
 		return fmt.Errorf("dom store is nil")
@@ -280,6 +413,12 @@ func (s *Store) AppendChild(parentID, childID NodeID) error {
 	if child == nil {
 		return fmt.Errorf("invalid child node id: %d", childID)
 	}
+	if parentID == childID {
+		return fmt.Errorf("node %d cannot be appended to itself", childID)
+	}
+	if subtreeContainsNode(s, childID, parentID) {
+		return fmt.Errorf("node %d cannot be appended into its own descendant %d", childID, parentID)
+	}
 	if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
 		return fmt.Errorf("document node can only contain element children")
 	}
@@ -316,6 +455,14 @@ func (s *Store) InsertBefore(parentID, childID, referenceChildID NodeID) error {
 	if child == nil {
 		return fmt.Errorf("invalid child node id: %d", childID)
 	}
+	if childID == referenceChildID {
+		return nil
+	}
+	if subtreeContainsNode(s, childID, parentID) {
+		return fmt.Errorf("node %d cannot be inserted into its own descendant %d", childID, parentID)
+	}
+	oldParentID := child.Parent
+	oldIndex := -1
 	if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
 		return fmt.Errorf("document node can only contain element children")
 	}
@@ -325,8 +472,14 @@ func (s *Store) InsertBefore(parentID, childID, referenceChildID NodeID) error {
 	}
 	if child.Parent != 0 {
 		if oldParent := s.Node(child.Parent); oldParent != nil {
+			if oldParent.ID == parentID {
+				oldIndex = indexOfNodeID(oldParent.Children, childID)
+			}
 			oldParent.Children = removeNodeID(oldParent.Children, childID)
 		}
+	}
+	if oldParentID == parentID && oldIndex >= 0 && oldIndex < index {
+		index--
 	}
 	parent.Children = spliceNodeIDs(parent.Children, index, 0, []NodeID{childID})
 	child.Parent = parentID
@@ -349,6 +502,8 @@ func (s *Store) RemoveChild(parentID, childID NodeID) error {
 	if child.Parent != parentID {
 		return fmt.Errorf("node %d is not a child of parent %d", childID, parentID)
 	}
+	s.clearFocusedNodeIfSubtreeContains(childID, true)
+	s.clearTargetNodeIfSubtreeContains(childID, true)
 	parent.Children = removeNodeID(parent.Children, childID)
 	child.Parent = 0
 	s.syncTextareaDefaultsForSubtree(parentID)

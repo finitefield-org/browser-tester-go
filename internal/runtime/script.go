@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 
 	"browsertester/internal/dom"
@@ -246,10 +247,10 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		text, err := scriptStringArg(method, args, 1)
-		if err != nil {
-			return script.UndefinedValue(), err
+		if len(args) < 2 {
+			return script.UndefinedValue(), fmt.Errorf("%s requires argument %d", method, 2)
 		}
+		text := script.ToJSString(args[1])
 		nodeID, err := inlineScriptResolveElement(store, selector)
 		if err != nil {
 			return script.UndefinedValue(), err
@@ -258,6 +259,168 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 			return script.UndefinedValue(), err
 		}
 		return script.UndefinedValue(), nil
+
+	case "createElement":
+		tagName, err := scriptStringArg(method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 1 {
+			return script.UndefinedValue(), fmt.Errorf("createElement accepts at most 1 argument")
+		}
+		nodeID, err := store.CreateElement(tagName)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(nodeID), nil
+
+	case "createTextNode":
+		if len(args) == 0 {
+			return script.UndefinedValue(), fmt.Errorf("createTextNode requires argument %d", 1)
+		}
+		if len(args) > 1 {
+			return script.UndefinedValue(), fmt.Errorf("createTextNode accepts at most 1 argument")
+		}
+		text := script.ToJSString(args[0])
+		nodeID, err := store.CreateTextNode(text)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(nodeID), nil
+
+	case "appendChild":
+		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		childID, err := inlineScriptResolveNodeIDArg(store, method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 2 {
+			return script.UndefinedValue(), fmt.Errorf("appendChild accepts at most 2 arguments")
+		}
+		if err := store.AppendChild(parentID, childID); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(childID), nil
+
+	case "replaceChild":
+		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		newChildID, err := inlineScriptResolveNodeIDArg(store, method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		oldChildID, err := inlineScriptResolveNodeIDArg(store, method, args, 2)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 3 {
+			return script.UndefinedValue(), fmt.Errorf("replaceChild accepts at most 3 arguments")
+		}
+		if err := store.ReplaceChild(parentID, newChildID, oldChildID); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(newChildID), nil
+
+	case "insertBefore":
+		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		childID, err := inlineScriptResolveNodeIDArg(store, method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) < 3 {
+			return script.UndefinedValue(), fmt.Errorf("insertBefore requires argument %d", 3)
+		}
+		referenceID, err := inlineScriptResolveOptionalNodeIDArg(store, method, args, 2)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 3 {
+			return script.UndefinedValue(), fmt.Errorf("insertBefore accepts at most 3 arguments")
+		}
+		if referenceID == 0 {
+			if err := store.AppendChild(parentID, childID); err != nil {
+				return script.UndefinedValue(), err
+			}
+			return browserElementReferenceValue(childID), nil
+		}
+		if err := store.InsertBefore(parentID, childID, referenceID); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(childID), nil
+
+	case "insertAdjacentElement":
+		nodeID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		position, err := scriptStringArg(method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		childID, err := inlineScriptResolveNodeIDArg(store, method, args, 2)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 3 {
+			return script.UndefinedValue(), fmt.Errorf("insertAdjacentElement accepts at most 3 arguments")
+		}
+		child := store.Node(childID)
+		if child == nil {
+			return script.UndefinedValue(), fmt.Errorf("insertAdjacentElement child node is unavailable")
+		}
+		if child.Kind != dom.NodeKindElement {
+			return script.UndefinedValue(), fmt.Errorf("insertAdjacentElement requires an element child")
+		}
+		if err := store.InsertAdjacentElement(nodeID, position, childID); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(childID), nil
+
+	case "insertAdjacentText":
+		nodeID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		position, err := scriptStringArg(method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) < 3 {
+			return script.UndefinedValue(), fmt.Errorf("insertAdjacentText requires argument %d", 3)
+		}
+		if len(args) > 3 {
+			return script.UndefinedValue(), fmt.Errorf("insertAdjacentText accepts at most 3 arguments")
+		}
+		textID, err := store.InsertAdjacentText(nodeID, position, script.ToJSString(args[2]))
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(textID), nil
+
+	case "removeChild":
+		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		childID, err := inlineScriptResolveNodeIDArg(store, method, args, 1)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if len(args) > 2 {
+			return script.UndefinedValue(), fmt.Errorf("removeChild accepts at most 2 arguments")
+		}
+		if err := store.RemoveChild(parentID, childID); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return browserElementReferenceValue(childID), nil
 
 	case "replaceChildren":
 		selector, err := scriptStringArg(method, args, 0)
@@ -1103,6 +1266,92 @@ func inlineScriptResolveElement(store *dom.Store, selector string) (dom.NodeID, 
 		return 0, fmt.Errorf("selector `%s` did not match any element", normalized)
 	}
 	return nodeID, nil
+}
+
+func inlineScriptResolveNodeIDArg(store *dom.Store, method string, args []script.Value, index int) (dom.NodeID, error) {
+	if index >= len(args) {
+		return 0, fmt.Errorf("%s requires argument %d", method, index+1)
+	}
+	nodeID, ok, err := inlineScriptResolveNodeIDValue(store, args[index])
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("%s argument %d must be a node reference or selector string", method, index+1)
+	}
+	return nodeID, nil
+}
+
+func inlineScriptResolveOptionalNodeIDArg(store *dom.Store, method string, args []script.Value, index int) (dom.NodeID, error) {
+	if index >= len(args) {
+		return 0, nil
+	}
+	if args[index].Kind == script.ValueKindNull || args[index].Kind == script.ValueKindUndefined {
+		return 0, nil
+	}
+	nodeID, ok, err := inlineScriptResolveNodeIDValue(store, args[index])
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("%s argument %d must be a node reference or selector string", method, index+1)
+	}
+	return nodeID, nil
+}
+
+func inlineScriptResolveNodeIDValue(store *dom.Store, value script.Value) (dom.NodeID, bool, error) {
+	switch value.Kind {
+	case script.ValueKindHostReference:
+		nodeID, err := parseElementReferencePath(value.HostReferencePath)
+		if err != nil {
+			return 0, false, err
+		}
+		return nodeID, true, nil
+	case script.ValueKindString:
+		normalized := strings.TrimSpace(value.String)
+		if normalized == "" {
+			return 0, false, nil
+		}
+		if strings.HasPrefix(normalized, "element:") {
+			nodeID, err := parseElementReferencePath(normalized)
+			if err != nil {
+				return 0, false, err
+			}
+			return nodeID, true, nil
+		}
+		if id, err := strconv.ParseInt(normalized, 10, 64); err == nil && id > 0 {
+			return dom.NodeID(id), true, nil
+		}
+		if store == nil {
+			return 0, false, fmt.Errorf("inline script DOM store is unavailable")
+		}
+		nodeID, err := inlineScriptResolveElement(store, normalized)
+		if err != nil {
+			return 0, false, err
+		}
+		return nodeID, true, nil
+	case script.ValueKindNumber:
+		if value.Number <= 0 {
+			return 0, false, nil
+		}
+		id := int64(value.Number)
+		if float64(id) != value.Number {
+			return 0, false, nil
+		}
+		return dom.NodeID(id), true, nil
+	case script.ValueKindBigInt:
+		bigInt := new(big.Int)
+		if _, ok := bigInt.SetString(value.BigInt, 10); !ok || !bigInt.IsInt64() {
+			return 0, false, nil
+		}
+		id := bigInt.Int64()
+		if id <= 0 {
+			return 0, false, nil
+		}
+		return dom.NodeID(id), true, nil
+	default:
+		return 0, false, nil
+	}
 }
 
 func scriptStringArg(method string, args []script.Value, index int) (string, error) {
