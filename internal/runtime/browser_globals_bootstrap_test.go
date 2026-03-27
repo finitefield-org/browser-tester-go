@@ -1,6 +1,9 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	const rawHTML = `<main><div id="agri-unit-converter-root">root</div><div id="result"></div><div id="formatted"></div><div id="href"></div><script>const root = document.getElementById("agri-unit-converter-root"); const current = new URL(window.location.href); const formatted = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(1.23); window.location.search.length; sessionStorage.setItem("mode", navigator.onLine && "search"); window.history.replaceState({}, "", "?mode=raw#ready"); localStorage.setItem("format", formatted); matchMedia("(prefers-reduced-motion: reduce)"); clipboard.writeText(root.textContent); setTimeout("noop", 5); queueMicrotask("noop"); host:setTextContent("#result", expr(root.textContent)); host:setTextContent("#formatted", expr(formatted)); host:setTextContent("#href", expr(current.href))</script></main>`
@@ -73,6 +76,46 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 	if got := session.StorageEvents(); len(got) != 2 {
 		t.Fatalf("StorageEvents() = %#v, want two storage writes", got)
+	}
+}
+
+func TestSessionBootstrapsOfflineNavigatorOnLineSeed(t *testing.T) {
+	const rawHTML = `<main><div id="status"></div><script>host:setTextContent("#status", expr(navigator.onLine ? "online" : "offline"))</script></main>`
+
+	session := NewSession(SessionConfig{
+		HTML:               rawHTML,
+		NavigatorOnLine:    false,
+		HasNavigatorOnLine: true,
+	})
+
+	if got, ok := session.NavigatorOnLine(); !ok || got {
+		t.Fatalf("NavigatorOnLine() = (%v, %v), want (false, true)", got, ok)
+	}
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "offline" {
+		t.Fatalf("TextContent(#status) = %q, want offline", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after offline navigator bootstrap", got)
+	}
+}
+
+func TestSessionRejectsObjectDefinePropertyOnNavigatorOnLine(t *testing.T) {
+	const rawHTML = `<main><div id="status"></div><script>Object.defineProperty(window.navigator, "onLine", { configurable: true, get: function () { return false; } })</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want unsupported Object.defineProperty failure")
+	}
+
+	if got := session.DOMError(); !strings.Contains(got, `unsupported browser surface "Object.defineProperty"`) {
+		t.Fatalf("DOMError() = %q, want unsupported Object.defineProperty failure text", got)
 	}
 }
 

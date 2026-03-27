@@ -7,14 +7,16 @@ func TestSessionAppliesConfigSeedsDeterministically(t *testing.T) {
 	sessionStorage := map[string]string{"tab": "main"}
 	match := map[string]bool{"(prefers-reduced-motion: reduce)": true}
 	cfg := SessionConfig{
-		URL:            "https://example.test/",
-		LocalStorage:   local,
-		SessionStorage: sessionStorage,
-		MatchMedia:     match,
-		OpenFailure:    "open blocked",
-		CloseFailure:   "close blocked",
-		PrintFailure:   "print blocked",
-		ScrollFailure:  "scroll blocked",
+		URL:                "https://example.test/",
+		LocalStorage:       local,
+		SessionStorage:     sessionStorage,
+		NavigatorOnLine:    false,
+		HasNavigatorOnLine: true,
+		MatchMedia:         match,
+		OpenFailure:        "open blocked",
+		CloseFailure:       "close blocked",
+		PrintFailure:       "print blocked",
+		ScrollFailure:      "scroll blocked",
 	}
 
 	s := NewSession(cfg)
@@ -26,6 +28,9 @@ func TestSessionAppliesConfigSeedsDeterministically(t *testing.T) {
 
 	if got, want := s.URL(), "https://example.test/"; got != want {
 		t.Fatalf("URL() = %q, want %q", got, want)
+	}
+	if got, ok := s.NavigatorOnLine(); !ok || got {
+		t.Fatalf("NavigatorOnLine() = (%v, %v), want (false, true)", got, ok)
 	}
 
 	if got, want := s.Registry().Storage().Local()["token"], "abc"; got != want {
@@ -361,10 +366,12 @@ func TestSessionUserValidityLifecycle(t *testing.T) {
 
 func TestSessionConfigReturnsDeepClones(t *testing.T) {
 	s := NewSession(SessionConfig{
-		URL:            "https://example.test/",
-		LocalStorage:   map[string]string{"token": "abc"},
-		SessionStorage: map[string]string{"tab": "main"},
-		MatchMedia:     map[string]bool{"(prefers-reduced-motion: reduce)": true},
+		URL:                "https://example.test/",
+		LocalStorage:       map[string]string{"token": "abc"},
+		SessionStorage:     map[string]string{"tab": "main"},
+		NavigatorOnLine:    false,
+		HasNavigatorOnLine: true,
+		MatchMedia:         map[string]bool{"(prefers-reduced-motion: reduce)": true},
 	})
 
 	config := s.Config()
@@ -372,6 +379,8 @@ func TestSessionConfigReturnsDeepClones(t *testing.T) {
 	config.LocalStorage["extra"] = "new"
 	config.SessionStorage["tab"] = "mutated"
 	config.SessionStorage["extra"] = "new"
+	config.NavigatorOnLine = true
+	config.HasNavigatorOnLine = false
 	config.MatchMedia["(prefers-reduced-motion: reduce)"] = false
 	config.MatchMedia["(prefers-color-scheme: dark)"] = true
 
@@ -387,6 +396,12 @@ func TestSessionConfigReturnsDeepClones(t *testing.T) {
 	}
 	if _, ok := fresh.SessionStorage["extra"]; ok {
 		t.Fatalf("fresh Config().SessionStorage()[extra] should not exist")
+	}
+	if got, want := fresh.NavigatorOnLine, false; got != want {
+		t.Fatalf("fresh Config().NavigatorOnLine = %v, want %v", got, want)
+	}
+	if got, want := fresh.HasNavigatorOnLine, true; got != want {
+		t.Fatalf("fresh Config().HasNavigatorOnLine = %v, want %v", got, want)
 	}
 	if got, want := fresh.MatchMedia["(prefers-reduced-motion: reduce)"], true; got != want {
 		t.Fatalf("fresh Config().MatchMedia()[reduce] = %v, want %v", got, want)

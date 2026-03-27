@@ -935,6 +935,13 @@ func (v DebugView) MatchMediaRules() map[string]bool {
 	return v.session.MatchMediaRules()
 }
 
+func (v DebugView) NavigatorOnLine() (bool, bool) {
+	if v.session == nil {
+		return true, false
+	}
+	return v.session.NavigatorOnLine()
+}
+
 func (v DebugView) OpenFailure() string {
 	if v.session == nil {
 		return ""

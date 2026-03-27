@@ -271,6 +271,8 @@ runtime slices.
   `MatchMediaRules`, `EventListeners`, `LocalStorage`, `SessionStorage`, `DocumentCookie`,
   `CookieJar`, `NavigationLog`, `Interactions`, and the configured `RandomSeed` when one was set on
   the builder.
+- `DebugView.NavigatorOnLine()` exposes the effective `navigator.onLine` state and whether it was
+  explicitly seeded on the builder.
 - `DebugView` also exposes the configured failure seed readouts `OpenFailure`, `CloseFailure`,
   `PrintFailure`, and `ScrollFailure` when those builder fields are set.
 - `DebugView.NodeCount()` exposes the current DOM node count as a read-only inspection integer after
@@ -490,9 +492,11 @@ runtime slices.
   scripts can also use bounded standard DOM surfaces such as `window` / `document` / `element`
   `addEventListener`, `details.open`, `element.classList`, `element.dataset`, `input.select()`,
   `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
-  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`, the
-  live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()`
-  driven dialog flows through the typed dialog mock family.
+  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`,
+  browser-global connectivity reads like `navigator.onLine` (which can be seeded through
+  `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap tests), the live `URL` /
+  `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()` driven dialog
+  flows through the typed dialog mock family.
 - Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

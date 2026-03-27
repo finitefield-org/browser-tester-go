@@ -652,7 +652,10 @@ func resolveNavigatorReference(session *Session, store *dom.Store, path string) 
 	case "":
 		return script.HostObjectReference("navigator"), nil
 	case "onLine":
-		return script.BoolValue(true), nil
+		if session == nil {
+			return script.BoolValue(true), nil
+		}
+		return script.BoolValue(session.navigatorOnLine()), nil
 	case "language":
 		return script.StringValue("en-US"), nil
 	case "cookieEnabled":

@@ -23,6 +23,62 @@ upkeep.
 - [ ] Keep fuzz and property coverage current for parser, selector, scheduler, location/history,
   cookie/window.name, and mock-registry boundaries.
 
+## Rust Test Migration Backlog
+
+The Rust test sources under `browser-tester/tests` still need Go equivalents. The HTML fixtures
+under `tests/fixtures/` and the proptest seed file under `tests/proptest-regressions/` are support
+artifacts, so they are not listed as port tasks.
+
+### Suite Wiring
+
+- [ ] `tests/integration_suite.rs`
+- [ ] `tests/integration_cases/mod.rs`
+
+### Integration Regression Cases
+
+- [ ] `tests/integration_cases/css_escape_global.rs`
+- [ ] `tests/integration_cases/debug_parse.rs`
+- [ ] `tests/integration_cases/issue_134_137_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_138_141_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_151_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_153_154_156_157_159_160_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_155_158_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_165_166_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_167_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_168_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_170_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_171_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_173_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_174_175_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_181_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_183_184_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_185_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_190_191_192_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_193_194_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_199_finitefield_site_regression.rs`
+- [ ] `tests/integration_cases/issue_202_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_203_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_211_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_212_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/issue_212_finitefield_site_runtime_regressions.rs`
+- [ ] `tests/integration_cases/issue_213_array_indexof_regression.rs`
+- [ ] `tests/integration_cases/issue_214_array_map_outer_let_regression.rs`
+- [ ] `tests/integration_cases/issue_215_nested_helper_const_leak_regression.rs`
+- [ ] `tests/integration_cases/issue_217_return_slot_regression.rs`
+- [ ] `tests/integration_cases/issue_218_bulk_callback_const_binding_regression.rs`
+- [ ] `tests/integration_cases/issue_219_finitefield_site_regressions.rs`
+- [ ] `tests/integration_cases/open_issue_regressions.rs`
+- [ ] `tests/integration_cases/regression_parser_fixes.rs`
+- [ ] `tests/integration_cases/regression_real_world_html.rs`
+- [ ] `tests/integration_cases/regression_runtime_state_fixes.rs`
+- [ ] `tests/integration_cases/typed_array_from_map_fn.rs`
+
+### Adjacent Test Coverage
+
+- [ ] `tests/contract_harness_core.rs`
+- [ ] `tests/parser_property_fuzz_test.rs`
+- [ ] `tests/runtime_property_fuzz_test.rs`
+
 ## P2 - Script Syntax Backlog
 
 - [x] Object literals and array literals.

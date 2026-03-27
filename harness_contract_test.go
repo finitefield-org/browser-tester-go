@@ -5065,6 +5065,28 @@ func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestInlineScriptsCanBootstrapOfflineNavigatorOnLineSeed(t *testing.T) {
+	harness, err := NewHarnessBuilder().
+		NavigatorOnLine(false).
+		HTML(`<main><div id="status"></div><script>host:setTextContent("#status", expr(navigator.onLine ? "online" : "offline"))</script></main>`).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "offline" {
+		t.Fatalf("TextContent(#status) = %q, want offline", got)
+	}
+	if got, ok := harness.Debug().NavigatorOnLine(); !ok || got {
+		t.Fatalf("Debug().NavigatorOnLine() = (%v, %v), want (false, true)", got, ok)
+	}
+	if got := harness.Debug().DOMError(); got != "" {
+		t.Fatalf("Debug().DOMError() = %q, want empty after offline bootstrap", got)
+	}
+}
+
 func TestInlineScriptsSkipNonClassicScriptTypes(t *testing.T) {
 	harness, err := FromHTML(`<main><div id="out"></div><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage"}</script><script>host.setTextContent("#out", "ok")</script></main>`)
 	if err != nil {

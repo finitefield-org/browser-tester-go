@@ -13,25 +13,28 @@ import (
 const defaultRandomSeed int64 = 1
 
 type SessionConfig struct {
-	URL            string
-	HTML           string
-	LocalStorage   map[string]string
-	SessionStorage map[string]string
-	RandomSeed     int64
-	HasRandomSeed  bool
-	MatchMedia     map[string]bool
-	OpenFailure    string
-	CloseFailure   string
-	PrintFailure   string
-	ScrollFailure  string
+	URL                string
+	HTML               string
+	LocalStorage       map[string]string
+	SessionStorage     map[string]string
+	RandomSeed         int64
+	HasRandomSeed      bool
+	NavigatorOnLine    bool
+	HasNavigatorOnLine bool
+	MatchMedia         map[string]bool
+	OpenFailure        string
+	CloseFailure       string
+	PrintFailure       string
+	ScrollFailure      string
 }
 
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
-		URL:            "https://app.local/",
-		LocalStorage:   map[string]string{},
-		SessionStorage: map[string]string{},
-		MatchMedia:     map[string]bool{},
+		URL:             "https://app.local/",
+		NavigatorOnLine: true,
+		LocalStorage:    map[string]string{},
+		SessionStorage:  map[string]string{},
+		MatchMedia:      map[string]bool{},
 	}
 }
 
@@ -75,6 +78,9 @@ func NewSession(config SessionConfig) *Session {
 	cfg := cloneSessionConfig(config)
 	if cfg.URL == "" {
 		cfg.URL = DefaultSessionConfig().URL
+	}
+	if !cfg.HasNavigatorOnLine {
+		cfg.NavigatorOnLine = true
 	}
 
 	session := &Session{
@@ -228,6 +234,24 @@ func (s *Session) Config() SessionConfig {
 		return DefaultSessionConfig()
 	}
 	return cloneSessionConfig(s.config)
+}
+
+func (s *Session) NavigatorOnLine() (bool, bool) {
+	if s == nil {
+		return true, false
+	}
+	if !s.config.HasNavigatorOnLine {
+		return true, false
+	}
+	return s.config.NavigatorOnLine, true
+}
+
+func (s *Session) navigatorOnLine() bool {
+	onLine, ok := s.NavigatorOnLine()
+	if !ok {
+		return true
+	}
+	return onLine
 }
 
 func (s *Session) FocusedSelector() string {

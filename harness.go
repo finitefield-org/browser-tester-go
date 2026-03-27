@@ -36,6 +36,12 @@ func (b *HarnessBuilder) RandomSeed(seed int64) *HarnessBuilder {
 	return b
 }
 
+func (b *HarnessBuilder) NavigatorOnLine(onLine bool) *HarnessBuilder {
+	b.config.NavigatorOnLine = onLine
+	b.config.HasNavigatorOnLine = true
+	return b
+}
+
 func (b *HarnessBuilder) MatchMedia(entries map[string]bool) *HarnessBuilder {
 	b.config.MatchMedia = cloneBoolMap(entries)
 	return b

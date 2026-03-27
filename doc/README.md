@@ -113,8 +113,10 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
   `element.classList`, `element.dataset`, `input.select()`, `document.execCommand("copy")`,
   `document.createElement()`, `setAttribute()`, `appendChild()` / `removeChild()`, browser-global
-  locale reads like `navigator.language`, the live `URL` / `URLSearchParams` query-state bridge,
-  and `window.confirm()` / `window.prompt()` flows through the dialog mock family.
+  locale reads like `navigator.language`, browser-global connectivity reads like `navigator.onLine`
+  (which can be seeded through `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap
+  tests), the live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` /
+  `window.prompt()` flows through the dialog mock family.
   Location URLs are resolved against the current URL just like navigation links, and history updates
   feed the same navigation log. It can also trigger bounded synthetic event helpers such as
   `Dispatch` and `DispatchKeyboard` for custom and keyboard event sequences, and it can query
@@ -136,6 +138,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   operations.
 - `DebugView` also surfaces the builder failure seed readouts `OpenFailure`, `CloseFailure`,
   `PrintFailure`, and `ScrollFailure` as read-only inspection data.
+- `DebugView.NavigatorOnLine()` exposes the effective `navigator.onLine` state and whether it was
+  explicitly seeded on the builder.
 - `DebugView.SelectCount()` exposes the current select element count as read-only inspection data.
 - `DebugView.TemplateCount()` exposes the current template element count as read-only inspection
   data.
