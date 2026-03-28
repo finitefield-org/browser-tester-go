@@ -262,6 +262,50 @@ func TestSessionInlineScriptsRejectElementGetRootNodeWithWrongArity(t *testing.T
 	}
 }
 
+func TestSessionInlineScriptsRejectDocumentCompareDocumentPositionWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="out">seed</div><script>document.compareDocumentPosition()</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want compareDocumentPosition arity error")
+	}
+	if !strings.Contains(err.Error(), "compareDocumentPosition") || !strings.Contains(err.Error(), "1 argument") {
+		t.Fatalf("WriteHTML() error = %q, want compareDocumentPosition arity error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementCompareDocumentPositionWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="out">seed</div><script>document.querySelector("#out").compareDocumentPosition()</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want element.compareDocumentPosition arity error")
+	}
+	if !strings.Contains(err.Error(), "compareDocumentPosition") || !strings.Contains(err.Error(), "1 argument") {
+		t.Fatalf("WriteHTML() error = %q, want element.compareDocumentPosition arity error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectDocumentHasChildNodesWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="out">seed</div><script>document.hasChildNodes(1)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want document.hasChildNodes arity error")
+	}
+	if !strings.Contains(err.Error(), "hasChildNodes") || !strings.Contains(err.Error(), "no arguments") {
+		t.Fatalf("WriteHTML() error = %q, want document.hasChildNodes arity error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementHasChildNodesWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="out">seed</div><script>document.querySelector("#out").hasChildNodes(1)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want element.hasChildNodes arity error")
+	}
+	if !strings.Contains(err.Error(), "hasChildNodes") || !strings.Contains(err.Error(), "no arguments") {
+		t.Fatalf("WriteHTML() error = %q, want element.hasChildNodes arity error", err)
+	}
+}
+
 func TestSessionInlineScriptsRejectNodeBeforeSelfInsertion(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
 	err := s.WriteHTML(`<main id="root"><div id="out">seed</div><script>const out = document.querySelector("#out"); out.before(out)</script></main>`)

@@ -122,6 +122,14 @@ func resolveArrayReference(session *Session, store *dom.Store, path string) (scr
 
 func resolveObjectReference(session *Session, store *dom.Store, path string) (script.Value, error) {
 	switch strings.TrimPrefix(path, ".") {
+	case "prototype":
+		return script.HostObjectReference("Object.prototype"), nil
+	case "prototype.hasOwnProperty":
+		return script.HostObjectReference("Object.prototype.hasOwnProperty"), nil
+	case "prototype.hasOwnProperty.call":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectPrototypeHasOwnPropertyCall(args)
+		}), nil
 	case "assign":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectAssign(session, store, args)
@@ -148,6 +156,62 @@ func resolveObjectReference(session *Session, store *dom.Store, path string) (sc
 		}), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Object."+path))
+}
+
+func browserObjectPrototypeHasOwnPropertyCall(args []script.Value) (script.Value, error) {
+	if len(args) != 2 {
+		return script.UndefinedValue(), fmt.Errorf("Object.prototype.hasOwnProperty.call expects 2 arguments")
+	}
+
+	key := script.ToJSString(args[1])
+	switch args[0].Kind {
+	case script.ValueKindObject:
+		for i := len(args[0].Object) - 1; i >= 0; i-- {
+			if args[0].Object[i].Key == key {
+				return script.BoolValue(true), nil
+			}
+		}
+		return script.BoolValue(false), nil
+	case script.ValueKindArray:
+		if key == "length" {
+			return script.BoolValue(true), nil
+		}
+		if index, ok := browserArrayIndexFromString(key); ok {
+			return script.BoolValue(index >= 0 && index < len(args[0].Array)), nil
+		}
+		return script.BoolValue(false), nil
+	case script.ValueKindString:
+		if key == "length" {
+			return script.BoolValue(true), nil
+		}
+		if index, ok := browserArrayIndexFromString(key); ok {
+			return script.BoolValue(index >= 0 && index < len([]rune(args[0].String))), nil
+		}
+		return script.BoolValue(false), nil
+	case script.ValueKindNull, script.ValueKindUndefined:
+		return script.UndefinedValue(), fmt.Errorf("Object.prototype.hasOwnProperty.call requires an object receiver")
+	default:
+		return script.BoolValue(false), nil
+	}
+}
+
+func browserArrayIndexFromString(key string) (int, bool) {
+	if key == "" {
+		return 0, false
+	}
+	if len(key) > 1 && key[0] == '0' {
+		return 0, false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] < '0' || key[i] > '9' {
+			return 0, false
+		}
+	}
+	index, err := strconv.Atoi(key)
+	if err != nil || index < 0 {
+		return 0, false
+	}
+	return index, true
 }
 
 func resolveJSONReference(path string) (script.Value, error) {

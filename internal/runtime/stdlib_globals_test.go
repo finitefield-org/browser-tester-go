@@ -145,6 +145,21 @@ func TestRunScriptSupportsObjectKeysSortAndReverse(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsObjectPrototypeHasOwnPropertyCall(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const object = { alpha: 1 }; const array = [1, 2]; [Object.prototype.hasOwnProperty.call(object, "alpha"), Object.prototype.hasOwnProperty.call(object, "beta"), Object.prototype.hasOwnProperty.call(array, "0"), Object.prototype.hasOwnProperty.call(array, "length"), Object.prototype.hasOwnProperty.call(array, "2")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|true|true|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptSupportsIntlNumberFormatGrouping(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 

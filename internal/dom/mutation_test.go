@@ -176,6 +176,48 @@ func TestRootNodeIDReturnsTreeRoot(t *testing.T) {
 	}
 }
 
+func TestCompareDocumentPositionReportsTreeOrder(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child">x</span></div><p id="sibling">y</p></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	targetID := mustSelectSingle(t, store, "#target")
+	childID := mustSelectSingle(t, store, "#child")
+	siblingID := mustSelectSingle(t, store, "#sibling")
+	orphanID, err := store.CreateElement("em")
+	if err != nil {
+		t.Fatalf("CreateElement(em) error = %v", err)
+	}
+
+	if got := store.CompareDocumentPosition(docID, docID); got != 0 {
+		t.Fatalf("CompareDocumentPosition(document, document) = %d, want 0", got)
+	}
+	if got := store.CompareDocumentPosition(docID, childID); got != 12 {
+		t.Fatalf("CompareDocumentPosition(document, child) = %d, want 12", got)
+	}
+	if got := store.CompareDocumentPosition(childID, docID); got != 18 {
+		t.Fatalf("CompareDocumentPosition(child, document) = %d, want 18", got)
+	}
+	if got := store.CompareDocumentPosition(wrapID, childID); got != 12 {
+		t.Fatalf("CompareDocumentPosition(#wrap, #child) = %d, want 12", got)
+	}
+	if got := store.CompareDocumentPosition(childID, siblingID); got != 4 {
+		t.Fatalf("CompareDocumentPosition(#child, #sibling) = %d, want 4", got)
+	}
+	if got := store.CompareDocumentPosition(orphanID, docID); got != 35 {
+		t.Fatalf("CompareDocumentPosition(orphan, document) = %d, want 35", got)
+	}
+	if got := store.CompareDocumentPosition(docID, orphanID); got != 37 {
+		t.Fatalf("CompareDocumentPosition(document, orphan) = %d, want 37", got)
+	}
+	if got := store.CompareDocumentPosition(targetID, targetID); got != 0 {
+		t.Fatalf("CompareDocumentPosition(#target, #target) = %d, want 0", got)
+	}
+}
+
 func TestNormalizeMergesAdjacentTextNodesAndRemovesEmptyTextNodes(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<section id="main"><div id="inner">abc</div></section>`); err != nil {

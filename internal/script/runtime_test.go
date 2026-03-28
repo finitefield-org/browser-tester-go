@@ -7310,6 +7310,34 @@ func TestDispatchSupportsConditionalOperatorInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsConditionalOperatorWithObjectLiteralBranchesInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `const viewState = false ? { showVisibleWhitespace: true, showDiff: true } : { showVisibleWhitespace: false, showDiff: false }; host.echo(viewState.showVisibleWhitespace, viewState.showDiff)`})
+	if err != nil {
+		t.Fatalf("Dispatch(conditional operator with object literal branches) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindBool || result.Value.Bool {
+		t.Fatalf("Dispatch(conditional operator with object literal branches) result = %#v, want bool false", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host call method = %q, want echo", call.method)
+	}
+	if len(call.args) != 2 {
+		t.Fatalf("host call args len = %d, want 2", len(call.args))
+	}
+	for i, arg := range call.args {
+		if arg.Kind != ValueKindBool || arg.Bool {
+			t.Fatalf("host call arg[%d] = %#v, want bool false", i, arg)
+		}
+	}
+}
+
 func TestDispatchSupportsEqualityComparisonsOnBoundedValuesInClassicJS(t *testing.T) {
 	host := &echoHost{}
 	runtime := NewRuntime(host)

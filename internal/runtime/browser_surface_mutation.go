@@ -553,6 +553,34 @@ func browserNodeContains(session *Session, store *dom.Store, nodeID dom.NodeID, 
 	return script.BoolValue(store.ContainsNode(nodeID, otherID)), nil
 }
 
+func browserNodeCompareDocumentPosition(session *Session, store *dom.Store, nodeID dom.NodeID, method string, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("%s expects 1 argument", method)
+	}
+	otherID, err := browserNodeIDFromContainsValue(store, args[0], method)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.NumberValue(float64(store.CompareDocumentPosition(nodeID, otherID))), nil
+}
+
+func browserNodeHasChildNodes(session *Session, store *dom.Store, nodeID dom.NodeID, method string, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("%s accepts no arguments", method)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("invalid node reference %q in this bounded classic-JS slice", method))
+	}
+	return script.BoolValue(len(node.Children) > 0), nil
+}
+
 func browserNodeGetRootNode(session *Session, store *dom.Store, nodeID dom.NodeID, method string, args []script.Value) (script.Value, error) {
 	if session == nil || store == nil {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")

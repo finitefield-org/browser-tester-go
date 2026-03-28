@@ -85,7 +85,7 @@ runtime slices.
   `dir`, plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`,
   `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`,
   `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node
   `nodeValue` / `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` /
   `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation), `location`, `history`, `navigator`, `URL` /
@@ -99,7 +99,7 @@ runtime slices.
   stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Map` / `Number` / `String`
   / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
   `Array.isArray()`,
-  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertySymbols()`, `JSON.parse()` / `JSON.stringify()`,
+  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.floor()` / `Math.min()` / `Math.max()` /
   `Math.round()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
   `String.prototype.charCodeAt()` / `String.prototype.indexOf()` / `String.prototype.replace()` /
@@ -503,7 +503,7 @@ runtime slices.
   plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node
   `nodeValue` / `data` reads and writes, plus `wholeText` reads, `splitText()` mutation, `before()` /
   `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation, and bounded element reflection reads and writes

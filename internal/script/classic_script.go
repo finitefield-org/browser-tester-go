@@ -7704,7 +7704,10 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 	var parenDepth int
 	var braceDepth int
 	var bracketDepth int
-	var conditionalDepth int
+	conditionalFrames := make([]classicJSConditionalBranchFrame, 0, 4)
+	if stopAtColon {
+		conditionalFrames = append(conditionalFrames, classicJSConditionalBranchFrame{})
+	}
 	canStartRegex := true
 
 	for !scanner.eof() {
@@ -7742,11 +7745,6 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 		}
 
 		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
-			if stopAtColon {
-				if ch == ':' && conditionalDepth == 0 {
-					return scanner.pos, nil
-				}
-			}
 			switch ch {
 			case ',', ';', ')', ']', '}':
 				return scanner.pos, nil
@@ -7830,18 +7828,30 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 					continue
 				}
 			}
-			conditionalDepth++
+			conditionalFrames = append(conditionalFrames, classicJSConditionalBranchFrame{
+				parenDepth:   parenDepth,
+				braceDepth:   braceDepth,
+				bracketDepth: bracketDepth,
+			})
 			scanner.pos++
 			canStartRegex = true
 		case ':':
-			if conditionalDepth > 0 {
-				conditionalDepth--
+			if len(conditionalFrames) > 0 {
+				top := conditionalFrames[len(conditionalFrames)-1]
+				if top.parenDepth == parenDepth && top.braceDepth == braceDepth && top.bracketDepth == bracketDepth {
+					conditionalFrames = conditionalFrames[:len(conditionalFrames)-1]
+					if stopAtColon && len(conditionalFrames) == 0 {
+						return scanner.pos, nil
+					}
+					scanner.pos++
+					canStartRegex = true
+					continue
+				}
+			}
+			if stopAtColon {
 				scanner.pos++
 				canStartRegex = true
 				continue
-			}
-			if stopAtColon {
-				return scanner.pos, nil
 			}
 			scanner.pos++
 			canStartRegex = true
@@ -7887,10 +7897,16 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 	if blockComment {
 		return scanner.pos, NewError(ErrorKindParse, "unterminated block comment in conditional expression")
 	}
-	if conditionalDepth > 0 || stopAtColon {
+	if len(conditionalFrames) > 0 {
 		return scanner.pos, NewError(ErrorKindParse, "unterminated conditional expression in this bounded classic-JS slice")
 	}
 	return scanner.pos, nil
+}
+
+type classicJSConditionalBranchFrame struct {
+	parenDepth   int
+	braceDepth   int
+	bracketDepth int
 }
 
 func scanClassicJSClassMemberTerminator(scanner *classicJSStatementParser) (int, error) {

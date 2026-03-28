@@ -347,6 +347,24 @@ func TestSessionBootstrapsObjectKeysForEachPropertyCopy(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsObjectPrototypeHasOwnPropertyCall(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const object = { alpha: 1 }; const array = [1, 2]; document.getElementById("out").textContent = [Object.prototype.hasOwnProperty.call(object, "alpha"), Object.prototype.hasOwnProperty.call(object, "beta"), Object.prototype.hasOwnProperty.call(array, "0"), Object.prototype.hasOwnProperty.call(array, "length"), Object.prototype.hasOwnProperty.call(array, "2")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|false|true|true|false" {
+		t.Fatalf("TextContent(#out) = %q, want true|false|true|true|false", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Object.prototype.hasOwnProperty bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsComputedPropertyKeys(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const key = "alpha"; const source = { [key]: 1, beta: 2 }; document.getElementById("out").textContent = Object.keys(source).join(",")</script></main>`
 

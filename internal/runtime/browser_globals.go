@@ -391,6 +391,13 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 			}
 			return browserNodeGetRootNode(session, store, store.DocumentID(), "document.getRootNode", args)
 		}), nil
+	case "compareDocumentPosition":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.compareDocumentPosition is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodeCompareDocumentPosition(session, store, store.DocumentID(), "document.compareDocumentPosition", args)
+		}), nil
 	case "contains":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if store == nil {
@@ -431,6 +438,10 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 		return browserChildNodeListValueForDocument(session, store, func(s *dom.Store) (dom.ChildNodeList, error) {
 			return s.ChildNodes(s.DocumentID())
 		})
+	case "hasChildNodes":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeHasChildNodes(session, store, store.DocumentID(), "document.hasChildNodes", args)
+		}), nil
 	case "forms":
 		return browserHTMLCollectionValueForDocument(store, func(s *dom.Store) (dom.HTMLCollection, error) {
 			return s.Forms()
@@ -1201,6 +1212,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNodeGetRootNode(session, store, nodeID, "element.getRootNode", args)
 		}), nil
+	case "compareDocumentPosition":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeCompareDocumentPosition(session, store, nodeID, "element.compareDocumentPosition", args)
+		}), nil
 	case "remove":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNodeRemove(session, store, nodeID, args)
@@ -1303,6 +1318,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 			return script.UndefinedValue(), err
 		}
 		return value, nil
+	case "hasChildNodes":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeHasChildNodes(session, store, nodeID, "element.hasChildNodes", args)
+		}), nil
 	case "querySelector":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			selector, err := scriptStringArg("element.querySelector", args, 0)

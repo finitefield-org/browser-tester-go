@@ -188,6 +188,36 @@ func TestNodeTreeNavigationBridgeReportsRootNodeStatus(t *testing.T) {
 	}
 }
 
+func TestNodeTreeNavigationBridgeReportsCompareDocumentPositionStatus(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+	if err := session.WriteHTML(`<main><div id="wrap"><span id="child"></span></div><div id="probe"></div><script>const wrap = document.querySelector("#wrap"); const child = document.querySelector("#child"); const orphan = document.createElement("em"); document.querySelector("#probe").textContent = String(document.compareDocumentPosition(document)) + ":" + String(document.compareDocumentPosition(child)) + ":" + String(child.compareDocumentPosition(document)) + ":" + String(wrap.compareDocumentPosition(child)) + ":" + String(child.compareDocumentPosition(document.querySelector("#probe"))) + ":" + String(orphan.compareDocumentPosition(document))</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	got, err := session.TextContent("#probe")
+	if err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	}
+	if want := "0:12:18:12:4:35"; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestNodeTreeNavigationBridgeReportsHasChildNodesStatus(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+	if err := session.WriteHTML(`hello<div id="probe"><span></span></div><div id="out"></div><script>const probe = document.querySelector("#probe"); const text = document.firstChild; document.querySelector("#out").textContent = String(document.hasChildNodes()) + ":" + String(probe.hasChildNodes()) + ":" + String(text.hasChildNodes())</script>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	got, err := session.TextContent("#out")
+	if err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	}
+	if want := "true:true:false"; got != want {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, want)
+	}
+}
+
 func TestTextNodeSplitTextBridgeReadsAdjacentTextNodes(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 	if err := session.WriteHTML(`<main><div id="mirror">hello</div><div id="probe"></div><script>const mirror = document.querySelector("#mirror"); const right = mirror.firstChild.splitText(2); document.querySelector("#probe").textContent = String(mirror.childNodes.length) + ":" + mirror.firstChild.data + ":" + right.data + ":" + mirror.firstChild.wholeText + ":" + right.wholeText</script></main>`); err != nil {

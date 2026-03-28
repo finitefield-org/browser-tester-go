@@ -107,7 +107,7 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `nodeType`, `nodeName`, `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`,
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, `childElementCount`,
-  `contains()`, `isConnected()`, and `getRootNode()`, plus text-node `nodeValue` / `data` reads and writes,
+  `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node `nodeValue` / `data` reads and writes,
   `wholeText` reads, `splitText()` mutation, `before()` / `after()` / `replaceWith()` / `remove()`
   node mutation helpers, and `normalize()` mutation,
   bounded element reflection reads and writes for `className`, `innerText`, `outerText`, `style`,
@@ -127,7 +127,7 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   bounded `matchMedia` state through `MatchMedia()`. The same bridge also exposes a bounded
   browser stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` /
   `Boolean` / `Math` / `Date`, including template-facing helpers such as `Array.from()` /
-  `Array.isArray()`, `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
+  `Array.isArray()`, `Object.assign()` / `Object.keys()` / `Object.prototype.hasOwnProperty.call()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
   `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()` /
   `String.prototype.startsWith()` / `String.prototype.endsWith()`, `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
@@ -272,7 +272,7 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node `nodeValue` /
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node `nodeValue` /
   `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` / `after()` /
   `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation.
