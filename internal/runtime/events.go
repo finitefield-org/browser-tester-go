@@ -18,16 +18,16 @@ const (
 )
 
 type eventListenerRecord struct {
-	id              int64
-	nodeID          dom.NodeID
-	currentTarget   script.Value
+	id               int64
+	nodeID           dom.NodeID
+	currentTarget    script.Value
 	currentTargetKey string
-	event           string
-	phase           eventPhase
-	source          string
-	callable        script.Value
-	callableKey     string
-	once            bool
+	event            string
+	phase            eventPhase
+	source           string
+	callable         script.Value
+	callableKey      string
+	once             bool
 }
 
 type eventDispatchContext struct {
@@ -66,7 +66,7 @@ func parseEventPhase(phase string) (eventPhase, error) {
 }
 
 func (s *Session) registerEventListener(nodeID dom.NodeID, event, source, phase string, once bool) error {
-	return s.registerEventListenerValue(nodeID, browserElementReferenceValue(nodeID), event, script.StringValue(source), phase, once)
+	return s.registerEventListenerValue(nodeID, browserElementReferenceValue(nodeID, s.domStore), event, script.StringValue(source), phase, once)
 }
 
 func (s *Session) registerEventListenerValue(nodeID dom.NodeID, currentTarget script.Value, event string, listener script.Value, phase string, once bool) error {
@@ -82,7 +82,7 @@ func (s *Session) registerEventListenerValue(nodeID dom.NodeID, currentTarget sc
 		return err
 	}
 	if currentTarget.Kind == script.ValueKindUndefined {
-		currentTarget = browserElementReferenceValue(nodeID)
+		currentTarget = browserElementReferenceValue(nodeID, s.domStore)
 	}
 	source, callableKey, err := eventListenerSourceAndKey(listener)
 	if err != nil {
@@ -128,7 +128,7 @@ func (s *Session) EventListeners() []EventListenerRegistration {
 				}
 				return s.eventListeners[i].callableKey
 			}(),
-			Once:   s.eventListeners[i].once,
+			Once: s.eventListeners[i].once,
 		}
 	}
 	return out
@@ -139,7 +139,41 @@ func (s *Session) dispatchEventListeners(store *dom.Store, nodeID dom.NodeID, ev
 }
 
 func (s *Session) dispatchTargetEventListeners(store *dom.Store, nodeID dom.NodeID, event string) (bool, error) {
-	return s.dispatchEventListenersWithPropagation(store, nodeID, event, "", false, false)
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	if store == nil {
+		return false, fmt.Errorf("dom store is unavailable")
+	}
+
+	normalized := normalizeEventType(event)
+	if normalized == "" {
+		return false, nil
+	}
+
+	prev := s.eventDispatch
+	ctx := &eventDispatchContext{
+		store:        store,
+		targetNodeID: nodeID,
+		eventType:    normalized,
+	}
+	s.eventDispatch = ctx
+	defer func() {
+		s.eventDispatch = prev
+	}()
+
+	currentTarget := browserNodeReferenceValue(store, nodeID)
+	// Target-only events still need the target's own capture/target/bubble listeners.
+	if err := s.dispatchListenersOnTarget(store, nodeID, currentTarget, normalized, eventPhaseCapture); err != nil {
+		return ctx.defaultPrevented, err
+	}
+	if err := s.dispatchListenersOnTarget(store, nodeID, currentTarget, normalized, eventPhaseTarget); err != nil {
+		return ctx.defaultPrevented, err
+	}
+	if err := s.dispatchListenersOnTarget(store, nodeID, currentTarget, normalized, eventPhaseBubble); err != nil {
+		return ctx.defaultPrevented, err
+	}
+	return ctx.defaultPrevented, nil
 }
 
 func (s *Session) dispatchEventListenersWithPropagation(store *dom.Store, nodeID dom.NodeID, event, key string, capture, bubble bool) (bool, error) {
@@ -231,7 +265,7 @@ func (s *Session) dispatchListenersOnTarget(store *dom.Store, nodeID dom.NodeID,
 			}
 		} else {
 			currentTarget := listener.currentTarget
-			if currentTarget.Kind == script.ValueKindUndefined {
+			if currentTarget.Kind == script.ValueKindUndefined || (currentTarget.Kind == script.ValueKindHostReference && strings.HasPrefix(currentTarget.HostReferencePath, "element:") && !strings.Contains(currentTarget.HostReferencePath, "@")) {
 				currentTarget = browserNodeReferenceValue(store, nodeID)
 			}
 			eventValue := browserEventObjectValue(s, store, listener, currentTarget)
@@ -326,7 +360,7 @@ func (s *Session) removeEventListener(nodeID dom.NodeID, event, source, phase st
 	if err != nil {
 		return false, err
 	}
-	currentTargetKey := eventListenerReferenceKey(browserElementReferenceValue(nodeID))
+	currentTargetKey := eventListenerReferenceKey(browserElementReferenceValue(nodeID, s.domStore))
 
 	for i, listener := range s.eventListeners {
 		if listener.nodeID != nodeID || listener.event != normalized || listener.phase != normalizedPhase || listener.currentTargetKey != currentTargetKey || listener.source != source {
@@ -352,7 +386,7 @@ func (s *Session) removeEventListenerValue(nodeID dom.NodeID, currentTarget scri
 		return false, err
 	}
 	if currentTarget.Kind == script.ValueKindUndefined {
-		currentTarget = browserElementReferenceValue(nodeID)
+		currentTarget = browserElementReferenceValue(nodeID, s.domStore)
 	}
 	source, callableKey, err := eventListenerSourceAndKey(listener)
 	if err != nil {
@@ -447,7 +481,11 @@ func eventListenerSourceAndKey(listener script.Value) (string, string, error) {
 func eventListenerReferenceKey(value script.Value) string {
 	switch value.Kind {
 	case script.ValueKindHostReference:
-		return string(value.HostReferenceKind) + ":" + value.HostReferencePath
+		path := value.HostReferencePath
+		if strings.HasPrefix(path, "element:") {
+			path = canonicalElementReferencePath(path)
+		}
+		return string(value.HostReferenceKind) + ":" + path
 	case script.ValueKindFunction:
 		if value.Function != nil {
 			return fmt.Sprintf("function:%x", reflect.ValueOf(value.Function).Pointer())
@@ -497,6 +535,12 @@ func browserEventObjectValue(session *Session, store *dom.Store, listener eventL
 	}
 	if session != nil && session.eventDispatch != nil && session.eventDispatch.key != "" {
 		entries = append(entries, script.ObjectEntry{Key: "key", Value: script.StringValue(session.eventDispatch.key)})
+		entries = append(entries,
+			script.ObjectEntry{Key: "ctrlKey", Value: script.BoolValue(true)},
+			script.ObjectEntry{Key: "metaKey", Value: script.BoolValue(false)},
+			script.ObjectEntry{Key: "shiftKey", Value: script.BoolValue(false)},
+			script.ObjectEntry{Key: "altKey", Value: script.BoolValue(false)},
+		)
 	}
 	return script.ObjectValue(entries)
 }
@@ -505,5 +549,5 @@ func browserNodeReferenceValue(store *dom.Store, nodeID dom.NodeID) script.Value
 	if store != nil && nodeID == store.DocumentID() {
 		return script.HostObjectReference("document")
 	}
-	return browserElementReferenceValue(nodeID)
+	return browserElementReferenceValue(nodeID, store)
 }

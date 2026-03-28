@@ -58,6 +58,11 @@ type Session struct {
 	currentScriptHTML        string
 	lastInlineScriptHTML     string
 	moduleBindings           map[string]script.Value
+	intlOverride             script.Value
+	hasIntlOverride          bool
+	windowProperties         map[string]script.Value
+	blobStates               map[string]*browserBlobState
+	nextBlobStateID          int64
 	urlStates                map[string]*browserURLState
 	nextURLStateID           int64
 	historyEntries           []historyEntry
@@ -781,23 +786,7 @@ func (s *Session) Focus(selector string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			s.discardMicrotasks()
-		}
-	}()
-	if err := store.SetFocusedNode(nodeID); err != nil {
-		return err
-	}
-	s.focusedSelector = normalized
-	s.interactions = append(s.interactions, Interaction{
-		Kind:     InteractionKindFocus,
-		Selector: normalized,
-	})
-	if _, err := s.dispatchTargetEventListeners(store, nodeID, "focus"); err != nil {
-		return err
-	}
-	return s.drainMicrotasks(store)
+	return s.focusNode(store, nodeID, normalized, true)
 }
 
 func (s *Session) Blur() (err error) {
@@ -808,14 +797,76 @@ func (s *Session) Blur() (err error) {
 	previousNodeID := dom.NodeID(0)
 	if s.domStore != nil {
 		previousNodeID = s.domStore.FocusedNodeID()
-		s.domStore.ClearFocusedNode()
 	}
-	s.focusedSelector = ""
-	s.interactions = append(s.interactions, Interaction{
-		Kind:     InteractionKindBlur,
-		Selector: previous,
-	})
-	if previousNodeID == 0 || s.domStore == nil {
+	return s.blurNode(s.domStore, previousNodeID, previous, true)
+}
+
+func (s *Session) focusElementNode(store *dom.Store, nodeID dom.NodeID) error {
+	return s.focusNode(store, nodeID, defaultFocusedSelectorForNode(store, nodeID), false)
+}
+
+func (s *Session) blurElementNode(store *dom.Store, nodeID dom.NodeID) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if store == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if nodeID == 0 || store.FocusedNodeID() != nodeID {
+		return nil
+	}
+	return s.blurNode(store, nodeID, s.focusedSelector, false)
+}
+
+func (s *Session) focusNode(store *dom.Store, nodeID dom.NodeID, selector string, recordInteraction bool) (err error) {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if store == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	defer func() {
+		if err != nil {
+			s.discardMicrotasks()
+		}
+	}()
+	previousNodeID := store.FocusedNodeID()
+	if previousNodeID != 0 && previousNodeID != nodeID {
+		store.ClearFocusedNode()
+		s.focusedSelector = ""
+		if _, err := s.dispatchTargetEventListeners(store, previousNodeID, "blur"); err != nil {
+			return err
+		}
+	}
+	if err := store.SetFocusedNode(nodeID); err != nil {
+		return err
+	}
+	normalized := strings.TrimSpace(selector)
+	s.focusedSelector = normalized
+	if recordInteraction {
+		s.interactions = append(s.interactions, Interaction{
+			Kind:     InteractionKindFocus,
+			Selector: normalized,
+		})
+	}
+	if _, err := s.dispatchTargetEventListeners(store, nodeID, "focus"); err != nil {
+		return err
+	}
+	return s.drainMicrotasks(store)
+}
+
+func (s *Session) blurNode(store *dom.Store, nodeID dom.NodeID, selector string, recordInteraction bool) (err error) {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if recordInteraction {
+		s.interactions = append(s.interactions, Interaction{
+			Kind:     InteractionKindBlur,
+			Selector: selector,
+		})
+	}
+	if store == nil || nodeID == 0 {
+		s.focusedSelector = ""
 		return nil
 	}
 	defer func() {
@@ -823,10 +874,27 @@ func (s *Session) Blur() (err error) {
 			s.discardMicrotasks()
 		}
 	}()
-	if _, err := s.dispatchTargetEventListeners(s.domStore, previousNodeID, "blur"); err != nil {
+	store.ClearFocusedNode()
+	s.focusedSelector = ""
+	if _, err := s.dispatchTargetEventListeners(store, nodeID, "blur"); err != nil {
 		return err
 	}
-	return s.drainMicrotasks(s.domStore)
+	return s.drainMicrotasks(store)
+}
+
+func defaultFocusedSelectorForNode(store *dom.Store, nodeID dom.NodeID) string {
+	if store == nil || nodeID == 0 {
+		return ""
+	}
+	id, ok, err := store.GetAttribute(nodeID, "id")
+	if err != nil || !ok {
+		return ""
+	}
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	return "#" + trimmed
 }
 
 func (s *Session) validateSelector(selector string) (string, error) {

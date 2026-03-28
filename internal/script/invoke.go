@@ -4,9 +4,10 @@ package script
 // The host is used for host-reference resolution during the call.
 func InvokeCallableValue(host HostBindings, callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
 	parser := &classicJSStatementParser{
-		host:      host,
-		env:       newClassicJSEnvironment(),
-		stepLimit: DefaultRuntimeConfig().StepLimit,
+		host:                host,
+		env:                 newClassicJSEnvironment(),
+		stepLimit:           DefaultRuntimeConfig().StepLimit,
+		bindingUpdateParent: CurrentBindingUpdateContext(),
 	}
 	callable := scalarJSValue(callee)
 	if hasReceiver {

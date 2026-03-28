@@ -20,6 +20,25 @@ type HostBindings interface {
 	Call(method string, args []Value) (Value, error)
 }
 
+type BindingUpdateContext interface {
+	ReplaceObjectBindings(oldValue Value, newValue Value) int
+	ReplaceArrayBindings(oldValue Value, newValue Value) int
+}
+
+var currentBindingUpdateContext BindingUpdateContext
+
+func CurrentBindingUpdateContext() BindingUpdateContext {
+	return currentBindingUpdateContext
+}
+
+func setCurrentBindingUpdateContext(ctx BindingUpdateContext) func() {
+	prev := currentBindingUpdateContext
+	currentBindingUpdateContext = ctx
+	return func() {
+		currentBindingUpdateContext = prev
+	}
+}
+
 type HostReferenceResolver interface {
 	ResolveHostReference(path string) (Value, error)
 }
@@ -278,6 +297,8 @@ func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJ
 			cloned := ObjectValue(nil)
 			cloned.ClassKey = value.ClassKey
 			cloned.ClassDefinition = value.ClassDefinition
+			cloned.MapState = cloneMapStateDetached(value.MapState, mapping)
+			cloned.SetState = cloneSetStateDetached(value.SetState, mapping)
 			return cloned
 		}
 		cloned := make([]ObjectEntry, len(value.Object))
@@ -287,22 +308,30 @@ func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJ
 		clonedValue := ObjectValue(cloned)
 		clonedValue.ClassKey = value.ClassKey
 		clonedValue.ClassDefinition = value.ClassDefinition
+		clonedValue.MapState = cloneMapStateDetached(value.MapState, mapping)
+		clonedValue.SetState = cloneSetStateDetached(value.SetState, mapping)
 		return clonedValue
 	case ValueKindFunction:
-		if value.NativeFunction != nil {
-			return NativeFunctionValue(value.NativeFunction)
+		if value.NativeFunction != nil || value.NativeConstructibleFunction != nil {
+			cloned := NativeFunctionValue(value.NativeFunction)
+			cloned.NativeConstructibleFunction = value.NativeConstructibleFunction
+			cloned.Function = value.Function
+			return cloned
 		}
 		if value.Function == nil {
 			return value
 		}
 		cloned := FunctionValue(value.Function.cloneDetached(mapping))
 		cloned.NativeFunction = value.NativeFunction
+		cloned.NativeConstructibleFunction = value.NativeConstructibleFunction
 		return cloned
 	case ValueKindPromise:
-		if value.Promise == nil {
-			return PromiseValue(UndefinedValue())
+		cloned := value
+		if value.Promise != nil {
+			clonedPromise := cloneValueDetached(*value.Promise, mapping)
+			cloned.Promise = &clonedPromise
 		}
-		return PromiseValue(cloneValueDetached(*value.Promise, mapping))
+		return cloned
 	default:
 		return value
 	}
@@ -434,11 +463,17 @@ func (e *classicJSEnvironment) assignWithScopes(name string, value jsValue) (boo
 func classicJSEnvironmentScopeLookup(scope Value, name string) (jsValue, bool) {
 	switch scope.Kind {
 	case ValueKindObject:
+		if sizeValue, ok := classicJSObjectSizeValue(scope); ok && name == "size" {
+			return scalarJSValue(sizeValue), true
+		}
 		if resolved, ok := lookupObjectProperty(scope.Object, name); ok {
 			if resolved.Kind == ValueKindFunction && resolved.Function != nil {
 				return jsValue{kind: jsValueScalar, value: resolved, receiver: scope, hasReceiver: true}, true
 			}
 			return scalarJSValue(resolved), true
+		}
+		if virtualValue, ok, err := classicJSObjectVirtualProperty(scope, name); ok || err != nil {
+			return scalarJSValue(virtualValue), ok
 		}
 		return jsValue{}, false
 	case ValueKindArray:
@@ -457,7 +492,10 @@ func classicJSEnvironmentScopeLookup(scope Value, name string) (jsValue, bool) {
 func classicJSEnvironmentScopeAssign(scope Value, name string, rhs Value) (Value, bool, error) {
 	switch scope.Kind {
 	case ValueKindObject:
-		return ObjectValue(replaceObjectProperty(scope.Object, name, rhs)), true, nil
+		if _, ok := classicJSObjectSizeValue(scope); ok && name == "size" {
+			return UndefinedValue(), true, NewError(ErrorKindRuntime, "assignment cannot write to getter-only property in this bounded classic-JS slice")
+		}
+		return objectValueWithMetadata(scope, replaceObjectProperty(scope.Object, name, rhs)), true, nil
 	case ValueKindArray:
 		if name == "length" {
 			newLength, err := classicJSArrayLengthFromValue(rhs)
@@ -524,21 +562,144 @@ func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue js
 	replaced := 0
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
-			continue
+			goto updateScopes
 		}
 		for name, binding := range current.bindings {
-			if binding.value.kind != jsValueScalar || binding.value.value.Kind != ValueKindObject {
+			updated, changed := replaceObjectReferencesInJSValue(binding.value, oldPtr, replacement.value)
+			if !changed {
 				continue
 			}
-			if reflect.ValueOf(binding.value.value.Object).Pointer() != oldPtr {
-				continue
-			}
-			binding.value = replacement
+			binding.value = updated
 			current.bindings[name] = binding
+			replaced++
+		}
+	updateScopes:
+		for i, scope := range current.withScopes {
+			updated, changed := replaceObjectReferencesInValue(scope, oldPtr, replacement.value)
+			if !changed {
+				continue
+			}
+			current.withScopes[i] = updated
 			replaced++
 		}
 	}
 	return replaced
+}
+
+func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value) (jsValue, bool) {
+	changed := false
+
+	switch value.kind {
+	case jsValueScalar:
+		updated, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement)
+		if ok {
+			value.value = updated
+			changed = true
+		}
+	case jsValueSuper:
+		updatedValue, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement)
+		if ok {
+			value.value = updatedValue
+			changed = true
+		}
+		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement)
+		if ok {
+			value.receiver = updatedReceiver
+			changed = true
+		}
+		if value.hasNewTarget {
+			updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement)
+			if ok {
+				value.newTarget = updatedNewTarget
+				changed = true
+			}
+		}
+	}
+
+	if value.kind != jsValueSuper && value.hasReceiver {
+		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement)
+		if ok {
+			value.receiver = updatedReceiver
+			changed = true
+		}
+	}
+	if value.kind != jsValueSuper && value.hasNewTarget {
+		updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement)
+		if ok {
+			value.newTarget = updatedNewTarget
+			changed = true
+		}
+	}
+
+	return value, changed
+}
+
+func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+	switch value.Kind {
+	case ValueKindObject:
+		if reflect.ValueOf(value.Object).Pointer() == oldPtr {
+			return replacement, true
+		}
+		if len(value.Object) == 0 {
+			return value, false
+		}
+		updated := make([]ObjectEntry, len(value.Object))
+		changed := false
+		for i, entry := range value.Object {
+			next, ok := replaceObjectReferencesInValue(entry.Value, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+		}
+		if !changed {
+			return value, false
+		}
+		cloned := objectValueWithMetadata(value, updated)
+		return cloned, true
+	case ValueKindArray:
+		if len(value.Array) == 0 {
+			return value, false
+		}
+		updated := make([]Value, len(value.Array))
+		changed := false
+		for i, element := range value.Array {
+			next, ok := replaceObjectReferencesInValue(element, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = next
+		}
+		if !changed {
+			return value, false
+		}
+		return ArrayValue(updated), true
+	case ValueKindPromise:
+		if value.PromiseState != nil && value.PromiseState.resolved {
+			next, ok := replaceObjectReferencesInValue(value.PromiseState.value, oldPtr, replacement)
+			if !ok {
+				return value, false
+			}
+			cloned := value
+			cloned.PromiseState = &classicJSPromiseState{
+				resolved: true,
+				value:    next,
+			}
+			return cloned, true
+		}
+		if value.Promise == nil {
+			return value, false
+		}
+		next, ok := replaceObjectReferencesInValue(*value.Promise, oldPtr, replacement)
+		if !ok {
+			return value, false
+		}
+		cloned := value
+		cloned.Promise = &next
+		return cloned, true
+	default:
+		return value, false
+	}
 }
 
 func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsValue) int {
@@ -659,11 +820,21 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 		if !changed {
 			return value, false
 		}
-		cloned := ObjectValue(updated)
-		cloned.ClassKey = value.ClassKey
-		cloned.ClassDefinition = value.ClassDefinition
+		cloned := objectValueWithMetadata(value, updated)
 		return cloned, true
 	case ValueKindPromise:
+		if value.PromiseState != nil && value.PromiseState.resolved {
+			next, ok := replaceArrayReferencesInValue(value.PromiseState.value, oldPtr, replacement)
+			if !ok {
+				return value, false
+			}
+			cloned := value
+			cloned.PromiseState = &classicJSPromiseState{
+				resolved: true,
+				value:    next,
+			}
+			return cloned, true
+		}
 		if value.Promise == nil {
 			return value, false
 		}
@@ -671,7 +842,9 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 		if !ok {
 			return value, false
 		}
-		return PromiseValue(next), true
+		cloned := value
+		cloned.Promise = &next
+		return cloned, true
 	default:
 		return value, false
 	}
@@ -699,6 +872,90 @@ func NewRuntimeWithConfigAndBindings(config RuntimeConfig, host HostBindings, gl
 		host:           host,
 		globalBindings: cloneBindingsMap(globalBindings),
 	}
+}
+
+func skipScriptTriviaForward(source string, index int) int {
+	for index < len(source) {
+		switch source[index] {
+		case ' ', '\t', '\n', '\r', '\f', '\v':
+			index++
+		case '/':
+			if index+1 >= len(source) {
+				return index
+			}
+			switch source[index+1] {
+			case '/':
+				index += 2
+				for index < len(source) && source[index] != '\n' && source[index] != '\r' {
+					index++
+				}
+			case '*':
+				index += 2
+				for index+1 < len(source) && !(source[index] == '*' && source[index+1] == '/') {
+					index++
+				}
+				if index+1 < len(source) {
+					index += 2
+				}
+			default:
+				return index
+			}
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func readScriptKeywordAt(source string, index int) (string, int) {
+	index = skipScriptTriviaForward(source, index)
+	start := index
+	for index < len(source) && isIdentPart(source[index]) {
+		index++
+	}
+	if start == index {
+		return "", index
+	}
+	return source[start:index], index
+}
+
+func isHoistableTopLevelFunctionDeclarationStatement(source string) bool {
+	index := skipScriptTriviaForward(source, 0)
+	keyword, next := readScriptKeywordAt(source, index)
+	switch keyword {
+	case "function":
+		return true
+	case "async":
+		keyword, _ = readScriptKeywordAt(source, next)
+		return keyword == "function"
+	case "export":
+		keyword, next = readScriptKeywordAt(source, next)
+		switch keyword {
+		case "function":
+			return true
+		case "async":
+			keyword, _ = readScriptKeywordAt(source, next)
+			return keyword == "function"
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func hoistTopLevelFunctionStatements(statements []string, evaluate func(string) (Value, error)) ([]bool, error) {
+	hoisted := make([]bool, len(statements))
+	for i, statement := range statements {
+		if !isHoistableTopLevelFunctionDeclarationStatement(statement) {
+			continue
+		}
+		if _, err := evaluate(statement); err != nil {
+			return nil, err
+		}
+		hoisted[i] = true
+	}
+	return hoisted, nil
 }
 
 func (r *Runtime) Config() RuntimeConfig {
@@ -742,8 +999,24 @@ func (r *Runtime) Dispatch(request DispatchRequest) (DispatchResult, error) {
 			return DispatchResult{}, err
 		}
 	}
+
+	hoisted, err := hoistTopLevelFunctionStatements(statements, func(statement string) (Value, error) {
+		result, err := r.dispatchStatement(statement, env, request.ModuleExports)
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		return result.Value, nil
+	})
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
 	var last Value = UndefinedValue()
-	for _, statement := range statements {
+	for i, statement := range statements {
+		if hoisted[i] {
+			last = UndefinedValue()
+			continue
+		}
 		result, err := r.dispatchStatement(statement, env, request.ModuleExports)
 		if err != nil {
 			return DispatchResult{}, err
@@ -830,7 +1103,8 @@ func seedClassicJSEnvironment(env *classicJSEnvironment, bindings map[string]Val
 		return NewError(ErrorKindRuntime, "classic-JS environment is unavailable")
 	}
 	for name, value := range bindings {
-		if err := env.declare(name, scalarJSValue(value), false); err != nil {
+		mutable := name == "Intl"
+		if err := env.declare(name, scalarJSValue(value), mutable); err != nil {
 			return err
 		}
 	}
@@ -846,6 +1120,14 @@ func evalClassicJSProgramWithAllowAwait(source string, host HostBindings, env *c
 }
 
 func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, true)
+}
+
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsAllowLoopSignals(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, false)
+}
+
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, convertLoopSignals bool) (Value, error) {
 	if env == nil {
 		env = newClassicJSEnvironment()
 	}
@@ -861,10 +1143,36 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host Ho
 		return UndefinedValue(), nil
 	}
 
+	hoisted, err := hoistTopLevelFunctionStatements(statements, func(statement string) (Value, error) {
+		return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports)
+	})
+	if err != nil {
+		return UndefinedValue(), err
+	}
+
 	var last Value = UndefinedValue()
 	for i, statement := range statements {
+		if hoisted[i] {
+			last = UndefinedValue()
+			continue
+		}
 		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports)
 		if err != nil {
+			if awaitedPromise, nextState, ok := classicJSAwaitSignalDetails(err); ok {
+				continuation := &classicJSBlockState{
+					statements: statements,
+					env:        env,
+					index:      i + 1,
+					lastValue:  last,
+				}
+				if nextState != nil {
+					continuation.child = nextState
+				}
+				return UndefinedValue(), classicJSAwaitSignal{
+					promise:     awaitedPromise,
+					resumeState: continuation,
+				}
+			}
 			if yieldedValue, state, ok := classicJSYieldSignalDetails(err); ok {
 				if state == nil && i+1 < len(statements) {
 					return UndefinedValue(), NewError(ErrorKindUnsupported, "yield inside a nested block must be the final statement in this bounded classic-JS slice")
@@ -874,10 +1182,10 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host Ho
 			if throwValue, ok := classicJSThrowSignalValue(err); ok {
 				return UndefinedValue(), NewError(ErrorKindRuntime, ToJSString(throwValue))
 			}
-			if classicJSBreakSignalValue(err) {
+			if convertLoopSignals && classicJSBreakSignalValue(err) {
 				return UndefinedValue(), NewError(ErrorKindParse, "break statement is not within a loop or switch in this bounded classic-JS slice")
 			}
-			if classicJSContinueSignalValue(err) {
+			if convertLoopSignals && classicJSContinueSignalValue(err) {
 				return UndefinedValue(), NewError(ErrorKindParse, "continue statement is not within a loop in this bounded classic-JS slice")
 			}
 			return UndefinedValue(), err
@@ -907,6 +1215,77 @@ func splitScriptStatements(source string) ([]string, error) {
 	var braceDepth int
 	var bracketDepth int
 	doStates := make([]int, 0, 4)
+	canStartRegex := true
+	lastWasDot := false
+	scanRegularExpressionLiteral := func(index int) (int, error) {
+		if index >= len(text) || text[index] != '/' {
+			return index, NewError(ErrorKindParse, "unexpected end of script source")
+		}
+		escaped := false
+		inClass := false
+		i := index + 1
+		for i < len(text) {
+			ch := text[i]
+			if ch == '\n' || ch == '\r' {
+				return index, NewError(ErrorKindParse, "unterminated regular expression literal")
+			}
+			if escaped {
+				escaped = false
+				i++
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+				i++
+			case '[':
+				inClass = true
+				i++
+			case ']':
+				if inClass {
+					inClass = false
+				}
+				i++
+			case '/':
+				if inClass {
+					i++
+					continue
+				}
+				i++
+				for i < len(text) {
+					flag := text[i]
+					if flag < 'a' || flag > 'z' {
+						if isIdentPart(flag) {
+							return index, NewError(ErrorKindParse, fmt.Sprintf("unsupported regular expression flag %q in this bounded classic-JS slice", flag))
+						}
+						break
+					}
+					switch flag {
+					case 'd', 'g', 'i', 'm', 's', 'u', 'v', 'y':
+					default:
+						return index, NewError(ErrorKindParse, fmt.Sprintf("unsupported regular expression flag %q in this bounded classic-JS slice", flag))
+					}
+					i++
+				}
+				return i, nil
+			default:
+				i++
+			}
+		}
+		return index, NewError(ErrorKindParse, "unterminated regular expression literal")
+	}
+	regexStartKeywords := map[string]struct{}{
+		"await":      {},
+		"case":       {},
+		"delete":     {},
+		"in":         {},
+		"instanceof": {},
+		"return":     {},
+		"throw":      {},
+		"typeof":     {},
+		"void":       {},
+		"yield":      {},
+	}
 	skipSpaceAndCommentsForward := func(index int) int {
 		for index < len(text) {
 			switch text[index] {
@@ -1033,8 +1412,12 @@ func splitScriptStatements(source string) ([]string, error) {
 		switch ch {
 		case '\'', '"':
 			quote = ch
+			canStartRegex = false
+			lastWasDot = false
 		case '`':
 			quote = ch
+			canStartRegex = false
+			lastWasDot = false
 		case '/':
 			if i+1 < len(text) {
 				switch text[i+1] {
@@ -1044,21 +1427,44 @@ func splitScriptStatements(source string) ([]string, error) {
 				case '*':
 					blockComment = true
 					i++
+				default:
+					if canStartRegex {
+						next, err := scanRegularExpressionLiteral(i)
+						if err != nil {
+							return nil, err
+						}
+						i = next - 1
+						canStartRegex = false
+						lastWasDot = false
+						continue
+					}
+					canStartRegex = true
 				}
+			} else {
+				canStartRegex = true
 			}
+			lastWasDot = false
 		case '(':
 			parenDepth++
+			canStartRegex = true
+			lastWasDot = false
 		case ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
+			canStartRegex = false
+			lastWasDot = false
 		case '{':
 			braceDepth++
+			canStartRegex = true
+			lastWasDot = false
 		case '}':
 			wasOpenBlock := braceDepth > 0
 			if braceDepth > 0 {
 				braceDepth--
 			}
+			canStartRegex = true
+			lastWasDot = false
 			if !wasOpenBlock {
 				continue
 			}
@@ -1081,10 +1487,14 @@ func splitScriptStatements(source string) ([]string, error) {
 			}
 		case '[':
 			bracketDepth++
+			canStartRegex = true
+			lastWasDot = false
 		case ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
+			canStartRegex = false
+			lastWasDot = false
 		case ';':
 			if topLevel {
 				if n := len(doStates); n > 0 {
@@ -1109,6 +1519,42 @@ func splitScriptStatements(source string) ([]string, error) {
 				start = i + 1
 				canSplitAtBrace = statementCanEndAtBrace(start)
 			}
+			canStartRegex = true
+			lastWasDot = false
+		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
+			canStartRegex = true
+			lastWasDot = false
+		case '.':
+			canStartRegex = false
+			lastWasDot = true
+		default:
+			if isIdentStart(ch) {
+				startIdent := i
+				i++
+				for i < len(text) && isIdentPart(text[i]) {
+					i++
+				}
+				word := text[startIdent:i]
+				if !lastWasDot {
+					if _, ok := regexStartKeywords[word]; ok {
+						canStartRegex = true
+					} else {
+						canStartRegex = false
+					}
+				} else {
+					canStartRegex = false
+				}
+				lastWasDot = false
+				i--
+				continue
+			}
+			if isDigit(ch) {
+				canStartRegex = false
+				lastWasDot = false
+				continue
+			}
+			canStartRegex = false
+			lastWasDot = false
 		}
 	}
 	if quote != 0 {

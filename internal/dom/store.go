@@ -27,9 +27,10 @@ type Node struct {
 	Parent   NodeID
 	Children []NodeID
 
-	TagName string
-	Attrs   []Attribute
-	Text    string
+	TagName      string
+	NamespaceURI string
+	Attrs        []Attribute
+	Text         string
 
 	DefaultAttrs []Attribute
 	DefaultText  string

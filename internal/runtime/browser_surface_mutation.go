@@ -30,6 +30,10 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 		return script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
 	}
 
+	if strings.HasPrefix(normalized, browserWindowPropertyReferencePrefix) {
+		return session.setWindowPropertyReference(normalized, value)
+	}
+
 	for _, prefix := range []string{"window.", "self.", "globalThis.", "top.", "parent.", "frames."} {
 		if strings.HasPrefix(normalized, prefix) {
 			return setBrowserHostReferenceValue(session, store, normalized[len(prefix):], value)
@@ -47,6 +51,12 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 			return err
 		}
 		return nil
+	case "Intl":
+		if session == nil {
+			return script.NewError(script.ErrorKindUnsupported, "Intl is unavailable in this bounded classic-JS slice")
+		}
+		session.setIntlOverride(value)
+		return nil
 	}
 
 	if strings.HasPrefix(normalized, "url:") {
@@ -57,6 +67,14 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 		return setElementReferenceValue(session, store, normalized, value)
 	}
 
+	if isReservedWindowPropertyName(session, store, normalized) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if session != nil {
+		session.setWindowProperty(normalized, value)
+		return nil
+	}
+
 	return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
 }
 
@@ -64,6 +82,10 @@ func deleteBrowserHostReferenceValue(session *Session, store *dom.Store, path st
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
 		return script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
+	}
+
+	if strings.HasPrefix(normalized, browserWindowPropertyReferencePrefix) {
+		return session.deleteWindowPropertyReference(normalized)
 	}
 
 	for _, prefix := range []string{"window.", "self.", "globalThis.", "top.", "parent.", "frames."} {
@@ -83,11 +105,29 @@ func deleteBrowserHostReferenceValue(session *Session, store *dom.Store, path st
 		return deleteElementReferenceValue(session, store, normalized)
 	}
 
+	if isReservedWindowPropertyName(session, store, normalized) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if session != nil && session.deleteWindowProperty(normalized) {
+		return nil
+	}
+
 	return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
 }
 
+func isReservedWindowPropertyName(session *Session, store *dom.Store, name string) bool {
+	if name == "" {
+		return false
+	}
+	if name == "crypto" {
+		return false
+	}
+	_, reserved := browserGlobalBindings(session, store)[name]
+	return reserved
+}
+
 func setElementReferenceValue(session *Session, store *dom.Store, path string, value script.Value) error {
-	nodeID, err := parseElementReferencePath(path)
+	nodeID, rest, err := splitElementReferencePath(path)
 	if err != nil {
 		return err
 	}
@@ -98,11 +138,19 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 	if node == nil {
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("invalid element reference %q in this bounded classic-JS slice", path))
 	}
-	rest := strings.TrimPrefix(path, "element:"+fmt.Sprintf("%d", nodeID))
-	rest = strings.TrimPrefix(rest, ".")
 	switch {
 	case rest == "":
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	case rest == "href":
+		if !supportsHyperlinkHref(node.TagName) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetAttribute(nodeID, "href", script.ToJSString(value))
+	case rest == "download":
+		if !supportsHyperlinkHref(node.TagName) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetAttribute(nodeID, "download", script.ToJSString(value))
 	case rest == "className":
 		return store.SetAttribute(nodeID, "class", script.ToJSString(value))
 	case rest == "textContent" || rest == "innerText" || rest == "outerText":
@@ -115,12 +163,26 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		if node.TagName == "select" {
 			return store.SetSelectValue(nodeID, script.ToJSString(value))
 		}
+		if node.TagName == "option" {
+			return store.SetAttribute(nodeID, "value", script.ToJSString(value))
+		}
 		return store.SetFormControlValue(nodeID, script.ToJSString(value))
 	case rest == "checked":
 		if value.Kind != script.ValueKindBool {
 			return fmt.Errorf("element.checked expects a boolean in this bounded classic-JS slice")
 		}
 		return store.SetFormControlChecked(nodeID, value.Bool)
+	case rest == "disabled":
+		if !supportsDisabledAttribute(node.TagName) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		if value.Kind != script.ValueKindBool {
+			return fmt.Errorf("element.disabled expects a boolean in this bounded classic-JS slice")
+		}
+		if value.Bool {
+			return store.SetAttribute(nodeID, "disabled", "")
+		}
+		return store.RemoveAttribute(nodeID, "disabled")
 	case rest == "open":
 		if value.Kind != script.ValueKindBool {
 			return fmt.Errorf("element.open expects a boolean in this bounded classic-JS slice")
@@ -129,6 +191,17 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "open", "")
 		}
 		return store.RemoveAttribute(nodeID, "open")
+	case rest == "selected":
+		if node.TagName != "option" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		if value.Kind != script.ValueKindBool {
+			return fmt.Errorf("element.selected expects a boolean in this bounded classic-JS slice")
+		}
+		if value.Bool {
+			return store.SetAttribute(nodeID, "selected", "")
+		}
+		return store.RemoveAttribute(nodeID, "selected")
 	case rest == "id":
 		return store.SetAttribute(nodeID, "id", script.ToJSString(value))
 	case rest == "style":
@@ -152,7 +225,7 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 }
 
 func deleteElementReferenceValue(session *Session, store *dom.Store, path string) error {
-	nodeID, err := parseElementReferencePath(path)
+	nodeID, rest, err := splitElementReferencePath(path)
 	if err != nil {
 		return err
 	}
@@ -163,8 +236,6 @@ func deleteElementReferenceValue(session *Session, store *dom.Store, path string
 	if node == nil {
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("invalid element reference %q in this bounded classic-JS slice", path))
 	}
-	rest := strings.TrimPrefix(path, "element:"+fmt.Sprintf("%d", nodeID))
-	rest = strings.TrimPrefix(rest, ".")
 	switch {
 	case rest == "":
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
@@ -254,11 +325,11 @@ func browserDocumentExecCommand(session *Session, args []script.Value) (script.V
 }
 
 func browserElementAddEventListener(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
-	return browserRegisterEventListener(session, store, browserElementReferenceValue(nodeID), args, "element.addEventListener")
+	return browserRegisterEventListener(session, store, browserElementReferenceValue(nodeID, store), args, "element.addEventListener")
 }
 
 func browserElementRemoveEventListener(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
-	return browserRemoveRegisteredEventListener(session, store, browserElementReferenceValue(nodeID), args, "element.removeEventListener")
+	return browserRemoveRegisteredEventListener(session, store, browserElementReferenceValue(nodeID, store), args, "element.removeEventListener")
 }
 
 func browserElementSetAttribute(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
@@ -312,7 +383,7 @@ func browserElementAppendChild(session *Session, store *dom.Store, nodeID dom.No
 	if err := store.AppendChild(nodeID, childID); err != nil {
 		return script.UndefinedValue(), err
 	}
-	return browserElementReferenceValue(childID), nil
+	return browserElementReferenceValue(childID, store), nil
 }
 
 func browserElementRemoveChild(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
@@ -329,7 +400,7 @@ func browserElementRemoveChild(session *Session, store *dom.Store, nodeID dom.No
 	if err := store.RemoveChild(nodeID, childID); err != nil {
 		return script.UndefinedValue(), err
 	}
-	return browserElementReferenceValue(childID), nil
+	return browserElementReferenceValue(childID, store), nil
 }
 
 func browserElementSelect(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
@@ -344,6 +415,60 @@ func browserElementSelect(session *Session, store *dom.Store, nodeID dom.NodeID,
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.select is unavailable in this bounded classic-JS slice")
 	}
 	session.setSelectedText(store.ValueForNode(nodeID))
+	return script.UndefinedValue(), nil
+}
+
+func browserElementClick(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.click is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("element.click accepts no arguments")
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.click is unavailable in this bounded classic-JS slice")
+	}
+
+	prevented, err := session.dispatchEventListeners(store, nodeID, "click")
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	if session.domStore != nil && session.domStore != store {
+		return script.UndefinedValue(), session.drainMicrotasks(session.domStore)
+	}
+	if prevented {
+		return script.UndefinedValue(), session.drainMicrotasks(store)
+	}
+	if err := session.applyClickDefaultActionForNode(store, nodeID, node); err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), session.drainMicrotasks(store)
+}
+
+func browserElementFocus(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.focus is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("element.focus accepts no arguments")
+	}
+	if err := session.focusElementNode(store, nodeID); err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserElementBlur(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.blur is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("element.blur accepts no arguments")
+	}
+	if err := session.blurElementNode(store, nodeID); err != nil {
+		return script.UndefinedValue(), err
+	}
 	return script.UndefinedValue(), nil
 }
 

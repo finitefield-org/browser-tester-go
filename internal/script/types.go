@@ -4,6 +4,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 type ValueKind string
@@ -15,6 +16,7 @@ const (
 	ValueKindBool          ValueKind = "bool"
 	ValueKindNumber        ValueKind = "number"
 	ValueKindBigInt        ValueKind = "bigint"
+	ValueKindSymbol        ValueKind = "symbol"
 	ValueKindArray         ValueKind = "array"
 	ValueKindObject        ValueKind = "object"
 	ValueKindPrivateName   ValueKind = "private-name"
@@ -39,23 +41,31 @@ type ObjectEntry struct {
 	Value Value
 }
 
+var nextSymbolID uint64
+
 type Value struct {
-	Kind              ValueKind
-	String            string
-	Bool              bool
-	Number            float64
-	BigInt            string
-	Array             []Value
-	Object            []ObjectEntry
-	PrivateName       string
-	ClassKey          string
-	ClassDefinition   *classicJSClassDefinition
-	Function          *classicJSArrowFunction
-	NativeFunction    NativeFunction
-	HostReferencePath string
-	HostReferenceKind HostReferenceKind
-	Promise           *Value
-	Invocation        string
+	Kind                        ValueKind
+	String                      string
+	Bool                        bool
+	Number                      float64
+	BigInt                      string
+	SymbolDescription           string
+	SymbolID                    string
+	Array                       []Value
+	Object                      []ObjectEntry
+	PrivateName                 string
+	ClassKey                    string
+	ClassDefinition             *classicJSClassDefinition
+	Function                    *classicJSArrowFunction
+	NativeFunction              NativeFunction
+	NativeConstructibleFunction NativeFunction
+	HostReferencePath           string
+	HostReferenceKind           HostReferenceKind
+	Promise                     *Value
+	PromiseState                *classicJSPromiseState
+	Invocation                  string
+	MapState                    *classicJSMapState
+	SetState                    *classicJSSetState
 }
 
 func UndefinedValue() Value {
@@ -94,8 +104,22 @@ func BigIntValue(value string) Value {
 	}
 }
 
+func SymbolValue(description string) Value {
+	symbolID := strconv.FormatUint(atomic.AddUint64(&nextSymbolID, 1), 10)
+	registerSymbolDescription(symbolID, description)
+	return Value{
+		Kind:              ValueKindSymbol,
+		SymbolDescription: description,
+		SymbolID:          symbolID,
+	}
+}
+
 func ArrayValue(values []Value) Value {
-	copied := make([]Value, len(values))
+	capacity := len(values)
+	if capacity == 0 {
+		capacity = 1
+	}
+	copied := make([]Value, len(values), capacity)
 	copy(copied, values)
 	return Value{
 		Kind:  ValueKindArray,
@@ -104,12 +128,25 @@ func ArrayValue(values []Value) Value {
 }
 
 func ObjectValue(entries []ObjectEntry) Value {
-	copied := make([]ObjectEntry, len(entries))
+	capacity := len(entries)
+	if capacity == 0 {
+		capacity = 1
+	}
+	copied := make([]ObjectEntry, len(entries), capacity)
 	copy(copied, entries)
 	return Value{
 		Kind:   ValueKindObject,
 		Object: copied,
 	}
+}
+
+func objectValueWithMetadata(base Value, entries []ObjectEntry) Value {
+	cloned := ObjectValue(entries)
+	cloned.ClassKey = base.ClassKey
+	cloned.ClassDefinition = base.ClassDefinition
+	cloned.MapState = base.MapState
+	cloned.SetState = base.SetState
+	return cloned
 }
 
 func PrivateNameValue(name string) Value {
@@ -130,6 +167,14 @@ func NativeFunctionValue(fn NativeFunction) Value {
 	return Value{
 		Kind:           ValueKindFunction,
 		NativeFunction: fn,
+	}
+}
+
+func NativeConstructibleFunctionValue(callFn, constructFn NativeFunction) Value {
+	return Value{
+		Kind:                        ValueKindFunction,
+		NativeFunction:              callFn,
+		NativeConstructibleFunction: constructFn,
 	}
 }
 
@@ -162,6 +207,18 @@ func PromiseValue(value Value) Value {
 		Kind:    ValueKindPromise,
 		Promise: &copied,
 	}
+}
+
+func PendingPromiseValue(state *classicJSPromiseState) Value {
+	return Value{
+		Kind:         ValueKindPromise,
+		PromiseState: state,
+	}
+}
+
+func NewPendingPromise() (Value, func(Value)) {
+	state := &classicJSPromiseState{}
+	return PendingPromiseValue(state), state.resolve
 }
 
 func InvocationValue(source string) Value {
@@ -199,6 +256,11 @@ func ToJSString(value Value) string {
 		}
 	case ValueKindBigInt:
 		return value.BigInt
+	case ValueKindSymbol:
+		if value.SymbolDescription == "" {
+			return "Symbol()"
+		}
+		return "Symbol(" + value.SymbolDescription + ")"
 	case ValueKindArray:
 		if len(value.Array) == 0 {
 			return ""
@@ -254,10 +316,24 @@ func toJSArrayElementString(value Value) string {
 
 func unwrapPromiseValue(value Value) Value {
 	for value.Kind == ValueKindPromise {
+		if value.PromiseState != nil {
+			if value.PromiseState.resolved {
+				value = value.PromiseState.value
+				continue
+			}
+			return UndefinedValue()
+		}
 		if value.Promise == nil {
 			return UndefinedValue()
 		}
 		value = *value.Promise
 	}
 	return value
+}
+
+func pendingPromiseState(value Value) (*classicJSPromiseState, bool) {
+	if value.Kind != ValueKindPromise || value.PromiseState == nil || value.PromiseState.resolved {
+		return nil, false
+	}
+	return value.PromiseState, true
 }

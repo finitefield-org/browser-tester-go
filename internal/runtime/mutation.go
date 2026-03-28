@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"browsertester/internal/dom"
+	"browsertester/internal/script"
 )
 
 func (s *Session) InnerHTML(selector string) (string, error) {
@@ -172,9 +173,11 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevMicrotasks := append([]string(nil), s.microtasks...)
 	prevTimers := cloneTimerMap(s.timers)
 	prevFrames := cloneAnimationFrameMap(s.animationFrames)
+	prevBlobStates := cloneBrowserBlobStateMap(s.blobStates)
 	prevURLStates := cloneBrowserURLStateMap(s.urlStates)
 	prevNextTimerID := s.nextTimerID
 	prevNextAnimationFrameID := s.nextAnimationFrameID
+	prevNextBlobStateID := s.nextBlobStateID
 	prevNextURLStateID := s.nextURLStateID
 	prevRunningTimerID := s.runningTimerID
 	prevRunningTimerCancelled := s.runningTimerCancelled
@@ -186,6 +189,9 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevHistoryEntries := cloneHistoryEntries(s.historyEntries)
 	prevHistoryIndex := s.historyIndex
 	prevHistoryScrollRestoration := s.historyScrollRestoration
+	prevIntlOverride := s.intlOverride
+	prevHasIntlOverride := s.hasIntlOverride
+	prevWindowProperties := cloneScriptValueMap(s.windowProperties)
 	storage := s.Registry().Storage()
 	prevStorageLocal := storage.Local()
 	prevStorageSession := storage.Session()
@@ -217,9 +223,11 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.microtasks = prevMicrotasks
 			s.timers = prevTimers
 			s.animationFrames = prevFrames
+			s.blobStates = prevBlobStates
 			s.urlStates = prevURLStates
 			s.nextTimerID = prevNextTimerID
 			s.nextAnimationFrameID = prevNextAnimationFrameID
+			s.nextBlobStateID = prevNextBlobStateID
 			s.nextURLStateID = prevNextURLStateID
 			s.runningTimerID = prevRunningTimerID
 			s.runningTimerCancelled = prevRunningTimerCancelled
@@ -227,6 +235,9 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.scrollY = prevScrollY
 			s.windowName = prevWindowName
 			s.lastInlineScriptHTML = prevLastInlineScriptHTML
+			s.intlOverride = prevIntlOverride
+			s.hasIntlOverride = prevHasIntlOverride
+			s.windowProperties = prevWindowProperties
 			s.cookieJar = prevCookieJar
 			s.historyEntries = prevHistoryEntries
 			s.historyIndex = prevHistoryIndex
@@ -255,6 +266,8 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	s.eventDispatch = nil
 	s.scrollX = 0
 	s.scrollY = 0
+	s.hasIntlOverride = false
+	s.windowProperties = nil
 	s.syncDocumentState(s.URL())
 
 	if err = s.executeInlineScripts(store); err != nil {
@@ -264,4 +277,15 @@ func (s *Session) WriteHTML(markup string) (err error) {
 		return err
 	}
 	return nil
+}
+
+func cloneScriptValueMap(values map[string]script.Value) map[string]script.Value {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]script.Value, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
 }

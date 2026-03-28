@@ -5065,6 +5065,22 @@ func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestInlineScriptsCanUseCSSEscapeOnGlobalCSSObject(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out"></div><script>document.getElementById("out").textContent = [CSS.escape("0"), CSS.escape("alpha-beta")].join("|")</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `\30 |alpha-beta` {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, `\30 |alpha-beta`)
+	}
+	if got := harness.Debug().DOMError(); got != "" {
+		t.Fatalf("Debug().DOMError() = %q, want empty after CSS.escape bootstrap", got)
+	}
+}
+
 func TestInlineScriptsCanBootstrapOfflineNavigatorOnLineSeed(t *testing.T) {
 	harness, err := NewHarnessBuilder().
 		NavigatorOnLine(false).

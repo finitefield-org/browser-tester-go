@@ -63,14 +63,16 @@ Exit criteria:
   `textContent` helpers, bounded `dataset` reads, writes, and deletes for template-driven controls, a bounded
   `documentCurrentScript` helper for classic inline scripts, an explicit `expr(...)` wrapper for
   nested host expressions, and a bounded browser-global bridge for raw HTML bootstrap (`window`,
-  `document`, `location`, `history`, `navigator`, `URL`, `Intl.NumberFormat`, storage, `matchMedia`,
-  `clipboard`, timers, and `console`).
+  `document`, `location`, `history`, `navigator`, `URL`, `DOMParser` (including parsererror fallbacks with `getElementsByTagName()`), `XMLSerializer`, `Intl.NumberFormat`,
+  `Intl.Collator`, storage, `matchMedia`, `clipboard`, dynamic session-backed `window.<custom>`
+  object properties, timers, and `console`).
 - The current workspace already supports object literal shorthand properties and methods with any
   bound value, object literal computed property names and methods, object literal getter/setter
-  accessors, bounded `throw` statements with catch-bound values and catch binding patterns, bounded
+  accessors, bounded `throw` statements with catch-bound values, optional catch binding (`catch {}`),
+  and catch binding patterns, bounded
   `delete` expressions on local object, array, string, and primitive number/boolean/bigint bindings
-  including optional chaining and array `length`, bounded property assignment on existing local
-  object/array bindings with getter-only property assignments failing with runtime errors, private
+  including optional chaining and array `length`, bounded property assignment on local
+  object/array bindings, including creating missing plain object properties on write, with getter-only property assignments failing with runtime errors, private
   class fields, bounded private `in` operator on bounded class private fields, bounded `super`
   property assignment, and bounded `super` deletion on bounded prototype targets and bounded
   null-prototype object literals, while `super` outside bounded class and object literal methods
@@ -102,7 +104,8 @@ Exit criteria:
   `export default class` declarations, re-export syntax with `from`, including namespace re-exports
   like `export * as ns from ...`, dynamic `import()` with string-compatible specifiers and optional
   attributes objects, and bounded `import.meta.url` module metadata, plus array/object destructuring
-  patterns in `let` / `const` / `var` declarations with default binding values, including computed
+  patterns in `let` / `const` / `var` declarations with default binding values, plus bounded array
+  destructuring assignment expressions on assignable member-expression targets, including computed
   object binding keys, bounded `using` / `await using` declarations, bounded array and iterator-like
   object `for...of` loops over string, array, and iterator-like object values, bounded array and
   iterator-like object `for await...of` loops over string, array, and iterator-like object values,
@@ -125,7 +128,8 @@ Exit criteria:
   bound value, object literal computed property names and methods, object literal getter/setter
   accessors, bounded `throw` statements with catch-bound values, bounded `delete` expressions on
   local object, array, and string bindings including optional chaining and array `length`, bounded
-  property assignment on existing local object/array bindings, private class fields, and bounded
+  property assignment on local object/array bindings, including creating missing plain object
+  properties on write, private class fields, and bounded
   `super` property assignment, bounded prefix/postfix increment and decrement expressions on local
   bindings and object/array property chains, bounded logical assignment operators and other bounded
   compound assignment operators on local bindings and object/array property chains, bounded

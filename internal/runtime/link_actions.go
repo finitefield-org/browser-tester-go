@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/base64"
 	"net/url"
 	"path"
 	"strings"
@@ -24,7 +25,9 @@ func (s *Session) applyHyperlinkDefaultAction(node *dom.Node) error {
 
 	if download, ok := attributeValue(node.Attrs, "download"); ok {
 		fileName := hyperlinkDownloadFileName(destination, download)
-		s.Registry().Downloads().Capture(fileName, []byte(destination))
+		if bytes, ok := downloadBytesForDestination(s, destination); ok {
+			s.Registry().Downloads().Capture(fileName, bytes)
+		}
 		return nil
 	}
 
@@ -73,4 +76,38 @@ func hyperlinkDownloadFileName(destination, suggested string) string {
 		return "download"
 	}
 	return name
+}
+
+func downloadBytesForDestination(session *Session, destination string) ([]byte, bool) {
+	trimmed := strings.TrimSpace(destination)
+	if strings.HasPrefix(trimmed, "data:") {
+		afterScheme := strings.TrimPrefix(trimmed, "data:")
+		comma := strings.IndexByte(afterScheme, ',')
+		if comma < 0 {
+			return []byte(destination), true
+		}
+
+		meta := afterScheme[:comma]
+		payload := afterScheme[comma+1:]
+		if strings.Contains(strings.ToLower(meta), ";base64") {
+			decoded, err := base64.StdEncoding.DecodeString(payload)
+			if err != nil {
+				return []byte(destination), true
+			}
+			return decoded, true
+		}
+
+		decoded, err := url.PathUnescape(payload)
+		if err != nil {
+			return []byte(destination), true
+		}
+		return []byte(decoded), true
+	}
+	if strings.HasPrefix(trimmed, "blob:") {
+		if bytes, ok := downloadBytesForBlobDestination(session, trimmed); ok {
+			return bytes, true
+		}
+		return nil, false
+	}
+	return []byte(destination), true
 }

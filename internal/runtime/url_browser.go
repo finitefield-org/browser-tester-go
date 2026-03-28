@@ -105,6 +105,21 @@ func resolveURLInstanceReference(session *Session, path string) (script.Value, e
 	}
 }
 
+func resolveURLStaticReference(session *Session, suffix string) (script.Value, error) {
+	switch strings.TrimPrefix(suffix, ".") {
+	case "createObjectURL":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserURLCreateObjectURL(session, args)
+		}), nil
+	case "revokeObjectURL":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserURLRevokeObjectURL(session, args)
+		}), nil
+	default:
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "URL."+suffix))
+	}
+}
+
 func setURLInstanceReferenceValue(session *Session, path string, value script.Value) error {
 	id, suffix, ok := parseBrowserURLInstancePath(path)
 	if !ok || strings.TrimSpace(id) == "" || suffix == "" {

@@ -5,6 +5,67 @@ import (
 	"strings"
 )
 
+var svgAdjustedAttributeNames = map[string]string{
+	"attributename":       "attributeName",
+	"attributetype":       "attributeType",
+	"basefrequency":       "baseFrequency",
+	"baseprofile":         "baseProfile",
+	"calcmode":            "calcMode",
+	"clippathunits":       "clipPathUnits",
+	"diffuseconstant":     "diffuseConstant",
+	"edgemode":            "edgeMode",
+	"filterunits":         "filterUnits",
+	"glyphref":            "glyphRef",
+	"gradienttransform":   "gradientTransform",
+	"gradientunits":       "gradientUnits",
+	"kernelmatrix":        "kernelMatrix",
+	"kernelunitlength":    "kernelUnitLength",
+	"keypoints":           "keyPoints",
+	"keysplines":          "keySplines",
+	"keytimes":            "keyTimes",
+	"lengthadjust":        "lengthAdjust",
+	"limitingconeangle":   "limitingConeAngle",
+	"markerheight":        "markerHeight",
+	"markerunits":         "markerUnits",
+	"markerwidth":         "markerWidth",
+	"maskcontentunits":    "maskContentUnits",
+	"maskunits":           "maskUnits",
+	"numoctaves":          "numOctaves",
+	"pathlength":          "pathLength",
+	"patterncontentunits": "patternContentUnits",
+	"patterntransform":    "patternTransform",
+	"patternunits":        "patternUnits",
+	"pointsatx":           "pointsAtX",
+	"pointsaty":           "pointsAtY",
+	"pointsatz":           "pointsAtZ",
+	"preservealpha":       "preserveAlpha",
+	"preserveaspectratio": "preserveAspectRatio",
+	"primitiveunits":      "primitiveUnits",
+	"refx":                "refX",
+	"refy":                "refY",
+	"repeatcount":         "repeatCount",
+	"repeatdur":           "repeatDur",
+	"requiredextensions":  "requiredExtensions",
+	"requiredfeatures":    "requiredFeatures",
+	"specularconstant":    "specularConstant",
+	"specularexponent":    "specularExponent",
+	"spreadmethod":        "spreadMethod",
+	"startoffset":         "startOffset",
+	"stddeviation":        "stdDeviation",
+	"stitchtiles":         "stitchTiles",
+	"surfacescale":        "surfaceScale",
+	"systemlanguage":      "systemLanguage",
+	"tablevalues":         "tableValues",
+	"targetx":             "targetX",
+	"targety":             "targetY",
+	"textlength":          "textLength",
+	"viewbox":             "viewBox",
+	"viewtarget":          "viewTarget",
+	"xchannelselector":    "xChannelSelector",
+	"ychannelselector":    "yChannelSelector",
+	"zoomandpan":          "zoomAndPan",
+}
+
 func (s *Store) DumpDOM() string {
 	if s == nil {
 		return ""
@@ -60,11 +121,12 @@ func (s *Store) serializeNode(b *strings.Builder, id NodeID) {
 		}
 		b.WriteString(escapeTextContent(node.Text))
 	case NodeKindElement:
+		inSVG := s.isSVGSerializationContext(id)
 		b.WriteByte('<')
 		b.WriteString(node.TagName)
 		for _, attr := range node.Attrs {
 			b.WriteByte(' ')
-			b.WriteString(attr.Name)
+			b.WriteString(serializeAttributeName(attr.Name, inSVG))
 			if attr.HasValue {
 				b.WriteString(`="`)
 				b.WriteString(escapeAttributeValue(attr.Value))
@@ -84,6 +146,25 @@ func (s *Store) serializeNode(b *strings.Builder, id NodeID) {
 		b.WriteString(node.TagName)
 		b.WriteByte('>')
 	}
+}
+
+func (s *Store) isSVGSerializationContext(id NodeID) bool {
+	for current := s.nodes[id]; current != nil; current = s.nodes[current.Parent] {
+		if current.Kind == NodeKindElement && current.TagName == "svg" {
+			return true
+		}
+	}
+	return false
+}
+
+func serializeAttributeName(name string, inSVG bool) string {
+	if !inSVG {
+		return name
+	}
+	if adjusted, ok := svgAdjustedAttributeNames[name]; ok {
+		return adjusted
+	}
+	return name
 }
 
 func (s *Store) shouldSerializeTextRaw(id NodeID) bool {

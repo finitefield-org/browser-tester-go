@@ -30,7 +30,7 @@ func resolveDocumentActiveElementValue(session *Session, store *dom.Store) (scri
 	if nodeID == 0 {
 		return script.NullValue(), nil
 	}
-	return browserElementReferenceValue(nodeID), nil
+	return browserElementReferenceValue(nodeID, store), nil
 }
 
 func resolveDocumentURLValue(session *Session, store *dom.Store, property string) (script.Value, error) {

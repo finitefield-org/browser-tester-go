@@ -30,7 +30,7 @@ func browserNodeListValueFromIDs(session *Session, store *dom.Store, ids []dom.N
 	for i, nodeID := range ids {
 		entries = append(entries, script.ObjectEntry{
 			Key:   strconv.Itoa(i),
-			Value: browserElementReferenceValue(nodeID),
+			Value: browserElementReferenceValue(nodeID, store),
 		})
 	}
 
@@ -51,7 +51,7 @@ func browserNodeListValueFromIDs(session *Session, store *dom.Store, ids []dom.N
 			if index < 0 || int(index) >= len(ids) {
 				return script.NullValue(), nil
 			}
-			return browserElementReferenceValue(ids[int(index)]), nil
+			return browserElementReferenceValue(ids[int(index)], store), nil
 		}),
 	})
 
@@ -73,7 +73,7 @@ func browserNodeListValueFromIDs(session *Session, store *dom.Store, ids []dom.N
 					&inlineScriptHost{session: session, store: store},
 					callback,
 					[]script.Value{
-						browserElementReferenceValue(nodeID),
+						browserElementReferenceValue(nodeID, store),
 						script.NumberValue(float64(i)),
 						listValue,
 					},

@@ -15,6 +15,7 @@ type browserBootstrapHost struct {
 	calls            []browserCall
 	resolvedPaths    []string
 	documentLookups  []string
+	documentElements map[string]Value
 	localStorage     map[string]string
 	sessionStorage   map[string]string
 	clipboardWrites  []string
@@ -22,6 +23,11 @@ type browserBootstrapHost struct {
 	timerSources     []string
 	microtaskSources []string
 	historyURL       string
+}
+
+type promiseCaptureHost struct {
+	capturedResolve Value
+	echoes          []string
 }
 
 func (h *browserBootstrapHost) Call(method string, args []Value) (Value, error) {
@@ -40,6 +46,40 @@ func (h *browserBootstrapHost) Call(method string, args []Value) (Value, error) 
 	}
 }
 
+func (h *promiseCaptureHost) Call(method string, args []Value) (Value, error) {
+	switch method {
+	case "captureResolve":
+		if len(args) != 1 {
+			return UndefinedValue(), fmt.Errorf("captureResolve expects 1 argument")
+		}
+		h.capturedResolve = args[0]
+		return UndefinedValue(), nil
+	case "echo":
+		if len(args) != 1 {
+			return UndefinedValue(), fmt.Errorf("echo expects 1 argument")
+		}
+		h.echoes = append(h.echoes, ToJSString(args[0]))
+		return args[0], nil
+	default:
+		return UndefinedValue(), fmt.Errorf("host method %q is not configured", method)
+	}
+}
+
+func (h *promiseCaptureHost) ResolveHostReference(path string) (Value, error) {
+	switch path {
+	case "host.echo":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return UndefinedValue(), fmt.Errorf("echo expects 1 argument")
+			}
+			h.echoes = append(h.echoes, ToJSString(args[0]))
+			return args[0], nil
+		}), nil
+	default:
+		return UndefinedValue(), fmt.Errorf("host reference %q is not configured", path)
+	}
+}
+
 func (h *browserBootstrapHost) ResolveHostReference(path string) (Value, error) {
 	h.resolvedPaths = append(h.resolvedPaths, path)
 
@@ -51,12 +91,24 @@ func (h *browserBootstrapHost) ResolveHostReference(path string) (Value, error) 
 			}
 			id := ToJSString(args[0])
 			h.documentLookups = append(h.documentLookups, id)
-			if id != "agri-unit-converter-root" {
+			if id != "agri-unit-converter-root" && id != "out" {
 				return NullValue(), nil
 			}
-			return ObjectValue([]ObjectEntry{
-				{Key: "textContent", Value: StringValue("root")},
-			}), nil
+			if h.documentElements == nil {
+				h.documentElements = map[string]Value{}
+			}
+			if element, ok := h.documentElements[id]; ok {
+				return element, nil
+			}
+			textContent := ""
+			if id == "agri-unit-converter-root" {
+				textContent = "root"
+			}
+			element := ObjectValue([]ObjectEntry{
+				{Key: "textContent", Value: StringValue(textContent)},
+			})
+			h.documentElements[id] = element
+			return element, nil
 		}), nil
 	case "window.location":
 		return ObjectValue([]ObjectEntry{
@@ -195,6 +247,109 @@ func TestDispatchSkipsUnsupportedBrowserSurfaceInUntakenBranch(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsAssignmentThroughDocumentGetElementByIdCall(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"document": HostObjectReference("document"),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `document.getElementById("out").textContent = "assigned"`})
+	if err != nil {
+		t.Fatalf("Dispatch(document.getElementById().textContent assignment) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "assigned" {
+		t.Fatalf("Dispatch(document.getElementById().textContent assignment) value = %#v, want string assigned", result.Value)
+	}
+	if len(host.documentLookups) != 1 || host.documentLookups[0] != "out" {
+		t.Fatalf("document.getElementById calls = %#v, want the out lookup", host.documentLookups)
+	}
+	element, ok := host.documentElements["out"]
+	if !ok {
+		t.Fatalf("documentElements[out] missing after assignment")
+	}
+	if len(element.Object) != 1 || element.Object[0].Key != "textContent" || element.Object[0].Value.Kind != ValueKindString || element.Object[0].Value.String != "assigned" {
+		t.Fatalf("documentElements[out] = %#v, want textContent assigned", element)
+	}
+}
+
+func TestDispatchRejectsAssignmentThroughDocumentGetElementByIdCallOnMissingElement(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"document": HostObjectReference("document"),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `document.getElementById("missing").textContent = "assigned"`})
+	if err == nil {
+		t.Fatalf("Dispatch(document.getElementById().textContent assignment on missing element) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(document.getElementById().textContent assignment on missing element) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(document.getElementById().textContent assignment on missing element) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+	if len(host.documentLookups) != 1 || host.documentLookups[0] != "missing" {
+		t.Fatalf("document.getElementById calls = %#v, want the missing lookup", host.documentLookups)
+	}
+	if _, ok := host.documentElements["missing"]; ok {
+		t.Fatalf("documentElements[missing] unexpectedly created after failed assignment")
+	}
+}
+
+func TestDispatchSupportsBuiltinMapSlice(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const pickMap = new Map();
+			pickMap.set("sku-1", 12);
+			pickMap.set("sku-2", 5);
+			const deleted = pickMap.delete("sku-1", "extra");
+			const missing = pickMap.delete("missing", "extra");
+			[
+				"" + deleted,
+				"" + missing,
+				"" + pickMap.size,
+				"" + pickMap.get("sku-2"),
+				typeof pickMap.get,
+			].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Map slice) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Map slice) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|false|1|5|function" {
+		t.Fatalf("Dispatch(Map slice) value = %q, want true|false|1|5|function", result.Value.String)
+	}
+}
+
+func TestDispatchRejectsMapCallWithoutNew(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `Map()`})
+	if err == nil {
+		t.Fatalf("Dispatch(Map()) error = nil, want constructor error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(Map()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(Map()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if !strings.Contains(scriptErr.Message, "called with `new`") {
+		t.Fatalf("Dispatch(Map()) error message = %q, want constructor error", scriptErr.Message)
+	}
+}
+
 func TestDispatchSupportsNewBrowserConstructorsWithMemberChains(t *testing.T) {
 	host := &browserBootstrapHost{}
 	runtime := NewRuntimeWithBindings(host, map[string]Value{
@@ -226,6 +381,23 @@ func TestDispatchSupportsNewBrowserConstructorsWithMemberChains(t *testing.T) {
 	}
 	if len(host.calls[1].args) != 1 || host.calls[1].args[0].Kind != ValueKindString || host.calls[1].args[0].String != "1.23" {
 		t.Fatalf("host.calls[1].args = %#v, want formatted number", host.calls[1].args)
+	}
+}
+
+func TestDispatchSupportsReassignedIntlBinding(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"Intl": HostObjectReference("Intl"),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `Intl = { NumberFormat: function () { return { format: function () { return "ok"; } }; } }; new Intl.NumberFormat("en-US", {}).format(1)`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(reassigned Intl binding) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(reassigned Intl binding) value = %#v, want string ok", result.Value)
 	}
 }
 
@@ -337,5 +509,93 @@ func TestDispatchPropagatesPromiseThenCallbackErrors(t *testing.T) {
 	}
 	if len(host.clipboardWrites) != 1 || host.clipboardWrites[0] != "copied" {
 		t.Fatalf("clipboard writes = %#v, want one copied write", host.clipboardWrites)
+	}
+}
+
+func TestDispatchResumesAwaitOnManuallyResolvedPendingPromise(t *testing.T) {
+	host := &promiseCaptureHost{}
+	promise, resolvePromise := NewPendingPromise()
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"host":    HostObjectReference("host"),
+		"promise": promise,
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `async function run() { await promise; host.echo("done"); } run()`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(pending promise await) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindPromise {
+		t.Fatalf("Dispatch(pending promise await) kind = %q, want promise", result.Value.Kind)
+	}
+	if result.Value.PromiseState == nil || result.Value.PromiseState.resolved {
+		t.Fatalf("Dispatch(pending promise await) state = %#v, want pending promise state", result.Value)
+	}
+	if len(host.echoes) != 0 {
+		t.Fatalf("host echoes before resolve = %#v, want none", host.echoes)
+	}
+
+	resolvePromise(StringValue("ready"))
+
+	if len(host.echoes) != 1 || host.echoes[0] != "done" {
+		t.Fatalf("host echoes after resolve = %#v, want one done echo", host.echoes)
+	}
+}
+
+func TestPendingPromiseAwaitContinuationStateResumesManually(t *testing.T) {
+	host := &promiseCaptureHost{}
+	promise, resolvePromise := NewPendingPromise()
+	env := newClassicJSEnvironment()
+	if err := env.declare("host", scalarJSValue(HostObjectReference("host")), true); err != nil {
+		t.Fatalf("declare(host) error = %v", err)
+	}
+	if err := env.declare("promise", scalarJSValue(promise), true); err != nil {
+		t.Fatalf("declare(promise) error = %v", err)
+	}
+
+	parser := &classicJSStatementParser{
+		host:        host,
+		env:         env,
+		allowAwait:  true,
+		allowReturn: true,
+	}
+
+	_, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(`await promise; host.echo("done")`, host, env, DefaultRuntimeConfig().StepLimit, true, false, false, nil, UndefinedValue(), false, nil, nil)
+	if err == nil {
+		t.Fatalf("evalClassicJSProgramWithAllowAwaitAndYieldAndExports error = nil, want await suspension")
+	}
+	awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err)
+	if !ok {
+		t.Fatalf("await signal details = false, want await suspension")
+	}
+	if awaitedPromise == nil {
+		t.Fatalf("awaitedPromise = nil, want pending promise state")
+	}
+	if resumeState == nil {
+		t.Fatalf("resumeState = nil, want continuation state")
+	}
+	t.Logf("resumeState type = %T", resumeState)
+	if block, ok := resumeState.(*classicJSBlockState); ok {
+		t.Logf("resumeState.index=%d len=%d child=%T owner=%T statements=%#v", block.index, len(block.statements), block.child, block.owner, block.statements)
+	}
+	if len(host.echoes) != 0 {
+		t.Fatalf("host echoes before resolve = %#v, want none", host.echoes)
+	}
+
+	resolvePromise(StringValue("ready"))
+	parser.resumeState = resumeState
+	value, nextState, err := parser.resumeClassicJSState(resumeState)
+	if err != nil {
+		t.Fatalf("resumeClassicJSState() error = %v", err)
+	}
+	if nextState != nil {
+		t.Fatalf("resumeClassicJSState() nextState = %#v, want nil", nextState)
+	}
+	if value.Kind != ValueKindString || value.String != "done" {
+		t.Fatalf("resumeClassicJSState() value = %#v, want \"done\"", value)
+	}
+	if len(host.echoes) != 1 || host.echoes[0] != "done" {
+		t.Fatalf("host echoes after manual resume = %#v, want one done echo", host.echoes)
 	}
 }

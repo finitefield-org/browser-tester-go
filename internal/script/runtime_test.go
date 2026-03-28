@@ -335,6 +335,30 @@ host.setTextContent("#out", flag ? "yes" : "no")`
 	}
 }
 
+func TestDispatchSupportsTopLevelFunctionDeclarationHoisting(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `const value = get(2); function get(input) { return input + 1; } value`})
+	if err != nil {
+		t.Fatalf("Dispatch(top-level function hoisting) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber || result.Value.Number != 3 {
+		t.Fatalf("Dispatch(top-level function hoisting) value = %#v, want number 3", result.Value)
+	}
+}
+
+func TestDispatchTreatsHoistedTopLevelFunctionDeclarationAsUndefinedStatement(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `const value = get(2); function get(input) { return input + 1; }`})
+	if err != nil {
+		t.Fatalf("Dispatch(top-level function declaration as trailing statement) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindUndefined {
+		t.Fatalf("Dispatch(top-level function declaration as trailing statement) value = %#v, want undefined", result.Value)
+	}
+}
+
 func TestDispatchSupportsObjectLiteralShorthandPropertiesAndMethodsInClassicJS(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{
@@ -611,7 +635,7 @@ func TestDispatchSupportsObjectPropertyAssignmentInClassicJS(t *testing.T) {
 	}
 	runtime := NewRuntime(host)
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `let obj = { value: "seed", nested: { count: 1 } }; obj.value = "updated"; obj.nested.count = obj.nested.count + 1; host.echo(obj.value, obj.nested.count)`})
+	_, err := runtime.Dispatch(DispatchRequest{Source: `let obj = { value: "seed" }; obj.value = "updated"; obj.nested = {}; obj.nested.count = 1; obj.nested.count = obj.nested.count + 1; host.echo(obj.value, obj.nested.count)`})
 	if err != nil {
 		t.Fatalf("Dispatch(object property assignment) error = %v", err)
 	}
@@ -1086,6 +1110,53 @@ func TestDispatchSupportsDeleteExpressionsOnHostReferencesInClassicJS(t *testing
 	}
 	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "true|undefined" {
 		t.Fatalf("host.calls[0].args = %#v, want one true|undefined string", host.calls[0].args)
+	}
+}
+
+func TestSkipHostBindingsPreservesMapState(t *testing.T) {
+	state := &classicJSMapState{}
+	state.set(StringValue("sku-1"), NumberValue(12))
+	original := classicJSMapInstanceValue(state, "")
+
+	host := &hostReferenceDeleteHost{
+		values: map[string]Value{
+			"map": original,
+		},
+	}
+	skip := skipHostBindings{delegate: host}
+
+	resolved, err := skip.ResolveHostReference("map")
+	if err != nil {
+		t.Fatalf("skip.ResolveHostReference(map) error = %v", err)
+	}
+	if resolved.Kind != ValueKindObject {
+		t.Fatalf("skip.ResolveHostReference(map) kind = %q, want object", resolved.Kind)
+	}
+	if resolved.MapState == nil {
+		t.Fatalf("skip.ResolveHostReference(map) MapState = nil, want map state")
+	}
+	if resolved.MapState == state {
+		t.Fatalf("skip.ResolveHostReference(map) MapState = original pointer, want detached clone")
+	}
+	if got := resolved.MapState.size(); got != 1 {
+		t.Fatalf("skip.ResolveHostReference(map) size = %d, want 1", got)
+	}
+
+	setFn, ok, err := classicJSMapVirtualProperty(resolved, "set")
+	if err != nil {
+		t.Fatalf("classicJSMapVirtualProperty(set) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("classicJSMapVirtualProperty(set) ok = false, want true")
+	}
+	if _, err := InvokeCallableValue(nil, setFn, []Value{StringValue("sku-2"), NumberValue(5)}, UndefinedValue(), false); err != nil {
+		t.Fatalf("InvokeCallableValue(map.set) error = %v", err)
+	}
+	if got := state.size(); got != 1 {
+		t.Fatalf("original MapState size = %d, want 1 after skipped clone mutation", got)
+	}
+	if got := resolved.MapState.size(); got != 2 {
+		t.Fatalf("resolved MapState size = %d, want 2 after mutation", got)
 	}
 }
 
@@ -3371,6 +3442,33 @@ func TestDispatchSupportsCatchBindingPatternsInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsOptionalCatchBindingInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `try { throw "seed" } catch { host.echo("caught") }`})
+	if err != nil {
+		t.Fatalf("Dispatch(optional catch binding) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 {
+		t.Fatalf("host.calls[0].args len = %d, want 1", len(host.calls[0].args))
+	}
+	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "caught" {
+		t.Fatalf("host.calls[0].args[0] = %#v, want string caught", host.calls[0].args[0])
+	}
+}
+
 func TestDispatchRejectsMalformedCatchBindingPatternsInClassicJS(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -3883,6 +3981,22 @@ func TestDispatchSupportsLogicalAssignmentOperatorsInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsConditionalPrecedenceAfterShortCircuitOperatorsInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `[
+		true || false ? "or-yes" : "or-no",
+		false && true ? "and-yes" : "and-no",
+		false ?? true ? "nullish-yes" : "nullish-no"
+	].join("|")`})
+	if err != nil {
+		t.Fatalf("Dispatch(conditional precedence after short-circuit operators) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "or-yes|and-no|nullish-no" {
+		t.Fatalf("Dispatch(conditional precedence after short-circuit operators) value = %#v, want string or-yes|and-no|nullish-no", result.Value)
+	}
+}
+
 func TestDispatchSupportsLogicalOrAndAndOnNonScalarValuesInClassicJS(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{
@@ -3978,6 +4092,57 @@ func TestDispatchSupportsLogicalAssignmentOnObjectPropertiesInClassicJS(t *testi
 	}
 	if call.args[2].Kind != ValueKindNumber || call.args[2].Number != 7 {
 		t.Fatalf("host call arg[2] = %#v, want number 7", call.args[2])
+	}
+}
+
+func TestDispatchSupportsArrayDestructuringAssignmentInsideElseIfBranchInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `let state = { rows: [{ id: "a" }, { id: "b" }, { id: "c" }] };
+function reorder(action, index) {
+  if (action === "duplicate") {
+    state.rows.splice(index + 1, 0, state.rows[index]);
+  } else if (action === "delete") {
+    state.rows.splice(index, 1);
+  } else if (action === "up" && index > 0) {
+    [state.rows[index - 1], state.rows[index]] = [state.rows[index], state.rows[index - 1]];
+  } else if (action === "down" && index < state.rows.length - 1) {
+    [state.rows[index + 1], state.rows[index]] = [state.rows[index], state.rows[index + 1]];
+  }
+}
+reorder("up", 2);
+host.echo(state.rows.map((row) => row.id).join(","))`})
+	if err != nil {
+		t.Fatalf("Dispatch(array destructuring assignment inside else-if branch) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "a,c,b" {
+		t.Fatalf("Dispatch(array destructuring assignment inside else-if branch) result = %#v, want string a,c,b", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "a,c,b" {
+		t.Fatalf("host.calls[0].args = %#v, want one string arg a,c,b", host.calls[0].args)
+	}
+}
+
+func TestDispatchRejectsArrayDestructuringAssignmentWithNonAssignableTargetInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[1] = [2]`})
+	if err == nil {
+		t.Fatalf("Dispatch(array destructuring assignment with non-assignable target) error = nil, want unsupported error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(array destructuring assignment with non-assignable target) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(array destructuring assignment with non-assignable target) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
 	}
 }
 
@@ -4202,6 +4367,66 @@ func TestDispatchSupportsRegularExpressionLiterals(t *testing.T) {
 	}
 	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "/a\\/b/i|true|a\\/b|i" {
 		t.Fatalf("host.calls[0].args = %#v, want regex string and helpers", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsRegularExpressionCommaLiteralInCallArguments(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("1,234".replace(/,/g, ""))`})
+	if err != nil {
+		t.Fatalf("Dispatch(regular expression comma literal) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "1234" {
+		t.Fatalf("Dispatch(regular expression comma literal) value = %#v, want string 1234", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "1234" {
+		t.Fatalf("host.calls[0].args = %#v, want string 1234", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsRegularExpressionUnicodeEscapeLiterals(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(/[\uFF10-\uFF19]/.test("０"))`})
+	if err != nil {
+		t.Fatalf("Dispatch(regular expression unicode escape literal) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindBool || !result.Value.Bool {
+		t.Fatalf("Dispatch(regular expression unicode escape literal) value = %#v, want bool true", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindBool || !host.calls[0].args[0].Bool {
+		t.Fatalf("host.calls[0].args = %#v, want bool true", host.calls[0].args)
+	}
+}
+
+func TestDispatchRejectsMalformedRegularExpressionCommaLiteralInCallArguments(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("1,234".replace(/,(/g, ""))`})
+	if err == nil {
+		t.Fatalf("Dispatch(malformed regular expression comma literal) error = nil, want parse error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(malformed regular expression comma literal) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindParse {
+		t.Fatalf("Dispatch(malformed regular expression comma literal) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
 	}
 }
 
@@ -5265,6 +5490,95 @@ func TestDispatchSupportsFunctionDeclarationsAndReturnStatements(t *testing.T) {
 	}
 	if result.Value.Kind != ValueKindString || result.Value.String != "yes" {
 		t.Fatalf("Dispatch(function declarations and return) result = %#v, want string yes", result.Value)
+	}
+}
+
+func TestDispatchSupportsNestedHelperCallInReturnExpression(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	source := `(() => {
+		function renderLabel(label) {
+			return ` + "`" + `<div class="field">${escapeHtml(label)}</div>` + "`" + `;
+		}
+
+		function escapeHtml(value) {
+			return "" + (value || "")
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;");
+		}
+
+		return renderLabel("Holding rate");
+	})()`
+	result, err := runtime.Dispatch(DispatchRequest{Source: source})
+	if err != nil {
+		t.Fatalf("Dispatch(nested helper call in return expression) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != `<div class="field">Holding rate</div>` {
+		t.Fatalf("Dispatch(nested helper call in return expression) result = %#v, want string <div class=\"field\">Holding rate</div>", result.Value)
+	}
+}
+
+func TestDispatchSupportsArrayMapCallbackMutationsUpdateOuterLetBindings(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	source := `const rows = [
+  { ok: true, label: "valid" },
+  { ok: false, label: "invalid" }
+];
+let calculatedCount = 0;
+let errorCount = 0;
+const previewRows = rows.map((row) => {
+  const notes = [];
+  if (!row.ok) {
+    notes.push("bad");
+    errorCount += 1;
+    return { label: row.label, notes };
+  }
+  calculatedCount += 1;
+  return { label: row.label, notes };
+});
+` + "`" + `${calculatedCount}|${errorCount}|${previewRows.map((row) => row.label + ":" + row.notes.join(";")).join("|")}` + "`"
+	result, err := runtime.Dispatch(DispatchRequest{Source: source})
+	if err != nil {
+		t.Fatalf("Dispatch(array map callback mutations update outer lets) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "1|1|valid:|invalid:bad" {
+		t.Fatalf("Dispatch(array map callback mutations update outer lets) result = %#v, want string 1|1|valid:|invalid:bad", result.Value)
+	}
+}
+
+func TestDispatchSupportsNestedHelperLocalIndexDoesNotPoisonPlainConstDeclaration(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	source := `(() => {
+		const state = { nested: {} };
+
+		function setDeepValue(obj, path, value) {
+			const parts = path.split(".");
+			let current = obj;
+			for (let index = 0; index < parts.length - 1; index += 1) {
+				const part = parts[index];
+				if (!current[part] || typeof current[part] !== "object") {
+					current[part] = {};
+				}
+				current = current[part];
+			}
+			current[parts[parts.length - 1]] = value;
+		}
+
+		setDeepValue(state.nested, "percent.rateRaw", "20");
+		const index = 1;
+		return "" + index + ":" + state.nested.percent.rateRaw;
+	})()`
+	result, err := runtime.Dispatch(DispatchRequest{Source: source})
+	if err != nil {
+		t.Fatalf("Dispatch(nested helper local index does not poison plain const declaration) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "1:20" {
+		t.Fatalf("Dispatch(nested helper local index does not poison plain const declaration) result = %#v, want string 1:20", result.Value)
 	}
 }
 
@@ -9061,5 +9375,27 @@ func TestDispatchValidatesHostMethodName(t *testing.T) {
 	}
 	if scriptErr.Kind != ErrorKindParse {
 		t.Fatalf("Dispatch(host:<blank>) error kind = %q, want %q", scriptErr.Kind, ErrorKindParse)
+	}
+}
+
+func TestSplitScriptStatementsPreservesQuotedRegularExpressionLiteral(t *testing.T) {
+	source := `const text = 'a"b'; document.getElementById("out").textContent = text.replace(/\"/g, "&quot;");`
+
+	got, err := SplitScriptStatementsForRuntime(source)
+	if err != nil {
+		t.Fatalf("SplitScriptStatementsForRuntime() error = %v", err)
+	}
+
+	want := []string{
+		`const text = 'a"b'`,
+		`document.getElementById("out").textContent = text.replace(/\"/g, "&quot;")`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SplitScriptStatementsForRuntime() len = %d, want %d; got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SplitScriptStatementsForRuntime()[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }

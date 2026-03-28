@@ -22,6 +22,11 @@ func resolveNodeTreeNavigationValue(store *dom.Store, nodeID dom.NodeID, surface
 		return script.NumberValue(float64(nodeTypeForNode(node))), true, nil
 	case "nodeName":
 		return script.StringValue(nodeNameForNode(node)), true, nil
+	case "namespaceURI":
+		if node.Kind == dom.NodeKindDocument {
+			return script.NullValue(), true, nil
+		}
+		return script.StringValue(node.NamespaceURI), true, nil
 	case "nodeValue":
 		if node.Kind == dom.NodeKindText {
 			return script.StringValue(node.Text), true, nil
@@ -39,50 +44,50 @@ func resolveNodeTreeNavigationValue(store *dom.Store, nodeID dom.NodeID, surface
 		if parent := store.Node(node.Parent); parent != nil && parent.Kind == dom.NodeKindDocument {
 			return script.HostObjectReference("document"), true, nil
 		}
-		return browserElementReferenceValue(node.Parent), true, nil
+		return browserElementReferenceValue(node.Parent, store), true, nil
 	case "parentElement":
 		if parent := store.Node(node.Parent); parent != nil && parent.Kind == dom.NodeKindElement {
-			return browserElementReferenceValue(parent.ID), true, nil
+			return browserElementReferenceValue(parent.ID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "firstChild":
 		if childID := firstChildNodeID(node); childID != 0 {
-			return browserElementReferenceValue(childID), true, nil
+			return browserElementReferenceValue(childID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "lastChild":
 		if childID := lastChildNodeID(node); childID != 0 {
-			return browserElementReferenceValue(childID), true, nil
+			return browserElementReferenceValue(childID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "firstElementChild":
 		if childID := firstElementChildNodeID(store, node); childID != 0 {
-			return browserElementReferenceValue(childID), true, nil
+			return browserElementReferenceValue(childID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "lastElementChild":
 		if childID := lastElementChildNodeID(store, node); childID != 0 {
-			return browserElementReferenceValue(childID), true, nil
+			return browserElementReferenceValue(childID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "nextSibling":
 		if siblingID := siblingNodeID(store, node, true, false); siblingID != 0 {
-			return browserElementReferenceValue(siblingID), true, nil
+			return browserElementReferenceValue(siblingID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "previousSibling":
 		if siblingID := siblingNodeID(store, node, false, false); siblingID != 0 {
-			return browserElementReferenceValue(siblingID), true, nil
+			return browserElementReferenceValue(siblingID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "nextElementSibling":
 		if siblingID := siblingNodeID(store, node, true, true); siblingID != 0 {
-			return browserElementReferenceValue(siblingID), true, nil
+			return browserElementReferenceValue(siblingID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "previousElementSibling":
 		if siblingID := siblingNodeID(store, node, false, true); siblingID != 0 {
-			return browserElementReferenceValue(siblingID), true, nil
+			return browserElementReferenceValue(siblingID, store), true, nil
 		}
 		return script.NullValue(), true, nil
 	case "childElementCount":
@@ -118,6 +123,9 @@ func nodeNameForNode(node *dom.Node) string {
 	case dom.NodeKindText:
 		return "#text"
 	case dom.NodeKindElement:
+		if node.NamespaceURI != "" {
+			return node.TagName
+		}
 		return strings.ToUpper(node.TagName)
 	default:
 		return ""

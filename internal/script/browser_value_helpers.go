@@ -5,14 +5,105 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const browserDateInternalPrefix = "\x00browser-date:"
 const browserDateTimestampKey = browserDateInternalPrefix + "timestamp"
+const browserTypedArrayInternalPrefix = "\x00browser-typed-array:"
+const BrowserUint8ArrayBytesKey = browserTypedArrayInternalPrefix + "bytes"
+const symbolObjectKeyPrefix = "\x00classic-js-symbol:"
+
+var symbolDescriptions sync.Map
 
 func IsInternalObjectKey(name string) bool {
 	return classicJSIsInternalObjectKey(name)
+}
+
+func registerSymbolDescription(symbolID, description string) {
+	if symbolID == "" {
+		return
+	}
+	symbolDescriptions.Store(symbolID, description)
+}
+
+func symbolDescriptionForID(symbolID string) string {
+	if symbolID == "" {
+		return ""
+	}
+	if description, ok := symbolDescriptions.Load(symbolID); ok {
+		if text, ok := description.(string); ok {
+			return text
+		}
+	}
+	return ""
+}
+
+func IsSymbolObjectKey(name string) bool {
+	return strings.HasPrefix(name, symbolObjectKeyPrefix)
+}
+
+func SymbolObjectKey(value Value) (string, bool) {
+	if value.Kind != ValueKindSymbol || value.SymbolID == "" {
+		return "", false
+	}
+	return symbolObjectKeyPrefix + value.SymbolID, true
+}
+
+func SymbolValueFromObjectKey(key string) (Value, bool) {
+	if !IsSymbolObjectKey(key) {
+		return Value{}, false
+	}
+	symbolID := strings.TrimPrefix(key, symbolObjectKeyPrefix)
+	return Value{
+		Kind:              ValueKindSymbol,
+		SymbolDescription: symbolDescriptionForID(symbolID),
+		SymbolID:          symbolID,
+	}, true
+}
+
+func propertyKeyString(value Value) string {
+	if key, ok := SymbolObjectKey(value); ok {
+		return key
+	}
+	return ToJSString(value)
+}
+
+func browserElementReferenceTag(path string) (string, bool) {
+	normalized := strings.TrimSpace(path)
+	if !strings.HasPrefix(normalized, "element:") {
+		return "", false
+	}
+	remainder := strings.TrimPrefix(normalized, "element:")
+	if remainder == "" {
+		return "", false
+	}
+	if index := strings.IndexByte(remainder, '.'); index >= 0 {
+		remainder = remainder[:index]
+	}
+	if index := strings.IndexByte(remainder, '@'); index >= 0 {
+		if index+1 >= len(remainder) {
+			return "", false
+		}
+		return remainder[index+1:], true
+	}
+	return "", false
+}
+
+func browserHTMLConstructorTag(name string) (string, bool) {
+	normalized := strings.TrimSpace(name)
+	if normalized == "HTMLElement" {
+		return "", true
+	}
+	if !strings.HasPrefix(normalized, "HTML") || !strings.HasSuffix(normalized, "Element") {
+		return "", false
+	}
+	tag := strings.TrimSuffix(strings.TrimPrefix(normalized, "HTML"), "Element")
+	if tag == "" {
+		return "", false
+	}
+	return strings.ToLower(tag), true
 }
 
 func BrowserDateValue(ms int64) Value {
@@ -49,6 +140,15 @@ func BrowserDateTimestamp(value Value) (int64, bool) {
 
 func BrowserDateISOString(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func BrowserDateLocaleDateString(ms int64, locale string) string {
+	t := time.UnixMilli(ms).UTC()
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	if strings.HasPrefix(normalized, "ja") {
+		return t.Format("2006/01/02")
+	}
+	return strconv.Itoa(int(t.Month())) + "/" + strconv.Itoa(t.Day()) + "/" + strconv.Itoa(t.Year())
 }
 
 func RegExpLiteralParts(value Value) (pattern string, flags string, ok bool) {

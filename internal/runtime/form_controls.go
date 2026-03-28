@@ -131,7 +131,6 @@ func (s *Session) applyClickDefaultAction(selector string) error {
 	if err != nil {
 		return err
 	}
-
 	if node == nil || node.Kind != dom.NodeKindElement {
 		return nil
 	}
@@ -184,6 +183,91 @@ func (s *Session) applyClickDefaultAction(selector string) error {
 		if isSubmitControl(node) {
 			if _, ok := submitTarget(store, nodeID, node); ok {
 				return s.Submit(normalized)
+			}
+		} else if isResetControl(node) {
+			if formID, ok := resetTarget(store, nodeID, node); ok {
+				prevented, err := s.dispatchTargetEventListeners(store, formID, "reset")
+				if err != nil {
+					return err
+				}
+				if prevented {
+					return nil
+				}
+				return store.ResetFormControls(formID)
+			}
+		}
+	case "a", "area":
+		return s.applyHyperlinkDefaultAction(node)
+	}
+
+	return nil
+}
+
+func (s *Session) applyClickDefaultActionForNode(store *dom.Store, nodeID dom.NodeID, node *dom.Node) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if store == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return nil
+	}
+
+	switch node.TagName {
+	case "input":
+		switch inputType(node) {
+		case "checkbox":
+			checked := hasAttribute(node.Attrs, "checked")
+			if err := store.SetFormControlChecked(nodeID, !checked); err != nil {
+				return err
+			}
+			if err := store.SetUserValidity(nodeID, true); err != nil {
+				return err
+			}
+			if _, err := s.dispatchEventListeners(store, nodeID, "input"); err != nil {
+				return err
+			}
+			_, err := s.dispatchEventListeners(store, nodeID, "change")
+			return err
+		case "radio":
+			if err := store.SetFormControlChecked(nodeID, true); err != nil {
+				return err
+			}
+			if err := store.SetUserValidity(nodeID, true); err != nil {
+				return err
+			}
+			if _, err := s.dispatchEventListeners(store, nodeID, "input"); err != nil {
+				return err
+			}
+			_, err := s.dispatchEventListeners(store, nodeID, "change")
+			return err
+		case "submit", "image":
+			if formID, ok := submitTarget(store, nodeID, node); ok {
+				if _, err := s.dispatchEventListeners(store, formID, "submit"); err != nil {
+					return err
+				}
+				return nil
+			}
+		case "reset":
+			if formID, ok := resetTarget(store, nodeID, node); ok {
+				prevented, err := s.dispatchTargetEventListeners(store, formID, "reset")
+				if err != nil {
+					return err
+				}
+				if prevented {
+					return nil
+				}
+				return store.ResetFormControls(formID)
+			}
+		}
+	case "button":
+		if isSubmitControl(node) {
+			if formID, ok := submitTarget(store, nodeID, node); ok {
+				if _, err := s.dispatchEventListeners(store, formID, "submit"); err != nil {
+					return err
+				}
+				return nil
 			}
 		} else if isResetControl(node) {
 			if formID, ok := resetTarget(store, nodeID, node); ok {

@@ -294,7 +294,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(nodeID), nil
+		return browserElementReferenceValue(nodeID, store), nil
 
 	case "createTextNode":
 		if len(args) == 0 {
@@ -308,7 +308,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(nodeID), nil
+		return browserElementReferenceValue(nodeID, store), nil
 
 	case "appendChild":
 		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -325,7 +325,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err := store.AppendChild(parentID, childID); err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(childID), nil
+		return browserElementReferenceValue(childID, store), nil
 
 	case "replaceChild":
 		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -346,7 +346,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err := store.ReplaceChild(parentID, newChildID, oldChildID); err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(newChildID), nil
+		return browserElementReferenceValue(newChildID, store), nil
 
 	case "insertBefore":
 		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -371,12 +371,12 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 			if err := store.AppendChild(parentID, childID); err != nil {
 				return script.UndefinedValue(), err
 			}
-			return browserElementReferenceValue(childID), nil
+			return browserElementReferenceValue(childID, store), nil
 		}
 		if err := store.InsertBefore(parentID, childID, referenceID); err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(childID), nil
+		return browserElementReferenceValue(childID, store), nil
 
 	case "insertAdjacentElement":
 		nodeID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -404,7 +404,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err := store.InsertAdjacentElement(nodeID, position, childID); err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(childID), nil
+		return browserElementReferenceValue(childID, store), nil
 
 	case "insertAdjacentText":
 		nodeID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -425,7 +425,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(textID), nil
+		return browserElementReferenceValue(textID, store), nil
 
 	case "removeChild":
 		parentID, err := inlineScriptResolveNodeIDArg(store, method, args, 0)
@@ -442,7 +442,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if err := store.RemoveChild(parentID, childID); err != nil {
 			return script.UndefinedValue(), err
 		}
-		return browserElementReferenceValue(childID), nil
+		return browserElementReferenceValue(childID, store), nil
 
 	case "replaceChildren":
 		selector, err := scriptStringArg(method, args, 0)
@@ -1136,12 +1136,22 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.NumberValue(float64(id)), nil
 
 	case "requestAnimationFrame":
+		if h.session == nil {
+			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
+		}
+		if len(args) == 0 {
+			return script.UndefinedValue(), fmt.Errorf("requestAnimationFrame requires argument 1")
+		}
+		if args[0].Kind == script.ValueKindFunction && (args[0].NativeFunction != nil || args[0].Function != nil) {
+			id, err := h.session.requestAnimationFrameCallback(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.NumberValue(float64(id)), nil
+		}
 		source, err := scriptStringArg(method, args, 0)
 		if err != nil {
 			return script.UndefinedValue(), err
-		}
-		if h.session == nil {
-			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
 		}
 		id, err := h.session.requestAnimationFrame(source)
 		if err != nil {

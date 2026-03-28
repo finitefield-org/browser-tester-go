@@ -86,30 +86,42 @@ runtime slices.
   `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`,
   `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
   `previousElementSibling`, and `childElementCount`), `location`, `history`, `navigator`, `URL` /
-  `URLSearchParams`, `Intl.NumberFormat`, `localStorage`, `sessionStorage`, `matchMedia`, `console`,
-  `clipboard`, and
+  `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
+  `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
+  `matchMedia`, `console`, `clipboard`, dynamic session-backed `window.<custom>` object properties such as
+  `window.crypto` / `window.hashApi`, and
+  bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Uint8Array` element checks, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
-  stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` / `Boolean`
-  / `Math` / `Date`, including the template-facing `Array.from()` / `Array.isArray()`,
-  `Object.assign()` / `Object.keys()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
-  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()`,
-  `String.prototype.startsWith()` / `String.prototype.endsWith()`, `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
-  `toExponential()`, and the bounded array/string/number/date prototype helpers used by
+  stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Map` / `Number` / `String`
+  / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
+  `Array.isArray()`,
+  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertySymbols()`, `JSON.parse()` / `JSON.stringify()`,
+  `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.floor()` / `Math.min()` / `Math.max()` /
+  `Math.round()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
+  `String.prototype.charCodeAt()` / `String.prototype.indexOf()` / `String.prototype.replace()` /
+  `String.prototype.split()`, `String.prototype.startsWith()` / `String.prototype.endsWith()`,
+  `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
+  `Array.prototype.every()` / `Array.prototype.fill()` / `Array.prototype.sort()` / `flatMap()` / `splice()` / `unshift()`,
+  `Number.prototype.toPrecision()` /
+  `toExponential()` / `Date.prototype.toLocaleDateString()`, and the bounded array/string/number/date prototype helpers used by
   template-driven bootstrap, plus the live `URL` / `URLSearchParams` query-state bridge
   (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
   `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for template query handling,
-  plus `Object.entries()` / `Object.values()` for plain-object enumeration, and bounded promise-style
+  plus `Object.entries()` / `Object.values()` / `Object.fromEntries()` for plain-object enumeration,
+  and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()`, bounded `Uint8Array`
+  construction from array-like / buffer values, bounded `Promise.resolve()`, and bounded promise-style
   `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:
   - `expr(...)`
-  - classic-JS inline script calls, bounded array and object literals, including array literal
+  - classic-JS inline script calls, with top-level function declarations hoisted before earlier
+    statements in the same script, bounded array and object literals, including array literal
     elisions, bounded object literal shorthand properties and methods with any bound value, bounded
     object literal computed property names and methods, bounded object literal getter/setter
-    accessors, bounded `throw` statements with catch-bound values and catch binding patterns,
+    accessors, bounded `throw` statements with catch-bound values, optional catch binding
+    (`catch {}`), and catch binding patterns,
     bounded `debugger` statements as no-op statements,
     bounded `delete` expressions on local object, array, string, and primitive number/boolean/bigint
     bindings including optional chaining and array `length`, unary `typeof`, logical negation `!`,
@@ -117,8 +129,10 @@ runtime slices.
     bounded relational `instanceof` operators on bounded class objects and bounded constructible
     plain function values, bounded equality operators `==`, `!=`, `===`, and `!==` across bounded
     values, bounded conditional `?:` operator, bounded exponentiation `**` / `**=` operators,
-    bounded bitwise and shift operators, bounded property assignment on existing local object/array
-    bindings with getter-only property assignments failing with runtime errors, private class
+    bounded bitwise and shift operators, bounded property assignment on local object/array
+    bindings and host-reference property chains such as `document.getElementById(...).textContent = ...`,
+    including creating missing plain object properties on write, with getter-only property
+    assignments failing with runtime errors, private class
     fields, bounded private `in` operator on bounded class private fields, and bounded `super`
     property assignment, including class field initializers and computed class member names that can
     read `super`, even in base classes without `extends`, while `super` outside bounded class/object
@@ -126,7 +140,9 @@ runtime slices.
     local bindings and object/array property chains, bounded spread/rest syntax in array/object
     literals and `let` / `const` / `var` binding patterns, with object literal spread also accepting
     string and array values, array/object destructuring patterns in `let` / `const` / `var`
-    declarations with default binding values, including computed object binding keys, bounded
+    declarations with default binding values, plus bounded array destructuring assignment
+    expressions on assignable member-expression targets, including computed object binding keys,
+    bounded
     `using` / `await using` declarations, bounded function-like parameter destructuring patterns
     with default values and rest identifiers, with malformed parameter syntax now rejecting with
     parse errors, bounded arrow functions with simple identifier/rest parameters and concise or
@@ -483,16 +499,17 @@ runtime slices.
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
   `previousElementSibling`, and `childElementCount`, plus bounded element reflection reads and writes
-  on `className`, `innerText`, `outerText`, `style`, `attributes`, and `classList`, and `dataset`
-  reads, writes, and deletes through the same surface, plus
-  bounded low-level
-  node-construction helpers on the `host:` bridge such as `host:createElement()`,
-  `host:createTextNode()`, `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
-  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, and `host:removeChild()`. Inline
-  scripts can also use bounded standard DOM surfaces such as `window` / `document` / `element`
-  `addEventListener`, `details.open`, `element.classList`, `element.dataset`, `input.select()`,
-  `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
-  `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`,
+  on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`,
+  `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
+  plus direct element text mutations through call-result property chains such as
+  `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
+  activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,
+  `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
+  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`, and
+  `element.click()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
+  `document` / `element` `addEventListener`, `details.open`, `element.classList`, `element.dataset`,
+  `input.select()`, `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
+  `click()`, `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`,
   browser-global connectivity reads like `navigator.onLine` (which can be seeded through
   `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap tests), the live `URL` /
   `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()` driven dialog

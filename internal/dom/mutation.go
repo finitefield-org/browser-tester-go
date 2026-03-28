@@ -540,6 +540,7 @@ func (s *Store) cloneNodeRecursive(nodeID NodeID, deep bool) NodeID {
 	clonedID := s.newNode(Node{
 		Kind:         node.Kind,
 		TagName:      node.TagName,
+		NamespaceURI: node.NamespaceURI,
 		Attrs:        cloneAttributes(node.Attrs),
 		Text:         node.Text,
 		DefaultAttrs: cloneAttributes(node.DefaultAttrs),
@@ -571,6 +572,7 @@ func (s *Store) cloneNodeFrom(src *Store, nodeID NodeID, deep bool) NodeID {
 	clonedID := s.newNode(Node{
 		Kind:         node.Kind,
 		TagName:      node.TagName,
+		NamespaceURI: node.NamespaceURI,
 		Attrs:        cloneAttributes(node.Attrs),
 		Text:         node.Text,
 		DefaultAttrs: cloneAttributes(node.DefaultAttrs),

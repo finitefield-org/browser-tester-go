@@ -1277,6 +1277,22 @@ func TestSessionDispatchKeyboardExposesEventKeyToStandardListeners(t *testing.T)
 	}
 }
 
+func TestSessionDispatchKeyboardBubblesToDelegatedListener(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="root"><input id="field"></div><div id="log"></div><script>document.getElementById("root").addEventListener("keydown", (event) => { document.getElementById("log").textContent = event.target.id + ":" + event.key; })</script></main>`,
+	})
+
+	if err := s.DispatchKeyboard("#field"); err != nil {
+		t.Fatalf("DispatchKeyboard(#field) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#log"); err != nil {
+		t.Fatalf("TextContent(#log) error = %v", err)
+	} else if got != "field:Escape" {
+		t.Fatalf("TextContent(#log) = %q, want %q", got, "field:Escape")
+	}
+}
+
 func TestSessionActionsSupportBoundedCombinators(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><section><button id="cta">Go</button></section><input id="name"></main>`,

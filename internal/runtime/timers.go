@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"browsertester/internal/dom"
+	"browsertester/internal/script"
 )
 
 type timerRecord struct {
@@ -18,8 +19,10 @@ type timerRecord struct {
 }
 
 type animationFrameRecord struct {
-	id     int64
-	source string
+	id          int64
+	source      string
+	callback    script.Value
+	hasCallback bool
 }
 
 type TimerSnapshot struct {
@@ -101,6 +104,23 @@ func (s *Session) requestAnimationFrame(source string) (int64, error) {
 	if normalized == "" {
 		return 0, fmt.Errorf("animation frame source must not be empty")
 	}
+	return s.scheduleAnimationFrame(animationFrameRecord{source: normalized})
+}
+
+func (s *Session) requestAnimationFrameCallback(callback script.Value) (int64, error) {
+	if s == nil {
+		return 0, fmt.Errorf("session is unavailable")
+	}
+	if callback.Kind != script.ValueKindFunction || (callback.NativeFunction == nil && callback.Function == nil) {
+		return 0, fmt.Errorf("requestAnimationFrame callback must be callable")
+	}
+	return s.scheduleAnimationFrame(animationFrameRecord{callback: callback, hasCallback: true})
+}
+
+func (s *Session) scheduleAnimationFrame(frame animationFrameRecord) (int64, error) {
+	if s == nil {
+		return 0, fmt.Errorf("session is unavailable")
+	}
 	if s.nextAnimationFrameID == math.MaxInt64 {
 		return 0, fmt.Errorf("animation frame id space exhausted")
 	}
@@ -109,10 +129,8 @@ func (s *Session) requestAnimationFrame(source string) (int64, error) {
 	if s.animationFrames == nil {
 		s.animationFrames = make(map[int64]animationFrameRecord)
 	}
-	s.animationFrames[id] = animationFrameRecord{
-		id:     id,
-		source: normalized,
-	}
+	frame.id = id
+	s.animationFrames[id] = frame
 	return id, nil
 }
 
@@ -370,6 +388,10 @@ func (s *Session) runAnimationFrame(store *dom.Store, frame animationFrameRecord
 		return nil
 	}
 	delete(s.animationFrames, frame.id)
+	if current.hasCallback {
+		_, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, nil, script.HostObjectReference("window"), true)
+		return err
+	}
 	_, err := s.runScriptOnStore(store, current.source)
 	return err
 }

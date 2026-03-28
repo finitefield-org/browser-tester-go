@@ -46,6 +46,64 @@ func resolveElementOpenValue(session *Session, store *dom.Store, nodeID dom.Node
 	return script.BoolValue(ok), nil
 }
 
+func resolveElementHrefValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".href"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsHyperlinkHref(node.TagName) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	href, ok := domAttributeValue(store, nodeID, "href")
+	if !ok {
+		return script.StringValue(""), nil
+	}
+	return script.StringValue(resolveHyperlinkURL(session.URL(), href)), nil
+}
+
+func resolveElementDownloadValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".download"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsHyperlinkHref(node.TagName) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	value, ok := domAttributeValue(store, nodeID, "download")
+	if !ok {
+		return script.StringValue(""), nil
+	}
+	return script.StringValue(value), nil
+}
+
+func resolveElementDisabledValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".disabled"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsDisabledAttribute(node.TagName) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	_, ok := domAttributeValue(store, nodeID, "disabled")
+	return script.BoolValue(ok), nil
+}
+
+func resolveElementSelectedValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".selected"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || node.TagName != "option" {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	_, ok := domAttributeValue(store, nodeID, "selected")
+	return script.BoolValue(ok), nil
+}
+
 func resolveElementStylePropertyValue(session *Session, store *dom.Store, nodeID dom.NodeID, property string) (script.Value, error) {
 	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".style"
 	if property != "" {
@@ -285,6 +343,24 @@ func resolveElementDatasetPropertyValue(session *Session, store *dom.Store, node
 		return script.UndefinedValue(), nil
 	}
 	return script.StringValue(value), nil
+}
+
+func supportsDisabledAttribute(tagName string) bool {
+	switch tagName {
+	case "button", "fieldset", "input", "optgroup", "option", "select", "textarea":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsHyperlinkHref(tagName string) bool {
+	switch tagName {
+	case "a", "area":
+		return true
+	default:
+		return false
+	}
 }
 
 func unsupportedElementSurfaceError(surface string) error {
