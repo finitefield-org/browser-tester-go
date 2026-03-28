@@ -111,9 +111,10 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
   plus bounded standard DOM
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
-  `element.classList`, `element.dataset`, `input.select()`, `document.execCommand("copy")`,
-  `document.createElement()`, `setAttribute()`, `appendChild()` / `removeChild()`, browser-global
-  locale reads like `navigator.language`, browser-global connectivity reads like `navigator.onLine`
+  `element.classList`, `element.dataset`, `input.select()`, `select.value`, `select.selectedIndex`,
+  `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`, `appendChild()` /
+  `removeChild()`, browser-global locale reads like `navigator.language`, browser-global
+  connectivity reads like `navigator.onLine`
   (which can be seeded through `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap
   tests), the live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` /
   `window.prompt()` flows through the dialog mock family.

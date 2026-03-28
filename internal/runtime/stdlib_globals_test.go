@@ -84,6 +84,67 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsJSONStringifySpaceArgument(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `JSON.stringify({ b: 1, a: { d: 4, c: 3 }, arr: [{ y: 2, x: 1 }, 3] }, null, 2)`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	want := "{\n  \"b\": 1,\n  \"a\": {\n    \"d\": 4,\n    \"c\": 3\n  },\n  \"arr\": [\n    {\n      \"y\": 2,\n      \"x\": 1\n    },\n    3\n  ]\n}"
+	if result.String != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", result.String, want)
+	}
+}
+
+func TestRunScriptSupportsJSONParsePreservesObjectKeyOrder(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const parsed = JSON.parse("{\"b\":1,\"a\":{\"d\":4,\"c\":3},\"arr\":[{\"y\":2,\"x\":1},3]}"); [Object.keys(parsed).join(","), Object.keys(parsed.a).join(","), Object.keys(parsed.arr[0]).join(",")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "b,a,arr|d,c|y,x"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsJSONParseDuplicateKeysUseLastValueAndFirstOrder(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const parsed = JSON.parse("{\"b\":1,\"a\":2,\"b\":3}"); [Object.keys(parsed).join(","), String(parsed.b)].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "b,a|3"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsObjectKeysSortAndReverse(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const parsed = JSON.parse("{\"b\":1,\"a\":{\"d\":4,\"c\":3},\"arr\":[{\"y\":2,\"x\":1},3]}"); const compareKeys = (a, b) => (a < b ? -1 : a > b ? 1 : 0); const ascending = Object.keys(parsed).sort(compareKeys).join(","); const descending = Object.keys(parsed).sort(compareKeys).reverse().join(","); [ascending, descending].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "a,arr,b|b,arr,a"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptSupportsIntlNumberFormatGrouping(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -103,6 +164,21 @@ func TestRunScriptSupportsIntlNumberFormatCurrencyStyle(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
 	result, err := session.runScriptOnStore(dom.NewStore(), `new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(1200)`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "￥1,200"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlNumberFormatCurrencyStyleWithExplicitZeroDigits(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(1200)`)
 	if err != nil {
 		t.Fatalf("runScriptOnStore() error = %v", err)
 	}
@@ -154,6 +230,25 @@ func TestRunScriptSupportsUint8ArrayConstruction(t *testing.T) {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
 	if got, want := result.String, "65,66,67"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsUint8ArrayFromMapFunction(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		const binary = "AZ";
+		const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+		Array.from(bytes).join(",");
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "65,90"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
 	}
 }

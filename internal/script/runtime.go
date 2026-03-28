@@ -351,6 +351,23 @@ func (e *classicJSEnvironment) declare(name string, value jsValue, mutable bool)
 	return nil
 }
 
+func (e *classicJSEnvironment) initializeBinding(name string, value jsValue, mutable bool) error {
+	if e == nil {
+		return NewError(ErrorKindRuntime, "classic-JS environment is unavailable")
+	}
+	if e.bindings == nil {
+		e.bindings = make(map[string]classicJSBinding)
+	}
+	if binding, ok := e.bindings[name]; ok {
+		binding.value = value.withoutAssignTarget()
+		binding.mutable = mutable
+		e.bindings[name] = binding
+		return nil
+	}
+	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: mutable}
+	return nil
+}
+
 func cloneBindingsMap(bindings map[string]Value) map[string]Value {
 	if len(bindings) == 0 {
 		return map[string]Value{}
@@ -560,6 +577,9 @@ func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue js
 	}
 	replacement := newValue.withoutAssignTarget()
 	replaced := 0
+	if e == nil {
+		return 0
+	}
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
 			goto updateScopes
@@ -712,6 +732,9 @@ func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsV
 	}
 	replacement := newValue.withoutAssignTarget()
 	replaced := 0
+	if e == nil {
+		return 0
+	}
 	for current := e; current != nil; current = current.parent {
 		for name, binding := range current.bindings {
 			updated, changed := replaceArrayReferencesInJSValue(binding.value, oldPtr, replacement.value)
@@ -1524,6 +1547,8 @@ func splitScriptStatements(source string) ([]string, error) {
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
 			lastWasDot = false
+		case ' ', '\t', '\n', '\r':
+			continue
 		case '.':
 			canStartRegex = false
 			lastWasDot = true

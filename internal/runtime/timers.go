@@ -11,11 +11,14 @@ import (
 )
 
 type timerRecord struct {
-	id         int64
-	source     string
-	dueAt      int64
-	repeat     bool
-	intervalMs int64
+	id           int64
+	source       string
+	callback     script.Value
+	callbackArgs []script.Value
+	hasCallback  bool
+	dueAt        int64
+	repeat       bool
+	intervalMs   int64
 }
 
 type animationFrameRecord struct {
@@ -39,21 +42,50 @@ type AnimationFrameSnapshot struct {
 }
 
 func (s *Session) scheduleTimeout(source string, timeoutMs int64) (int64, error) {
-	return s.scheduleTimer(source, timeoutMs, false)
+	return s.scheduleTimerRecord(timerRecord{source: source}, timeoutMs, false)
 }
 
 func (s *Session) scheduleInterval(source string, timeoutMs int64) (int64, error) {
-	return s.scheduleTimer(source, timeoutMs, true)
+	return s.scheduleTimerRecord(timerRecord{source: source}, timeoutMs, true)
 }
 
-func (s *Session) scheduleTimer(source string, timeoutMs int64, repeat bool) (int64, error) {
+func (s *Session) scheduleTimeoutCallback(callback script.Value, callbackArgs []script.Value, timeoutMs int64) (int64, error) {
+	if callback.Kind != script.ValueKindFunction || (callback.NativeFunction == nil && callback.Function == nil) {
+		return 0, fmt.Errorf("setTimeout callback must be callable")
+	}
+	return s.scheduleTimerRecord(timerRecord{
+		callback:     callback,
+		callbackArgs: append([]script.Value(nil), callbackArgs...),
+		hasCallback:  true,
+	}, timeoutMs, false)
+}
+
+func (s *Session) scheduleIntervalCallback(callback script.Value, callbackArgs []script.Value, timeoutMs int64) (int64, error) {
+	if callback.Kind != script.ValueKindFunction || (callback.NativeFunction == nil && callback.Function == nil) {
+		return 0, fmt.Errorf("setInterval callback must be callable")
+	}
+	return s.scheduleTimerRecord(timerRecord{
+		callback:     callback,
+		callbackArgs: append([]script.Value(nil), callbackArgs...),
+		hasCallback:  true,
+	}, timeoutMs, true)
+}
+
+func (s *Session) scheduleTimerRecord(record timerRecord, timeoutMs int64, repeat bool) (int64, error) {
 	if s == nil {
 		return 0, fmt.Errorf("session is unavailable")
 	}
 
-	normalized := strings.TrimSpace(source)
-	if normalized == "" {
-		return 0, fmt.Errorf("timer source must not be empty")
+	if record.hasCallback {
+		if record.callback.Kind != script.ValueKindFunction || (record.callback.NativeFunction == nil && record.callback.Function == nil) {
+			return 0, fmt.Errorf("timer callback must be callable")
+		}
+	} else {
+		normalized := strings.TrimSpace(record.source)
+		if normalized == "" {
+			return 0, fmt.Errorf("timer source must not be empty")
+		}
+		record.source = normalized
 	}
 	if timeoutMs < 0 {
 		timeoutMs = 0
@@ -68,13 +100,11 @@ func (s *Session) scheduleTimer(source string, timeoutMs int64, repeat bool) (in
 	if s.timers == nil {
 		s.timers = make(map[int64]timerRecord)
 	}
-	s.timers[id] = timerRecord{
-		id:         id,
-		source:     normalized,
-		dueAt:      saturatingAddInt64(s.scheduler.NowMs(), timeoutMs),
-		repeat:     repeat,
-		intervalMs: timeoutMs,
-	}
+	record.id = id
+	record.dueAt = saturatingAddInt64(s.scheduler.NowMs(), timeoutMs)
+	record.repeat = repeat
+	record.intervalMs = timeoutMs
+	s.timers[id] = record
 	return id, nil
 }
 
@@ -165,6 +195,9 @@ func cloneTimerMap(timers map[int64]timerRecord) map[int64]timerRecord {
 	}
 	out := make(map[int64]timerRecord, len(timers))
 	for id, timer := range timers {
+		if len(timer.callbackArgs) > 0 {
+			timer.callbackArgs = append([]script.Value(nil), timer.callbackArgs...)
+		}
 		out[id] = timer
 	}
 	return out
@@ -335,20 +368,28 @@ func (s *Session) runTimer(store *dom.Store, timer timerRecord) error {
 		s.runningTimerCancelled = prevRunningCancelled
 	}()
 
-	if _, err := s.runScriptOnStore(store, current.source); err != nil {
-		return err
+	if current.hasCallback {
+		_, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, current.callbackArgs, script.HostObjectReference("window"), true)
+		if err != nil {
+			return err
+		}
+	} else {
+		if _, err := s.runScriptOnStore(store, current.source); err != nil {
+			return err
+		}
 	}
 	if current.repeat && !s.runningTimerCancelled {
 		if s.timers == nil {
 			s.timers = make(map[int64]timerRecord)
 		}
-		s.timers[current.id] = timerRecord{
-			id:         current.id,
-			source:     current.source,
-			dueAt:      saturatingAddInt64(s.scheduler.NowMs(), current.intervalMs),
-			repeat:     true,
-			intervalMs: current.intervalMs,
+		next := current
+		next.dueAt = saturatingAddInt64(s.scheduler.NowMs(), current.intervalMs)
+		next.repeat = true
+		next.intervalMs = current.intervalMs
+		if len(next.callbackArgs) > 0 {
+			next.callbackArgs = append([]script.Value(nil), next.callbackArgs...)
 		}
+		s.timers[current.id] = next
 	}
 	return nil
 }

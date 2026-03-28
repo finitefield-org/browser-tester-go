@@ -2900,6 +2900,34 @@ func TestDispatchSupportsConstructibleFunctionPrototypeAccessInClassicJS(t *test
 	}
 }
 
+func TestDispatchSupportsNamedGeneratorFunctionPrototypeAccessInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: "function Base() {}; host.echo((function* Base() { yield `" + "${Base.prototype === undefined}" + "` })().next().value)"})
+	if err != nil {
+		t.Fatalf("Dispatch(named generator function prototype access) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(named generator function prototype access) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host call method = %q, want echo", call.method)
+	}
+	if len(call.args) != 1 || call.args[0].Kind != ValueKindString || call.args[0].String != "true" {
+		t.Fatalf("host call args = %#v, want true", call.args)
+	}
+}
+
 func TestDispatchRejectsMalformedClassExpressionsInClassicJS(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -7311,6 +7339,35 @@ func TestDispatchSupportsEqualityComparisonsOnBoundedValuesInClassicJS(t *testin
 	}
 }
 
+func TestDispatchSupportsLooseEqualityWithNullishValues(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(0 == null, 0 != null, null == 0, null != 0, undefined == 0, undefined != 0)`})
+	if err != nil {
+		t.Fatalf("Dispatch(loose equality with nullish values) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindBool || result.Value.Bool {
+		t.Fatalf("Dispatch(loose equality with nullish values) result = %#v, want bool false", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host call method = %q, want echo", call.method)
+	}
+	if len(call.args) != 6 {
+		t.Fatalf("host call args len = %d, want 6", len(call.args))
+	}
+	wantBools := []bool{false, true, false, true, false, true}
+	for i, want := range wantBools {
+		if call.args[i].Kind != ValueKindBool || call.args[i].Bool != want {
+			t.Fatalf("host call arg[%d] = %#v, want bool %v", i, call.args[i], want)
+		}
+	}
+}
+
 func TestDispatchShortCircuitsConditionalOperatorBranches(t *testing.T) {
 	host := &echoHost{}
 	runtime := NewRuntime(host)
@@ -9398,4 +9455,102 @@ func TestSplitScriptStatementsPreservesQuotedRegularExpressionLiteral(t *testing
 			t.Fatalf("SplitScriptStatementsForRuntime()[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
+}
+
+func TestSplitScriptStatementsPreservesRegexLiteralAfterWhitespace(t *testing.T) {
+	source := `
+  const one = (value) => {
+    if (!value) return "";
+    return value + "!";
+  };
+  const two = (value) => {
+    if (!value) return false;
+    return /^server\/?[^/]+$/.test(value);
+  };
+  const normalizedPath = one("a");
+  const root = document.getElementById("root");
+`
+
+	got, err := SplitScriptStatementsForRuntime(source)
+	if err != nil {
+		t.Fatalf("SplitScriptStatementsForRuntime() error = %v", err)
+	}
+
+	want := []string{
+		`const one = (value) => {
+    if (!value) return "";
+    return value + "!";
+  }`,
+		`const two = (value) => {
+    if (!value) return false;
+    return /^server\/?[^/]+$/.test(value);
+  }`,
+		`const normalizedPath = one("a")`,
+		`const root = document.getElementById("root")`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SplitScriptStatementsForRuntime() len = %d, want %d; got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SplitScriptStatementsForRuntime()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClassicJSStatementParserPreservesRegexLiteralAfterWhitespace(t *testing.T) {
+	checkString := func(t *testing.T, name, source, want string, fn func(*classicJSStatementParser) (string, error)) {
+		t.Helper()
+
+		parser := &classicJSStatementParser{source: source}
+		got, err := fn(parser)
+		if err != nil {
+			t.Fatalf("%s error = %v", name, err)
+		}
+		if got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	t.Run("block", func(t *testing.T) {
+		checkString(t, "consumeBlockSource", `{
+  foo = /^server\/?[^/]+$/.test(value);
+}`, `foo = /^server\/?[^/]+$/.test(value);`, func(parser *classicJSStatementParser) (string, error) {
+			return parser.consumeBlockSource()
+		})
+	})
+
+	t.Run("parenthesized", func(t *testing.T) {
+		checkString(t, "consumeParenthesizedSource", `(
+  foo = /^server\/?[^/]+$/.test(value)
+)`, `foo = /^server\/?[^/]+$/.test(value)`, func(parser *classicJSStatementParser) (string, error) {
+			return parser.consumeParenthesizedSource("test")
+		})
+	})
+
+	t.Run("call-argument", func(t *testing.T) {
+		checkString(t, "consumeAssignmentCallArgumentSource", `foo = /^server\/?[^/]+$/.test(value), next`, `foo = /^server\/?[^/]+$/.test(value)`, func(parser *classicJSStatementParser) (string, error) {
+			return parser.consumeAssignmentCallArgumentSource()
+		})
+	})
+
+	t.Run("array-destructuring", func(t *testing.T) {
+		parser := &classicJSStatementParser{source: `[value = /^server\/?[^/]+$/.test(path)] = rhs`}
+		elements, _, ok, err := parser.tryParseArrayDestructuringAssignmentTarget()
+		if err != nil {
+			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() error = %v", err)
+		}
+		if !ok {
+			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() ok = false, want true")
+		}
+		want := []string{`value = /^server\/?[^/]+$/.test(path)`}
+		if len(elements) != len(want) {
+			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() len = %d, want %d; got %#v", len(elements), len(want), elements)
+		}
+		for i := range want {
+			if elements[i] != want[i] {
+				t.Fatalf("tryParseArrayDestructuringAssignmentTarget()[%d] = %q, want %q", i, elements[i], want[i])
+			}
+		}
+	})
 }

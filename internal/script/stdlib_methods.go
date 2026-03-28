@@ -8,6 +8,31 @@ import (
 	"strings"
 )
 
+func (p *classicJSStatementParser) invokeCallableValue(callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
+	if p == nil {
+		return InvokeCallableValue(nil, callee, args, receiver, hasReceiver)
+	}
+	invoker := *p
+	invoker.env = newClassicJSEnvironment()
+	invoker.resumeState = nil
+	invoker.generatorNextValue = UndefinedValue()
+	invoker.hasGeneratorNextValue = false
+	invoker.bindingUpdateParent = p
+	callable := scalarJSValue(callee)
+	if hasReceiver {
+		callable.receiver = receiver
+		callable.hasReceiver = true
+	}
+	result, err := invoker.invoke(callable, args)
+	if err != nil {
+		return UndefinedValue(), err
+	}
+	if result.kind != jsValueScalar {
+		return UndefinedValue(), NewError(ErrorKindRuntime, "callable did not return a scalar value in this bounded classic-JS slice")
+	}
+	return result.value, nil
+}
+
 func currentBindingUpdateContextReplaceObjectBindings(oldValue Value, newValue Value) int {
 	if ctx := CurrentBindingUpdateContext(); ctx != nil {
 		return ctx.ReplaceObjectBindings(oldValue, newValue)
@@ -35,16 +60,28 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return NumberValue(float64(len(updated))), nil
 		}), true, nil
+	case "pop":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(value.Array) == 0 {
+				return UndefinedValue(), nil
+			}
+			updated := append([]Value(nil), value.Array[:len(value.Array)-1]...)
+			removed := value.Array[len(value.Array)-1]
+			updatedValue := ArrayValue(updated)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			return removed, nil
+		}), true, nil
 	case "includes":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
 				return BoolValue(false), nil
 			}
+			elements := append([]Value(nil), value.Array...)
 			start := 0
 			if len(args) > 1 {
 				start = indexFromValue(args[1], 0)
 			}
-			length := len(value.Array)
+			length := len(elements)
 			if start < 0 {
 				start = length + start
 				if start < 0 {
@@ -52,7 +89,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				}
 			}
 			for i := start; i < length; i++ {
-				if sameValueZero(value.Array[i], args[0]) {
+				if sameValueZero(elements[i], args[0]) {
 					return BoolValue(true), nil
 				}
 			}
@@ -64,7 +101,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if len(args) > 0 {
 				search = args[0]
 			}
-			length := len(value.Array)
+			elements := append([]Value(nil), value.Array...)
+			length := len(elements)
 			start := indexFromValueOrDefault(args, 1, 0)
 			if start < 0 {
 				start = length + start
@@ -76,7 +114,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				start = length
 			}
 			for i := start; i < length; i++ {
-				if classicJSSameValue(value.Array[i], search) {
+				if classicJSSameValue(elements[i], search) {
 					return NumberValue(float64(i)), nil
 				}
 			}
@@ -88,7 +126,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if len(args) > 0 {
 				search = args[0]
 			}
-			length := len(value.Array)
+			elements := append([]Value(nil), value.Array...)
+			length := len(elements)
 			if length == 0 {
 				return NumberValue(-1), nil
 			}
@@ -103,7 +142,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				start = length - 1
 			}
 			for i := start; i >= 0; i-- {
-				if classicJSSameValue(value.Array[i], search) {
+				if classicJSSameValue(elements[i], search) {
 					return NumberValue(float64(i)), nil
 				}
 			}
@@ -116,9 +155,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
+			elements := append([]Value(nil), value.Array...)
 			var filtered []Value
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -139,8 +179,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			for i, element := range value.Array {
-				if _, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			for i, element := range elements {
+				if _, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -157,9 +198,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			mapped := make([]Value, 0, len(value.Array))
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			mapped := make([]Value, 0, len(elements))
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -178,9 +220,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			flattened := make([]Value, 0, len(value.Array))
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			flattened := make([]Value, 0, len(elements))
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -202,8 +245,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if depth < 0 {
 				depth = 0
 			}
-			flattened := make([]Value, 0, len(value.Array))
-			flattenArrayValues(value.Array, depth, &flattened)
+			elements := append([]Value(nil), value.Array...)
+			flattened := make([]Value, 0, len(elements))
+			flattenArrayValues(elements, depth, &flattened)
 			return ArrayValue(flattened), nil
 		}), true, nil
 	case "some":
@@ -213,8 +257,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -235,8 +280,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -257,8 +303,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -279,8 +326,9 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			for i, element := range value.Array {
-				result, err := InvokeCallableValue(p.host, callback, []Value{
+			elements := append([]Value(nil), value.Array...)
+			for i, element := range elements {
+				result, err := p.invokeCallableValue(callback, []Value{
 					element,
 					NumberValue(float64(i)),
 					value,
@@ -335,6 +383,17 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return ArrayValue(removed), nil
 		}), true, nil
+	case "reverse":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			// Reverse a copy, then update any bindings that point at the original array.
+			updated := append([]Value(nil), value.Array...)
+			for i, j := 0, len(updated)-1; i < j; i, j = i+1, j-1 {
+				updated[i], updated[j] = updated[j], updated[i]
+			}
+			updatedValue := ArrayValue(updated)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			return updatedValue, nil
+		}), true, nil
 	case "fill":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -371,7 +430,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 
 			compareValues := func(left, right Value) (int, error) {
 				if useComparator {
-					result, err := InvokeCallableValue(p.host, compareCallback, []Value{left, right}, UndefinedValue(), false)
+					result, err := p.invokeCallableValue(compareCallback, []Value{left, right}, UndefinedValue(), false)
 					if err != nil {
 						return 0, err
 					}
@@ -947,7 +1006,7 @@ func (p *classicJSStatementParser) resolvePromisePrototypeMethod(value Value, na
 				if len(args) == 0 || args[0].Kind == ValueKindUndefined || args[0].Kind == ValueKindNull {
 					return PromiseValue(resolved), nil
 				}
-				result, err := InvokeCallableValue(p.host, args[0], []Value{resolved}, UndefinedValue(), false)
+				result, err := p.invokeCallableValue(args[0], []Value{resolved}, UndefinedValue(), false)
 				if err != nil {
 					return UndefinedValue(), err
 				}
@@ -960,7 +1019,7 @@ func (p *classicJSStatementParser) resolvePromisePrototypeMethod(value Value, na
 					resultPromise.resolve(unwrapPromiseValue(resolvedValue))
 					return
 				}
-				result, err := InvokeCallableValue(p.host, args[0], []Value{unwrapPromiseValue(resolvedValue)}, UndefinedValue(), false)
+				result, err := p.invokeCallableValue(args[0], []Value{unwrapPromiseValue(resolvedValue)}, UndefinedValue(), false)
 				if err != nil {
 					resultPromise.resolve(UndefinedValue())
 					return

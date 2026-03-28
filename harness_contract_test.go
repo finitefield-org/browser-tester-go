@@ -4613,6 +4613,57 @@ func TestFormControlActionsUpdateDebugDom(t *testing.T) {
 	}
 }
 
+func TestHarnessContractActionsAndAssertionsWorkTogether(t *testing.T) {
+	harness := mustHarnessFromHTML(t, `
+		<button id='run' type='button'>run</button>
+		<form id='form'>
+		  <input id='name' />
+		  <input id='agree' type='checkbox' />
+		  <button id='submitter' type='submit'>submit</button>
+		</form>
+		<p id='clicked'></p>
+		<p id='submitted'></p>
+		<script>
+		  document.getElementById('run').addEventListener('click', () => {
+		    document.getElementById('clicked').textContent = 'clicked';
+		  });
+		  document.getElementById('form').addEventListener('submit', (event) => {
+		    event.preventDefault();
+		    document.getElementById('submitted').textContent = [
+		      document.getElementById('name').value,
+		      String(document.getElementById('agree').checked)
+		    ].join('|');
+		  });
+		</script>
+	`)
+
+	if err := harness.TypeText("#name", "Alice"); err != nil {
+		t.Fatalf("TypeText(#name) error = %v", err)
+	}
+	if err := harness.SetChecked("#agree", true); err != nil {
+		t.Fatalf("SetChecked(#agree) error = %v", err)
+	}
+	if err := harness.Click("#run"); err != nil {
+		t.Fatalf("Click(#run) error = %v", err)
+	}
+	if err := harness.Submit("#form"); err != nil {
+		t.Fatalf("Submit(#form) error = %v", err)
+	}
+
+	if err := harness.AssertText("#clicked", "clicked"); err != nil {
+		t.Fatalf("AssertText(#clicked, clicked) error = %v", err)
+	}
+	if err := harness.AssertText("#submitted", "Alice|true"); err != nil {
+		t.Fatalf("AssertText(#submitted, Alice|true) error = %v", err)
+	}
+	if err := harness.AssertValue("#name", "Alice"); err != nil {
+		t.Fatalf("AssertValue(#name, Alice) error = %v", err)
+	}
+	if err := harness.AssertChecked("#agree", true); err != nil {
+		t.Fatalf("AssertChecked(#agree, true) error = %v", err)
+	}
+}
+
 func TestFormControlValueAssignmentUpdatesDebugDom(t *testing.T) {
 	harness, err := FromHTML(`<main><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select><div id="out"></div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`)
 	if err != nil {

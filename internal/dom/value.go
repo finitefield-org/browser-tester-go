@@ -47,6 +47,28 @@ func (s *Store) ValueForNode(nodeID NodeID) string {
 	}
 }
 
+// SelectedIndexForNode returns the zero-based index of the first selected option in a select.
+// It returns -1 when the node is not a select or when no option is selected.
+func (s *Store) SelectedIndexForNode(nodeID NodeID) int {
+	if s == nil {
+		return -1
+	}
+	options := s.selectOptionIDsForNode(nodeID)
+	if len(options) == 0 {
+		return -1
+	}
+	for i, optionID := range options {
+		node := s.Node(optionID)
+		if node == nil {
+			continue
+		}
+		if _, ok := attributeValue(node.Attrs, "selected"); ok {
+			return i
+		}
+	}
+	return -1
+}
+
 // CheckedForNode reports the bounded checkedness of a node.
 // The second return value is false when the node is not checkable.
 func (s *Store) CheckedForNode(nodeID NodeID) (bool, bool) {
@@ -65,22 +87,38 @@ func (s *Store) CheckedForNode(nodeID NodeID) (bool, bool) {
 }
 
 func (s *Store) selectValueForNode(nodeID NodeID) string {
-	node := s.Node(nodeID)
-	if node == nil || node.Kind != NodeKindElement || node.TagName != "select" {
+	options := s.selectOptionIDsForNode(nodeID)
+	if len(options) == 0 {
 		return ""
 	}
 
-	var selectedOption NodeID
+	for _, optionID := range options {
+		node := s.Node(optionID)
+		if node == nil {
+			continue
+		}
+		if _, ok := attributeValue(node.Attrs, "selected"); ok {
+			return optionValueForNode(s, optionID)
+		}
+	}
+	return ""
+}
+
+func (s *Store) selectOptionIDsForNode(nodeID NodeID) []NodeID {
+	if s == nil {
+		return nil
+	}
+	node := s.Node(nodeID)
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "select" {
+		return nil
+	}
+
+	options := make([]NodeID, 0, 4)
 	s.walkElementPreOrder(nodeID, func(current *Node) {
-		if selectedOption != 0 || current == nil || current.Kind != NodeKindElement || current.TagName != "option" {
+		if current == nil || current.Kind != NodeKindElement || current.TagName != "option" {
 			return
 		}
-		if _, ok := attributeValue(current.Attrs, "selected"); ok {
-			selectedOption = current.ID
-		}
+		options = append(options, current.ID)
 	})
-	if selectedOption == 0 {
-		return ""
-	}
-	return optionValueForNode(s, selectedOption)
+	return options
 }

@@ -126,6 +126,35 @@ Line 2</textarea><select id="mode"><option value="a">A</option><option selected>
 	}
 }
 
+func TestSetSelectIndexUpdatesSelectedState(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<select id="mode"><option value="a" selected>A</option><option value="b">B</option><option value="c">C</option></select>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	modeID := mustSelectSingle(t, store, "#mode")
+	if err := store.SetSelectIndex(modeID, 2); err != nil {
+		t.Fatalf("SetSelectIndex(#mode, 2) error = %v", err)
+	}
+
+	if got, want := store.SelectedIndexForNode(modeID), 2; got != want {
+		t.Fatalf("SelectedIndexForNode(#mode) after SetSelectIndex = %d, want %d", got, want)
+	}
+	if got, want := store.ValueForNode(modeID), "c"; got != want {
+		t.Fatalf("ValueForNode(#mode) after SetSelectIndex = %q, want %q", got, want)
+	}
+
+	if err := store.SetSelectIndex(modeID, -1); err != nil {
+		t.Fatalf("SetSelectIndex(#mode, -1) error = %v", err)
+	}
+	if got, want := store.SelectedIndexForNode(modeID), -1; got != want {
+		t.Fatalf("SelectedIndexForNode(#mode) after clearing = %d, want %d", got, want)
+	}
+	if got, want := store.ValueForNode(modeID), ""; got != want {
+		t.Fatalf("ValueForNode(#mode) after clearing = %q, want empty", got)
+	}
+}
+
 func TestSetSelectValueClearsUnmatchedSelection(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<select id="mode"><option value="a" selected>A</option><option value="b">B</option></select>`); err != nil {
@@ -159,6 +188,9 @@ func TestFormControlMutationHelpersRejectUnsupportedNodes(t *testing.T) {
 	}
 	if err := store.SetSelectValue(nameID, "A"); err == nil {
 		t.Fatalf("SetSelectValue(#name) error = nil, want unsupported control error")
+	}
+	if err := store.SetSelectIndex(nameID, 0); err == nil {
+		t.Fatalf("SetSelectIndex(#name, 0) error = nil, want unsupported control error")
 	}
 }
 

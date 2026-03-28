@@ -1,6 +1,9 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSessionAppliesConfigSeedsDeterministically(t *testing.T) {
 	local := map[string]string{"token": "abc"}
@@ -1489,6 +1492,30 @@ func TestSessionClickAppliesHyperlinkDefaultActions(t *testing.T) {
 	}
 }
 
+func TestSessionClickAppliesDetailsSummaryDefaultAction(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><details id="panel"><summary id="toggle">More</summary><div>Body</div></details></main>`,
+	})
+
+	if err := s.Click("#toggle"); err != nil {
+		t.Fatalf("Click(#toggle) error = %v", err)
+	}
+	if ok, err := s.HasAttribute("#panel", "open"); err != nil {
+		t.Fatalf("HasAttribute(#panel, open) after first click error = %v", err)
+	} else if !ok {
+		t.Fatalf("HasAttribute(#panel, open) after first click = false, want true")
+	}
+
+	if err := s.Click("#toggle"); err != nil {
+		t.Fatalf("Click(#toggle) second error = %v", err)
+	}
+	if ok, err := s.HasAttribute("#panel", "open"); err != nil {
+		t.Fatalf("HasAttribute(#panel, open) after second click error = %v", err)
+	} else if ok {
+		t.Fatalf("HasAttribute(#panel, open) after second click = true, want false")
+	}
+}
+
 func TestSessionClickAppliesResetDefaultAction(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<form id="profile"><input id="name"><input id="flag" type="checkbox"><input id="radio-a" type="radio" name="size" checked><input id="radio-b" type="radio" name="size"><textarea id="bio">Base</textarea><select id="mode"><option value="a" selected>A</option><option>B</option><option value="c">C</option></select><button id="reset" type="reset">Reset</button></form>`,
@@ -1637,6 +1664,24 @@ func TestSessionClickHonorsPreventDefaultFromListeners(t *testing.T) {
 	}
 	if got, want := s.DumpDOM(), `<main><a id="nav" href="/next">Go</a><div id="out">blocked</div><script>host:addEventListener("#nav", "click", 'host:preventDefault(); host:setInnerHTML("#out", "blocked")')</script></main>`; got != want {
 		t.Fatalf("DumpDOM() after prevented click = %q, want %q", got, want)
+	}
+}
+
+func TestSessionClickKeepsStateChangesBeforeListenerError(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id='boom'>boom</button><button id='check'>check</button><p id='result'></p><script>let x = 0; document.getElementById('boom').addEventListener('click', () => { x = 1; unknown_fn(); }); document.getElementById('check').addEventListener('click', () => { document.getElementById('result').textContent = String(x); });</script></main>`,
+	})
+
+	if err := s.Click("#boom"); err == nil || !strings.Contains(err.Error(), "unknown_fn") {
+		t.Fatalf("Click(#boom) error = %v, want unknown_fn error", err)
+	}
+
+	if err := s.Click("#check"); err != nil {
+		t.Fatalf("Click(#check) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><button id="boom">boom</button><button id="check">check</button><p id="result">1</p><script>let x = 0; document.getElementById('boom').addEventListener('click', () => { x = 1; unknown_fn(); }); document.getElementById('check').addEventListener('click', () => { document.getElementById('result').textContent = String(x); });</script></main>`; got != want {
+		t.Fatalf("DumpDOM() after listener error = %q, want %q", got, want)
 	}
 }
 

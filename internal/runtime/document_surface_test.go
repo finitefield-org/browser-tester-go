@@ -104,3 +104,17 @@ func TestDocumentPropertyBridgeReportsUnsupportedSurfacesExplicitly(t *testing.T
 		t.Fatalf("resolveBrowserGlobalReference(document.unknown) error = %#v, want unsupported script error", err)
 	}
 }
+
+func TestDocumentAllIsExplicitlyUnsupported(t *testing.T) {
+	session := NewSession(SessionConfig{HTML: `<main></main>`})
+	store, err := session.ensureDOM()
+	if err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if _, err := session.runScriptOnStore(store, `document.all`); err == nil {
+		t.Fatalf("runScriptOnStore(document.all) error = nil, want unsupported error")
+	} else if got, ok := err.(script.Error); !ok || got.Kind != script.ErrorKindUnsupported {
+		t.Fatalf("runScriptOnStore(document.all) error = %#v, want unsupported script error", err)
+	}
+}

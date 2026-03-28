@@ -134,6 +134,9 @@ func (h skipHostBindings) ResolveHostReference(path string) (Value, error) {
 	if err != nil {
 		return UndefinedValue(), err
 	}
+	if isSkippedHostReferencePreserved(path) {
+		return value, nil
+	}
 	return sanitizeSkippedValue(value), nil
 }
 
@@ -146,6 +149,27 @@ func (h skipHostBindings) DeleteHostReference(path string) error {
 		return NewError(ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
 	}
 	return deleter.DeleteHostReference(path)
+}
+
+func isSkippedHostReferencePreserved(path string) bool {
+	switch {
+	case path == "String" || strings.HasPrefix(path, "String."):
+		return true
+	case path == "Number" || strings.HasPrefix(path, "Number."):
+		return true
+	case path == "Boolean" || strings.HasPrefix(path, "Boolean."):
+		return true
+	case path == "Object" || strings.HasPrefix(path, "Object."):
+		return true
+	case path == "Symbol" || strings.HasPrefix(path, "Symbol."):
+		return true
+	case path == "Math" || strings.HasPrefix(path, "Math."):
+		return true
+	case path == "Intl" || strings.HasPrefix(path, "Intl."):
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizeSkippedValue(value Value) Value {
@@ -1948,6 +1972,9 @@ func (p *classicJSStatementParser) tryParseArrayDestructuringAssignmentTarget() 
 		case ',', ';', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			lookahead.pos++
 			canStartRegex = true
+		case ' ', '\t', '\n', '\r':
+			lookahead.pos++
+			continue
 		case '.':
 			lookahead.pos++
 			canStartRegex = false
@@ -3107,11 +3134,17 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 					}
 					return UndefinedValue(), err
 				}
+				if parsed.Kind == ValueKindFunction && parsed.Function != nil && parsed.Function.name == "" {
+					parsed.Function.name = name
+				}
 				value = parsed
 			} else if kind == "const" {
 				return UndefinedValue(), NewError(ErrorKindParse, fmt.Sprintf("%s declarations require an initializer in this bounded classic-JS slice", label))
 			}
 
+			if p.env == nil {
+				p.env = newClassicJSEnvironment()
+			}
 			if kind == "var" {
 				p.env.bindings[name] = classicJSBinding{value: scalarJSValue(value), mutable: true}
 			} else {
@@ -6281,6 +6314,9 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
 			p.pos++
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+			continue
 		case '.':
 			canStartRegex = false
 			p.pos++
@@ -6412,6 +6448,9 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
 			p.pos++
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+			continue
 		case '.':
 			canStartRegex = false
 			p.pos++
@@ -6551,6 +6590,9 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
 			p.pos++
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+			continue
 		case '.':
 			canStartRegex = false
 			p.pos++
@@ -8017,7 +8059,8 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 
 	p.pos++
 	branchStart := p.pos
-	skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
+	preConditional := p.cloneForSkipping(skipHostBindings{delegate: p.host})
+	skip := *preConditional
 	skip.pos = branchStart
 	if _, err := skip.parseLogicalAssignment(); err != nil {
 		return jsValue{}, err
@@ -8037,17 +8080,21 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 		if !p.consumeByte(':') {
 			return jsValue{}, NewError(ErrorKindParse, "conditional expressions require a `:` alternate branch in this bounded classic-JS slice")
 		}
-		skipAlternate := p.cloneForSkipping(skipHostBindings{delegate: p.host})
+		skipAlternate := *preConditional
 		skipAlternate.pos = p.pos
 		if _, err := skipAlternate.parseLogicalAssignment(); err != nil {
 			return jsValue{}, err
 		}
 		p.pos = skipAlternate.pos
-		return consequent, nil
+		return consequent.withoutAssignTarget(), nil
 	}
 
 	p.pos = alternatePos
-	return p.parseLogicalAssignment()
+	alternate, err := p.parseLogicalAssignment()
+	if err != nil {
+		return jsValue{}, err
+	}
+	return alternate.withoutAssignTarget(), nil
 }
 
 func (p *classicJSStatementParser) parseNullishCoalescing() (jsValue, error) {
@@ -9107,6 +9154,9 @@ func (p *classicJSStatementParser) consumeAssignmentCallArgumentSource() (string
 		case ',', ';', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			p.pos++
 			canStartRegex = true
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+			continue
 		case '.':
 			p.pos++
 			canStartRegex = false
@@ -9328,7 +9378,6 @@ func (p *classicJSStatementParser) parsePostfixTail(value jsValue) (jsValue, err
 				p.pos = skip.pos
 				continue
 			}
-			target := value.assignTarget
 			callArgs, err := p.consumeAssignmentCallArguments()
 			if err != nil {
 				return jsValue{}, err
@@ -9337,6 +9386,7 @@ func (p *classicJSStatementParser) parsePostfixTail(value jsValue) (jsValue, err
 			if err != nil {
 				return jsValue{}, err
 			}
+			target := value.assignTarget
 			value, err = p.invoke(value, args)
 			if err != nil {
 				return jsValue{}, err
@@ -9591,6 +9641,11 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			}
 			return scalarJSValue(UndefinedValue()), nil
 		case ValueKindNull, ValueKindUndefined:
+			if name == "sort" {
+				keysValue, keysOK := p.env.lookup("keys")
+				valueValue, valueOK := p.env.lookup("value")
+				return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot access property %q on nullish value in this bounded classic-JS slice near %q env.keys=%s env.value=%s", name, classicJSSourceSnippet(p.source, p.pos), classicJSValueSummary(keysValue, keysOK), classicJSValueSummary(valueValue, valueOK)))
+			}
 			return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot access property %q on nullish value in this bounded classic-JS slice", name))
 		default:
 			return scalarJSValue(UndefinedValue()), nil
@@ -9600,6 +9655,47 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			ErrorKindUnsupported,
 			"unsupported member access in this bounded classic-JS slice; only object properties, array `length`, and `host.method(...)` are available",
 		)
+	}
+}
+
+func classicJSSourceSnippet(source string, pos int) string {
+	if source == "" {
+		return ""
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(source) {
+		pos = len(source)
+	}
+	start := pos - 48
+	if start < 0 {
+		start = 0
+	}
+	end := pos + 48
+	if end > len(source) {
+		end = len(source)
+	}
+	return strings.TrimSpace(source[start:end])
+}
+
+func classicJSValueSummary(value jsValue, ok bool) string {
+	if !ok {
+		return "<missing>"
+	}
+	switch value.kind {
+	case jsValueScalar:
+		return fmt.Sprintf("scalar:%s", value.value.Kind)
+	case jsValueHostObject:
+		return "host-object"
+	case jsValueBuiltinExpr:
+		return "builtin-expr"
+	case jsValueHostMethod:
+		return "host-method:" + value.method
+	case jsValueSuper:
+		return "super:" + string(value.value.Kind)
+	default:
+		return fmt.Sprintf("kind:%d", value.kind)
 	}
 }
 
@@ -10029,9 +10125,6 @@ func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue
 		}
 		p.moduleExports[name] = updated
 		replaced++
-	}
-	if p.bindingUpdateParent != nil {
-		replaced += p.bindingUpdateParent.ReplaceArrayBindings(oldValue, newValue.value)
 	}
 	return replaced
 }
@@ -11560,6 +11653,9 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 			if callee.value.Function == nil {
 				return jsValue{}, NewError(ErrorKindRuntime, "cannot call non-callable value in this bounded classic-JS slice")
 			}
+			if p.bindingUpdateParent != nil {
+				return p.invokeDetached(callee, args)
+			}
 			return p.invokeArrowFunction(callee.value.Function, args, callee)
 		case ValueKindHostReference:
 			if p.host == nil {
@@ -11586,6 +11682,9 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 			if resolved.Function == nil {
 				return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot call non-callable browser surface %q in this bounded classic-JS slice", callee.value.HostReferencePath))
 			}
+			if p.bindingUpdateParent != nil {
+				return p.invokeDetached(callee, args)
+			}
 			return p.invokeArrowFunction(resolved.Function, args, callee)
 		default:
 			return jsValue{}, NewError(ErrorKindRuntime, "cannot call non-callable value in this bounded classic-JS slice")
@@ -11611,6 +11710,22 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 	default:
 		return jsValue{}, NewError(ErrorKindUnsupported, "unsupported call expression in this bounded classic-JS slice")
 	}
+}
+
+func (p *classicJSStatementParser) invokeDetached(callee jsValue, args []Value) (jsValue, error) {
+	fresh := &classicJSStatementParser{
+		host:                    p.host,
+		privateClass:            p.privateClass,
+		privateFieldPrefix:      p.privateFieldPrefix,
+		newTarget:               p.newTarget,
+		hasNewTarget:            p.hasNewTarget,
+		allowUnknownIdentifiers: p.allowUnknownIdentifiers,
+		allowAwait:              p.allowAwait,
+		allowYield:              p.allowYield,
+		allowReturn:             p.allowReturn,
+		stepLimit:               p.stepLimit,
+	}
+	return fresh.invoke(callee, args)
 }
 
 func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *classicJSEnvironment, params []classicJSFunctionParameter, restName string, args []Value, allowAwait bool, privateClass *classicJSClassDefinition) error {
@@ -11669,7 +11784,6 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	if fn == nil {
 		return jsValue{}, NewError(ErrorKindRuntime, "arrow function is unavailable")
 	}
-
 	if fn.generatorState != nil {
 		switch fn.generatorMethod {
 		case "", "next":
@@ -11704,8 +11818,11 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	}()
 
 	callEnv := fn.env.clone()
+	if p.bindingUpdateParent != nil {
+		callEnv = fn.env.cloneDetached()
+	}
 	if fn.name != "" {
-		if err := callEnv.declare(fn.name, scalarJSValue(FunctionValue(fn)), false); err != nil {
+		if err := callEnv.initializeBinding(fn.name, scalarJSValue(FunctionValue(fn)), false); err != nil {
 			return jsValue{}, err
 		}
 	}
@@ -11722,7 +11839,6 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	if err := p.bindClassicJSFunctionParameters(callEnv, fn.params, fn.restName, args, fn.async, fn.privateClass); err != nil {
 		return jsValue{}, err
 	}
-
 	prevPrivateClass := p.privateClass
 	prevPrivateFieldPrefix := p.privateFieldPrefix
 	p.privateClass = fn.privateClass
@@ -11877,7 +11993,7 @@ func (p *classicJSStatementParser) invokeGeneratorFunction(fn *classicJSGenerato
 	callEnv := fn.env.clone()
 	if fn.name != "" {
 		callable := &classicJSArrowFunction{generatorFunction: fn, env: fn.env, privateClass: fn.privateClass, privateFieldPrefix: fn.privateFieldPrefix}
-		if err := callEnv.declare(fn.name, scalarJSValue(FunctionValue(callable)), false); err != nil {
+		if err := callEnv.initializeBinding(fn.name, scalarJSValue(FunctionValue(callable)), false); err != nil {
 			return jsValue{}, err
 		}
 	}
@@ -13211,6 +13327,9 @@ func classicJSEqualValues(left Value, right Value, op string) bool {
 
 	if (left.Kind == ValueKindNull && right.Kind == ValueKindUndefined) || (left.Kind == ValueKindUndefined && right.Kind == ValueKindNull) {
 		return op == "=="
+	}
+	if left.Kind == ValueKindNull || left.Kind == ValueKindUndefined || right.Kind == ValueKindNull || right.Kind == ValueKindUndefined {
+		return op == "!="
 	}
 	if left.Kind == ValueKindSymbol || right.Kind == ValueKindSymbol {
 		return op == "!="

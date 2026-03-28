@@ -119,11 +119,28 @@ func isReservedWindowPropertyName(session *Session, store *dom.Store, name strin
 	if name == "" {
 		return false
 	}
+	if name == "scrollX" || name == "scrollY" {
+		return true
+	}
 	if name == "crypto" {
 		return false
 	}
 	_, reserved := browserGlobalBindings(session, store)[name]
 	return reserved
+}
+
+func supportsPlaceholderAttribute(node *dom.Node) bool {
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return false
+	}
+	switch node.TagName {
+	case "textarea":
+		return true
+	case "input":
+		return isTextInputType(inputType(node))
+	default:
+		return false
+	}
 }
 
 func setElementReferenceValue(session *Session, store *dom.Store, path string, value script.Value) error {
@@ -167,6 +184,11 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "value", script.ToJSString(value))
 		}
 		return store.SetFormControlValue(nodeID, script.ToJSString(value))
+	case rest == "placeholder":
+		if !supportsPlaceholderAttribute(node) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetAttribute(nodeID, "placeholder", script.ToJSString(value))
 	case rest == "checked":
 		if value.Kind != script.ValueKindBool {
 			return fmt.Errorf("element.checked expects a boolean in this bounded classic-JS slice")
@@ -202,6 +224,15 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "selected", "")
 		}
 		return store.RemoveAttribute(nodeID, "selected")
+	case rest == "selectedIndex":
+		if node.TagName != "select" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		index, err := browserInt64Value("element.selectedIndex", value)
+		if err != nil {
+			return err
+		}
+		return store.SetSelectIndex(nodeID, int(index))
 	case rest == "id":
 		return store.SetAttribute(nodeID, "id", script.ToJSString(value))
 	case rest == "style":

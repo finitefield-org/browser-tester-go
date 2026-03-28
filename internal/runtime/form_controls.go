@@ -198,6 +198,8 @@ func (s *Session) applyClickDefaultAction(selector string) error {
 		}
 	case "a", "area":
 		return s.applyHyperlinkDefaultAction(node)
+	case "summary":
+		return s.applyDetailsSummaryDefaultAction(store, nodeID, node)
 	}
 
 	return nil
@@ -283,9 +285,75 @@ func (s *Session) applyClickDefaultActionForNode(store *dom.Store, nodeID dom.No
 		}
 	case "a", "area":
 		return s.applyHyperlinkDefaultAction(node)
+	case "summary":
+		return s.applyDetailsSummaryDefaultAction(store, nodeID, node)
 	}
 
 	return nil
+}
+
+func (s *Session) applyDetailsSummaryDefaultAction(store *dom.Store, summaryNodeID dom.NodeID, node *dom.Node) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if store == nil || node == nil || node.Kind != dom.NodeKindElement || node.TagName != "summary" {
+		return nil
+	}
+
+	detailsID := summaryDetailsAncestorID(store, summaryNodeID)
+	if detailsID == 0 {
+		return nil
+	}
+	if firstSummaryChildID(store, detailsID) != summaryNodeID {
+		return nil
+	}
+
+	details := store.Node(detailsID)
+	if details == nil {
+		return nil
+	}
+	if hasAttribute(details.Attrs, "open") {
+		return store.RemoveAttribute(detailsID, "open")
+	}
+	return store.SetAttribute(detailsID, "open", "")
+}
+
+func summaryDetailsAncestorID(store *dom.Store, nodeID dom.NodeID) dom.NodeID {
+	if store == nil || nodeID == 0 {
+		return 0
+	}
+	current := nodeID
+	for current != 0 {
+		node := store.Node(current)
+		if node == nil {
+			return 0
+		}
+		if node.Kind == dom.NodeKindElement && node.TagName == "details" {
+			return current
+		}
+		current = node.Parent
+	}
+	return 0
+}
+
+func firstSummaryChildID(store *dom.Store, detailsID dom.NodeID) dom.NodeID {
+	if store == nil || detailsID == 0 {
+		return 0
+	}
+	details := store.Node(detailsID)
+	if details == nil {
+		return 0
+	}
+	for _, childID := range details.Children {
+		child := store.Node(childID)
+		if child == nil || child.Kind != dom.NodeKindElement {
+			continue
+		}
+		if child.TagName == "summary" {
+			return childID
+		}
+	}
+	return 0
 }
 
 func (s *Session) recordInteraction(kind InteractionKind, selector string) {
@@ -355,6 +423,15 @@ func inputType(node *dom.Node) string {
 	}
 	value, _ := attributeValue(node.Attrs, "type")
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func isTextInputType(typeName string) bool {
+	switch strings.ToLower(strings.TrimSpace(typeName)) {
+	case "", "text", "search", "url", "tel", "email", "password", "number", "date", "datetime-local", "time", "month", "week", "color":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasAttribute(attrs []dom.Attribute, name string) bool {

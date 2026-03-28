@@ -90,6 +90,68 @@ func TestSessionRejectsHrefAssignmentOnNonHyperlinkElement(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsSelectedIndexAssignmentOnNonSelectElement(t *testing.T) {
+	const rawHTML = `<main><div id="target"></div><script>document.getElementById("target").selectedIndex = 0</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want unsupported selectedIndex assignment on non-select element")
+	} else if !strings.Contains(err.Error(), `.selectedIndex`) {
+		t.Fatalf("ensureDOM() error = %v, want selectedIndex assignment error", err)
+	}
+}
+
+func TestSessionBootstrapsTextareaPlaceholderReflection(t *testing.T) {
+	const rawHTML = `<main><textarea id="output"></textarea><script>const output = document.getElementById("output"); output.placeholder = "Sorted output appears here";</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, ok, err := session.GetAttribute("#output", "placeholder"); err != nil {
+		t.Fatalf("GetAttribute(#output, placeholder) error = %v", err)
+	} else if !ok {
+		t.Fatalf("GetAttribute(#output, placeholder) = missing, want Sorted output appears here")
+	} else if got != "Sorted output appears here" {
+		t.Fatalf("GetAttribute(#output, placeholder) = %q, want Sorted output appears here", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after textarea placeholder bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsTextInputPlaceholderReflection(t *testing.T) {
+	const rawHTML = `<main><input id="output" type="text"><script>const output = document.getElementById("output"); output.placeholder = "Sorted output appears here";</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, ok, err := session.GetAttribute("#output", "placeholder"); err != nil {
+		t.Fatalf("GetAttribute(#output, placeholder) error = %v", err)
+	} else if !ok {
+		t.Fatalf("GetAttribute(#output, placeholder) = missing, want Sorted output appears here")
+	} else if got != "Sorted output appears here" {
+		t.Fatalf("GetAttribute(#output, placeholder) = %q, want Sorted output appears here", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after text input placeholder bootstrap", got)
+	}
+}
+
+func TestSessionRejectsPlaceholderAssignmentOnNonTextControl(t *testing.T) {
+	const rawHTML = `<main><input id="target" type="checkbox"><script>document.getElementById("target").placeholder = "Sorted output appears here"</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want unsupported placeholder assignment on non-text input")
+	} else if !strings.Contains(err.Error(), `.placeholder`) {
+		t.Fatalf("ensureDOM() error = %v, want placeholder assignment error", err)
+	}
+}
+
 func TestSessionBootstrapsAnchorHrefDownloadAndClick(t *testing.T) {
 	const rawHTML = `<main><a id="download">Download</a><div id="out"></div><script>const link = document.getElementById("download"); link.href = "data:text/plain;charset=utf-8,Hello%20World"; link.download = "hello.txt"; document.getElementById("out").textContent = [link.href, link.download].join("|"); link.click()</script></main>`
 
@@ -680,6 +742,32 @@ func TestSessionBootstrapsRequestAnimationFramePromiseResolution(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsSetTimeoutFunctionCallback(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const out = document.getElementById("out"); window.setTimeout(function (value) { out.textContent = value; }, 1, "done");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) before AdvanceTime error = %v", err)
+	} else if got != "" {
+		t.Fatalf("TextContent(#out) before AdvanceTime = %q, want empty", got)
+	}
+	if err := session.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after AdvanceTime error = %v", err)
+	} else if got != "done" {
+		t.Fatalf("TextContent(#out) after AdvanceTime = %q, want done", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after setTimeout callback bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsPendingPromiseAwaitContinuation(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const out = document.getElementById("out"); let resolveRun; const promise = new Promise((resolve) => { resolveRun = resolve; }); async function run() { await promise; out.textContent = "done"; } run(); resolveRun("ready");</script></main>`
 
@@ -780,7 +868,7 @@ func TestSessionRejectsRequestAnimationFrameNonCallableCallback(t *testing.T) {
 }
 
 func TestSessionBootstrapsDisabledAndSelectedElementProperties(t *testing.T) {
-	const rawHTML = `<main><button id="run" type="button">Run</button><select id="s"></select><p id="out"></p><script>const run = document.getElementById("run"); const select = document.getElementById("s"); run.disabled = true; const option = document.createElement("option"); option.value = "ml"; option.textContent = "ml"; option.selected = true; select.appendChild(option); document.getElementById("out").textContent = [String(run.disabled), String(option.selected), select.value].join("|")</script></main>`
+	const rawHTML = `<main><button id="run" type="button">Run</button><select id="s"><option value="g">g</option><option value="kg" selected>kg</option></select><p id="out"></p><script>const run = document.getElementById("run"); const select = document.getElementById("s"); const option = document.createElement("option"); option.value = "ml"; option.textContent = "ml"; option.selected = true; select.appendChild(option); const before = select.selectedIndex; select.selectedIndex = 0; const after = select.selectedIndex; const selected = select.options[after]; run.disabled = true; document.getElementById("out").textContent = [String(run.disabled), String(option.selected), String(before), String(after), select.value, selected ? selected.textContent : ""].join("|")</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -789,8 +877,8 @@ func TestSessionBootstrapsDisabledAndSelectedElementProperties(t *testing.T) {
 
 	if got, err := session.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != "true|true|ml" {
-		t.Fatalf("TextContent(#out) = %q, want true|true|ml", got)
+	} else if got != "true|false|1|0|g|g" {
+		t.Fatalf("TextContent(#out) = %q, want true|false|1|0|g|g", got)
 	}
 	if got, ok, err := session.GetAttribute("#run", "disabled"); err != nil {
 		t.Fatalf("GetAttribute(#run, disabled) error = %v", err)
@@ -873,6 +961,42 @@ func TestSessionBootstrapsIntlNumberFormatMaximumSignificantDigits(t *testing.T)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat significant digits bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlNumberFormatMinimumFractionDigits(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(12)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "12.0" {
+		t.Fatalf("TextContent(#out) = %q, want 12.0", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat minimum fraction bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlCurrencyFormattingWithMapLookup(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>(() => { const state = { currency: "JPY", decimalOverride: "auto", cost: "", adoptedPrice: 1200, }; const currencyMap = new Map([["JPY", { code: "JPY", locale: "ja-JP", decimals: 0 }]]); function getDecimals() { if (state.decimalOverride !== "auto") { return Number(state.decimalOverride); } const meta = currencyMap.get(state.currency); return meta && meta.decimals != null ? meta.decimals : 2; } function formatMoney(value) { const meta = currencyMap.get(state.currency) || { code: state.currency, locale: "en-US", decimals: 2, }; const digits = getDecimals(); return new Intl.NumberFormat(meta.locale, { style: "currency", currency: meta.code, minimumFractionDigits: digits, maximumFractionDigits: digits, }).format(value); } document.getElementById("out").textContent = formatMoney(1200); })();</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "￥1,200" {
+		t.Fatalf("TextContent(#out) = %q, want ￥1,200", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl currency bootstrap", got)
 	}
 }
 

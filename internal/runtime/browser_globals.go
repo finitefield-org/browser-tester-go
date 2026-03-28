@@ -124,6 +124,10 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return resolveXMLSerializerReference(session, store, normalized[len("xmlserializer"):])
 	}
 
+	if normalized == "document.all" {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", normalized))
+	}
+
 	if session != nil {
 		if value, ok := session.windowPropertyValue(normalized); ok {
 			if value.Kind == script.ValueKindObject || value.Kind == script.ValueKindArray {
@@ -149,6 +153,18 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return script.HostObjectReference("history"), nil
 	case "navigator":
 		return script.HostObjectReference("navigator"), nil
+	case "scrollX":
+		if session == nil {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "window.scrollX is unavailable in this bounded classic-JS slice")
+		}
+		scrollX, _ := session.ScrollPosition()
+		return script.NumberValue(float64(scrollX)), nil
+	case "scrollY":
+		if session == nil {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "window.scrollY is unavailable in this bounded classic-JS slice")
+		}
+		_, scrollY := session.ScrollPosition()
+		return script.NumberValue(float64(scrollY)), nil
 	case "Intl":
 		return browserIntlValue(session), nil
 	case "HTMLElement":
@@ -1045,6 +1061,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementHrefValue(session, store, nodeID)
 	case "download":
 		return resolveElementDownloadValue(session, store, nodeID)
+	case "placeholder":
+		return resolveElementPlaceholderValue(session, store, nodeID)
 	case "classList":
 		if node.Kind != dom.NodeKindElement {
 			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
@@ -1099,6 +1117,13 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 				return script.UndefinedValue(), err
 			}
 			return browserElementReferenceValue(cloneID, store), nil
+		}), nil
+	case "getBoundingClientRect":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("element.getBoundingClientRect accepts no arguments")
+			}
+			return resolveElementBoundingClientRectValue(session, store, nodeID)
 		}), nil
 	case "setAttribute":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -1158,6 +1183,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementDisabledValue(session, store, nodeID)
 	case "selected":
 		return resolveElementSelectedValue(session, store, nodeID)
+	case "selectedIndex":
+		return resolveElementSelectedIndexValue(session, store, nodeID)
 	case "children":
 		coll, err := store.Children(nodeID)
 		if err != nil {
@@ -1408,6 +1435,7 @@ func hashFromURL(parsed *neturl.URL) string {
 
 func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 	locale := "en-US"
+	minFractionDigits := 0
 	maxFractionDigits := -1
 	maxSignificantDigits := -1
 	style := ""
@@ -1443,6 +1471,16 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 		if value, ok := objectProperty(options, "currency"); ok {
 			currency = strings.ToUpper(strings.TrimSpace(script.ToJSString(value)))
 		}
+		if value, ok := objectProperty(options, "minimumFractionDigits"); ok {
+			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
+				return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat minimumFractionDigits must be numeric")
+			}
+			parsed, err := browserInt64Value("Intl.NumberFormat.minimumFractionDigits", value)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			minFractionDigits = int(parsed)
+		}
 		if value, ok := objectProperty(options, "maximumFractionDigits"); ok {
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
 				return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat maximumFractionDigits must be numeric")
@@ -1452,6 +1490,9 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				return script.UndefinedValue(), err
 			}
 			maxFractionDigits = int(parsed)
+		}
+		if maxFractionDigits >= 0 && minFractionDigits > maxFractionDigits {
+			return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat minimumFractionDigits cannot exceed maximumFractionDigits")
 		}
 		if value, ok := objectProperty(options, "maximumSignificantDigits"); ok {
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
@@ -1476,7 +1517,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				if err != nil {
 					return script.UndefinedValue(), err
 				}
-				formatted := formatNumber(number, maxFractionDigits, maxSignificantDigits)
+				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits)
 				if style == "currency" {
 					formatted = browserCurrencyFormat(formatted, currency, locale)
 				}
@@ -1596,7 +1637,7 @@ func browserDateTimeFormatConstructor(args []script.Value) (script.Value, error)
 	return script.ObjectValue(entries), nil
 }
 
-func formatNumber(value float64, maxFractionDigits, maxSignificantDigits int) string {
+func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignificantDigits int) string {
 	if math.IsNaN(value) {
 		return "NaN"
 	}
@@ -1610,7 +1651,7 @@ func formatNumber(value float64, maxFractionDigits, maxSignificantDigits int) st
 		return formatNumberWithSignificantDigits(value, maxSignificantDigits)
 	}
 	if maxFractionDigits < 0 {
-		return strconv.FormatFloat(value, 'f', -1, 64)
+		return groupDecimalIntegerPart(formatNumberWithMinimumFractionDigits(strconv.FormatFloat(value, 'f', -1, 64), minFractionDigits))
 	}
 	pow := math.Pow10(maxFractionDigits)
 	rounded := math.Round(value*pow) / pow
@@ -1620,9 +1661,31 @@ func formatNumber(value float64, maxFractionDigits, maxSignificantDigits int) st
 		text = strings.TrimRight(text, ".")
 	}
 	if text == "" || text == "-0" {
-		return "0"
+		text = "0"
 	}
-	return groupDecimalIntegerPart(text)
+	return groupDecimalIntegerPart(formatNumberWithMinimumFractionDigits(text, minFractionDigits))
+}
+
+func formatNumberWithMinimumFractionDigits(text string, minFractionDigits int) string {
+	if minFractionDigits <= 0 || text == "" {
+		return text
+	}
+	sign := ""
+	if text[0] == '+' || text[0] == '-' {
+		sign = text[:1]
+		text = text[1:]
+	}
+	if text == "" || strings.ContainsAny(text, "eE") {
+		return sign + text
+	}
+	parts := strings.SplitN(text, ".", 2)
+	if len(parts) == 1 {
+		return sign + parts[0] + "." + strings.Repeat("0", minFractionDigits)
+	}
+	if len(parts[1]) < minFractionDigits {
+		parts[1] += strings.Repeat("0", minFractionDigits-len(parts[1]))
+	}
+	return sign + parts[0] + "." + parts[1]
 }
 
 func formatNumberWithSignificantDigits(value float64, maxSignificantDigits int) string {
@@ -1928,49 +1991,63 @@ func browserScrollBy(session *Session, args []script.Value) (script.Value, error
 }
 
 func browserSetTimeout(session *Session, args []script.Value) (script.Value, error) {
-	if session == nil {
-		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "setTimeout is unavailable in this bounded classic-JS slice")
-	}
-	if len(args) == 0 || len(args) > 2 {
-		return script.UndefinedValue(), fmt.Errorf("setTimeout expects 1 or 2 arguments")
-	}
-	source, err := browserTimerSource("setTimeout", args[0])
-	if err != nil {
-		return script.UndefinedValue(), err
-	}
-	timeoutMs := int64(0)
-	if len(args) == 2 {
-		timeoutMs, err = browserInt64Value("setTimeout", args[1])
-		if err != nil {
-			return script.UndefinedValue(), err
-		}
-	}
-	id, err := session.scheduleTimeout(source, timeoutMs)
-	if err != nil {
-		return script.UndefinedValue(), err
-	}
-	return script.NumberValue(float64(id)), nil
+	return browserScheduleTimer(session, "setTimeout", args, false)
 }
 
 func browserSetInterval(session *Session, args []script.Value) (script.Value, error) {
+	return browserScheduleTimer(session, "setInterval", args, true)
+}
+
+func browserScheduleTimer(session *Session, method string, args []script.Value, repeat bool) (script.Value, error) {
 	if session == nil {
-		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "setInterval is unavailable in this bounded classic-JS slice")
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("%s is unavailable in this bounded classic-JS slice", method))
 	}
-	if len(args) == 0 || len(args) > 2 {
-		return script.UndefinedValue(), fmt.Errorf("setInterval expects 1 or 2 arguments")
+	if len(args) == 0 {
+		return script.UndefinedValue(), fmt.Errorf("%s expects 1 or 2 arguments", method)
 	}
-	source, err := browserTimerSource("setInterval", args[0])
+	timeoutMs := int64(0)
+	var err error
+	if browserIsCallableValue(args[0]) {
+		if len(args) > 1 {
+			timeoutMs, err = browserInt64Value(method, args[1])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+		}
+		callbackArgs := []script.Value(nil)
+		if len(args) > 2 {
+			callbackArgs = append(callbackArgs, args[2:]...)
+		}
+		var id int64
+		if repeat {
+			id, err = session.scheduleIntervalCallback(args[0], callbackArgs, timeoutMs)
+		} else {
+			id, err = session.scheduleTimeoutCallback(args[0], callbackArgs, timeoutMs)
+		}
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return script.NumberValue(float64(id)), nil
+	}
+	if len(args) > 2 {
+		return script.UndefinedValue(), fmt.Errorf("%s expects 1 or 2 arguments", method)
+	}
+	source, err := browserTimerSource(method, args[0])
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
-	timeoutMs := int64(0)
 	if len(args) == 2 {
-		timeoutMs, err = browserInt64Value("setInterval", args[1])
+		timeoutMs, err = browserInt64Value(method, args[1])
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
 	}
-	id, err := session.scheduleInterval(source, timeoutMs)
+	var id int64
+	if repeat {
+		id, err = session.scheduleInterval(source, timeoutMs)
+	} else {
+		id, err = session.scheduleTimeout(source, timeoutMs)
+	}
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
@@ -2075,6 +2152,10 @@ func browserTimerSource(method string, value script.Value) (string, error) {
 		return "", fmt.Errorf("%s source must not be empty", method)
 	}
 	return trimmed, nil
+}
+
+func browserIsCallableValue(value script.Value) bool {
+	return value.Kind == script.ValueKindFunction && (value.NativeFunction != nil || value.Function != nil)
 }
 
 func browserInt64Value(method string, value script.Value) (int64, error) {

@@ -109,6 +109,35 @@ func (s *Store) SetSelectValue(nodeID NodeID, value string) error {
 	return nil
 }
 
+func (s *Store) SetSelectIndex(nodeID NodeID, index int) error {
+	node := s.Node(nodeID)
+	if node == nil || node.Kind != NodeKindElement {
+		return fmt.Errorf("node %d is not a supported select control", nodeID)
+	}
+	if node.TagName != "select" {
+		return fmt.Errorf("node %d is not a select control", nodeID)
+	}
+
+	options := s.selectOptionIDsForNode(nodeID)
+	if len(options) == 0 {
+		return nil
+	}
+
+	matched := false
+	for i, optionID := range options {
+		current := s.Node(optionID)
+		if current == nil {
+			continue
+		}
+		current.Attrs = removeAttribute(current.Attrs, "selected")
+		if !matched && i == index {
+			current.Attrs = setAttribute(current.Attrs, "selected", "", false)
+			matched = true
+		}
+	}
+	return nil
+}
+
 func (s *Store) ResetFormControls(nodeID NodeID) error {
 	node := s.Node(nodeID)
 	if node == nil || node.Kind != NodeKindElement {

@@ -214,6 +214,27 @@ func TestDispatchSupportsArrayFindIndexSpliceAndUnshift(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsArrayPop(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			let a = [1, 2, 3];
+			let last = a.pop();
+			[last, a.join(",")].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.pop) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.pop) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "3|1,2" {
+		t.Fatalf("Dispatch(Array.pop) value = %q, want %q", result.Value.String, "3|1,2")
+	}
+}
+
 func TestDispatchSupportsArrayFlatMap(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -308,6 +329,23 @@ func TestDispatchSupportsArraySortWithComparator(t *testing.T) {
 	}
 	if result.Value.String != "1,2,3|1,2,3" {
 		t.Fatalf("Dispatch(Array.sort) value = %q, want %q", result.Value.String, "1,2,3|1,2,3")
+	}
+}
+
+func TestDispatchSupportsArrayReverse(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const values = [1, 2, 3]; const reversed = values.reverse(); [values.join(","), reversed.join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.reverse) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.reverse) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "3,2,1|3,2,1" {
+		t.Fatalf("Dispatch(Array.reverse) value = %q, want %q", result.Value.String, "3,2,1|3,2,1")
 	}
 }
 

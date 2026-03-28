@@ -3,8 +3,8 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +65,9 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		}, func(args []script.Value) (script.Value, error) {
 			return browserUint8ArrayConstructor(args)
 		}), true, nil
+	case strings.HasPrefix(path, "Uint8Array."):
+		value, err := resolveUint8ArrayReference(session, store, strings.TrimPrefix(path, "Uint8Array."))
+		return value, true, err
 	case path == "Number":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNumberConstructor(args)
@@ -423,6 +426,24 @@ func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (
 	return script.ArrayValue(elements), nil
 }
 
+func resolveUint8ArrayReference(session *Session, store *dom.Store, path string) (script.Value, error) {
+	switch strings.TrimPrefix(path, ".") {
+	case "from":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserUint8ArrayFrom(session, store, args)
+		}), nil
+	}
+	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Uint8Array."+path))
+}
+
+func browserUint8ArrayFrom(session *Session, store *dom.Store, args []script.Value) (script.Value, error) {
+	arrayValue, err := browserArrayFrom(session, store, args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return browserUint8ArrayConstructor([]script.Value{arrayValue})
+}
+
 func browserJoinHostReferencePath(base, name string) string {
 	base = strings.TrimSpace(base)
 	name = strings.TrimSpace(strings.TrimPrefix(name, "."))
@@ -685,21 +706,36 @@ func browserJSONParse(args []script.Value) (script.Value, error) {
 		return script.UndefinedValue(), fmt.Errorf("JSON.parse expects 1 argument")
 	}
 	input := script.ToJSString(args[0])
-	var data interface{}
-	if err := json.Unmarshal([]byte(input), &data); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(input))
+	decoder.UseNumber()
+	value, err := browserJSONParseValue(decoder)
+	if err != nil {
 		return script.UndefinedValue(), err
 	}
-	return jsonValueToScript(data)
+	if token, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return script.UndefinedValue(), fmt.Errorf("unexpected trailing JSON token %v", token)
+	}
+	return value, nil
 }
 
 func browserJSONStringify(args []script.Value) (script.Value, error) {
 	if len(args) == 0 {
 		return script.UndefinedValue(), nil
 	}
-	if len(args) > 1 {
-		return script.UndefinedValue(), fmt.Errorf("JSON.stringify expects 1 argument in this bounded slice")
+	if len(args) > 3 {
+		return script.UndefinedValue(), fmt.Errorf("JSON.stringify expects at most 3 arguments in this bounded slice")
 	}
-	text, err := jsonStringifyValue(args[0])
+	if len(args) >= 2 && args[1].Kind != script.ValueKindUndefined && args[1].Kind != script.ValueKindNull {
+		return script.UndefinedValue(), fmt.Errorf("JSON.stringify replacer is unavailable in this bounded slice")
+	}
+	indent, err := browserJSONStringifySpace(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	text, err := jsonStringifyValueWithIndent(args[0], indent, 0)
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
@@ -921,47 +957,126 @@ func jsTruthyValue(value script.Value) bool {
 	}
 }
 
-func jsonValueToScript(value interface{}) (script.Value, error) {
-	switch typed := value.(type) {
+func browserJSONParseValue(decoder *json.Decoder) (script.Value, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+
+	switch typed := token.(type) {
+	case json.Delim:
+		switch typed {
+		case '{':
+			return browserJSONParseObject(decoder)
+		case '[':
+			return browserJSONParseArray(decoder)
+		default:
+			return script.UndefinedValue(), fmt.Errorf("unexpected JSON delimiter %q", typed)
+		}
 	case nil:
 		return script.NullValue(), nil
 	case bool:
 		return script.BoolValue(typed), nil
-	case float64:
-		return script.NumberValue(typed), nil
 	case string:
 		return script.StringValue(typed), nil
-	case []interface{}:
-		values := make([]script.Value, 0, len(typed))
-		for _, entry := range typed {
-			converted, err := jsonValueToScript(entry)
-			if err != nil {
-				return script.UndefinedValue(), err
-			}
-			values = append(values, converted)
+	case json.Number:
+		number, err := typed.Float64()
+		if err != nil {
+			return script.UndefinedValue(), err
 		}
-		return script.ArrayValue(values), nil
-	case map[string]interface{}:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		entries := make([]script.ObjectEntry, 0, len(keys))
-		for _, key := range keys {
-			converted, err := jsonValueToScript(typed[key])
-			if err != nil {
-				return script.UndefinedValue(), err
-			}
-			entries = append(entries, script.ObjectEntry{Key: key, Value: converted})
-		}
-		return script.ObjectValue(entries), nil
+		return script.NumberValue(number), nil
 	default:
-		return script.UndefinedValue(), fmt.Errorf("unsupported JSON value type %T", value)
+		return script.UndefinedValue(), fmt.Errorf("unsupported JSON token type %T", token)
+	}
+}
+
+func browserJSONParseObject(decoder *json.Decoder) (script.Value, error) {
+	entries := make([]script.ObjectEntry, 0)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return script.UndefinedValue(), fmt.Errorf("JSON object key must be a string")
+		}
+		value, err := browserJSONParseValue(decoder)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		entries = append(entries, script.ObjectEntry{Key: key, Value: value})
+	}
+
+	endToken, err := decoder.Token()
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	if delim, ok := endToken.(json.Delim); !ok || delim != '}' {
+		return script.UndefinedValue(), fmt.Errorf("unexpected JSON object terminator %v", endToken)
+	}
+	return script.ObjectValue(entries), nil
+}
+
+func browserJSONParseArray(decoder *json.Decoder) (script.Value, error) {
+	values := make([]script.Value, 0)
+	for decoder.More() {
+		value, err := browserJSONParseValue(decoder)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		values = append(values, value)
+	}
+
+	endToken, err := decoder.Token()
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	if delim, ok := endToken.(json.Delim); !ok || delim != ']' {
+		return script.UndefinedValue(), fmt.Errorf("unexpected JSON array terminator %v", endToken)
+	}
+	return script.ArrayValue(values), nil
+}
+
+func browserJSONStringifySpace(args []script.Value) (string, error) {
+	if len(args) < 3 {
+		return "", nil
+	}
+	space := args[2]
+	switch space.Kind {
+	case script.ValueKindUndefined, script.ValueKindNull:
+		return "", nil
+	case script.ValueKindNumber:
+		count := 0
+		switch {
+		case math.IsNaN(space.Number), math.IsInf(space.Number, 0):
+			count = 0
+		default:
+			count = int(space.Number)
+		}
+		if count < 0 {
+			count = 0
+		}
+		if count > 10 {
+			count = 10
+		}
+		return strings.Repeat(" ", count), nil
+	case script.ValueKindString:
+		runes := []rune(space.String)
+		if len(runes) > 10 {
+			runes = runes[:10]
+		}
+		return string(runes), nil
+	default:
+		return "", fmt.Errorf("JSON.stringify space argument must be a number or string in this bounded slice")
 	}
 }
 
 func jsonStringifyValue(value script.Value) (string, error) {
+	return jsonStringifyValueWithIndent(value, "", 0)
+}
+
+func jsonStringifyValueWithIndent(value script.Value, indentUnit string, depth int) (string, error) {
 	if ms, ok := script.BrowserDateTimestamp(value); ok {
 		encoded, err := json.Marshal(script.BrowserDateISOString(ms))
 		if err != nil {
@@ -991,13 +1106,21 @@ func jsonStringifyValue(value script.Value) (string, error) {
 	case script.ValueKindArray:
 		parts := make([]string, 0, len(value.Array))
 		for _, entry := range value.Array {
-			encoded, err := jsonStringifyValue(entry)
+			encoded, err := jsonStringifyValueWithIndent(entry, indentUnit, depth+1)
 			if err != nil {
 				return "", err
 			}
 			parts = append(parts, encoded)
 		}
-		return "[" + strings.Join(parts, ",") + "]", nil
+		if indentUnit == "" {
+			return "[" + strings.Join(parts, ",") + "]", nil
+		}
+		if len(parts) == 0 {
+			return "[]", nil
+		}
+		childIndent := strings.Repeat(indentUnit, depth+1)
+		currentIndent := strings.Repeat(indentUnit, depth)
+		return "[\n" + childIndent + strings.Join(parts, ",\n"+childIndent) + "\n" + currentIndent + "]", nil
 	case script.ValueKindObject:
 		keys := uniqueObjectKeys(value.Object)
 		parts := make([]string, 0, len(keys))
@@ -1006,13 +1129,25 @@ func jsonStringifyValue(value script.Value) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			encodedValue, err := jsonStringifyValue(objectValueByKey(value.Object, key))
+			encodedValue, err := jsonStringifyValueWithIndent(objectValueByKey(value.Object, key), indentUnit, depth+1)
 			if err != nil {
 				return "", err
 			}
-			parts = append(parts, string(encodedKey)+":"+encodedValue)
+			if indentUnit == "" {
+				parts = append(parts, string(encodedKey)+":"+encodedValue)
+			} else {
+				parts = append(parts, string(encodedKey)+": "+encodedValue)
+			}
 		}
-		return "{" + strings.Join(parts, ",") + "}", nil
+		if indentUnit == "" {
+			return "{" + strings.Join(parts, ",") + "}", nil
+		}
+		if len(parts) == 0 {
+			return "{}", nil
+		}
+		childIndent := strings.Repeat(indentUnit, depth+1)
+		currentIndent := strings.Repeat(indentUnit, depth)
+		return "{\n" + childIndent + strings.Join(parts, ",\n"+childIndent) + "\n" + currentIndent + "}", nil
 	case script.ValueKindUndefined:
 		return "", fmt.Errorf("JSON.stringify does not support undefined in this bounded slice")
 	case script.ValueKindFunction, script.ValueKindHostReference, script.ValueKindPromise, script.ValueKindInvocation, script.ValueKindPrivateName, script.ValueKindBigInt:

@@ -31,8 +31,8 @@ artifacts, so they are not listed as port tasks.
 
 ### Suite Wiring
 
-- [ ] `tests/integration_suite.rs`
-- [ ] `tests/integration_cases/mod.rs`
+- [x] `tests/integration_suite.rs`
+- [x] `tests/integration_cases/mod.rs`
 
 ### Integration Regression Cases
 
@@ -57,7 +57,7 @@ artifacts, so they are not listed as port tasks.
 - [x] `tests/integration_cases/issue_193_194_finitefield_site_regressions.rs`
 - [x] `tests/integration_cases/issue_199_finitefield_site_regression.rs`
 - [x] `tests/integration_cases/issue_202_finitefield_site_regressions.rs`
-- [ ] `tests/integration_cases/issue_203_finitefield_site_regressions.rs`
+- [x] `tests/integration_cases/issue_203_finitefield_site_regressions.rs`
 - [x] `tests/integration_cases/issue_211_finitefield_site_regressions.rs`
 - [x] `tests/integration_cases/issue_212_finitefield_site_regressions.rs`
 - [x] `tests/integration_cases/issue_212_finitefield_site_runtime_regressions.rs`
@@ -66,18 +66,18 @@ artifacts, so they are not listed as port tasks.
 - [x] `tests/integration_cases/issue_215_nested_helper_const_leak_regression.rs`
 - [x] `tests/integration_cases/issue_217_return_slot_regression.rs`
 - [x] `tests/integration_cases/issue_218_bulk_callback_const_binding_regression.rs`
-- [ ] `tests/integration_cases/issue_219_finitefield_site_regressions.rs`
+- [x] `tests/integration_cases/issue_219_finitefield_site_regressions.rs`
 - [x] `tests/integration_cases/open_issue_regressions.rs`
 - [x] `tests/integration_cases/regression_parser_fixes.rs`
 - [x] `tests/integration_cases/regression_real_world_html.rs`
-- [ ] `tests/integration_cases/regression_runtime_state_fixes.rs`
-- [ ] `tests/integration_cases/typed_array_from_map_fn.rs`
+- [x] `tests/integration_cases/regression_runtime_state_fixes.rs`
+- [x] `tests/integration_cases/typed_array_from_map_fn.rs`
 
 ### Adjacent Test Coverage
 
-- [ ] `tests/contract_harness_core.rs`
-- [ ] `tests/parser_property_fuzz_test.rs`
-- [ ] `tests/runtime_property_fuzz_test.rs`
+- [x] `tests/contract_harness_core.rs`
+- [x] `tests/parser_property_fuzz_test.rs`
+- [x] `tests/runtime_property_fuzz_test.rs`
 
 ## P2 - Script Syntax Backlog
 
@@ -205,7 +205,7 @@ failing test proves the surface is user-visible.
 - [x] Add collection/member parity only as bounded slices: `NodeList.forEach()`, `NodeList.entries()`,
   `NodeList.keys()`, `NodeList.values()`, and any other live-collection helper that a failing test
   proves visible.
-- [ ] Keep legacy or deprecated DOM branches such as `document.all` out of scope unless the
+- [x] Keep legacy or deprecated DOM branches such as `document.all` out of scope unless the
   capability matrix explicitly adds them.
 
 ## P2 - Reflection, Mutation, And Serialization

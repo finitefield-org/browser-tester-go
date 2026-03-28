@@ -27,6 +27,7 @@ func FuzzSplitScriptStatements(f *testing.F) {
 		`let [first, , third] = [1, 2, 3]; host.foo(first, third)`,
 		`let {kind: label} = {kind: "box"}; host.foo(label)`,
 		`let payload = {title: "ready", nested: {value: "changed"}, items: [1, 2, 3]}; host.foo(payload.title, payload?.nested?.value, payload.items.length)`,
+		`const one = (value) => { if (!value) return ""; return value + "!"; }; const two = (value) => { if (!value) return false; return /^server\/?[^/]+$/.test(value); }; const normalizedPath = one("a"); const root = document.getElementById("root");`,
 		`let ops = {write: x => x}; host.foo(ops.write?.("fresh"), payload?.["nested"]?.["value"])`,
 		`let more = [2, 3]; let extra = {kind: "box"}; let [first, ...rest] = [1, ...more, 4]; let {kind, ...others} = {...extra, count: 2}; host.foo(first, rest, kind, others)`,
 		`let identity = x => x; let collect = (...items) => items; host.foo(identity("fine"), collect(1, 2, 3))`,

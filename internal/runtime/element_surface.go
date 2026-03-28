@@ -78,6 +78,22 @@ func resolveElementDownloadValue(session *Session, store *dom.Store, nodeID dom.
 	return script.StringValue(value), nil
 }
 
+func resolveElementPlaceholderValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".placeholder"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsPlaceholderAttribute(node) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	value, ok := domAttributeValue(store, nodeID, "placeholder")
+	if !ok {
+		return script.StringValue(""), nil
+	}
+	return script.StringValue(value), nil
+}
+
 func resolveElementDisabledValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
 	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".disabled"
 	if session == nil || store == nil {
@@ -102,6 +118,18 @@ func resolveElementSelectedValue(session *Session, store *dom.Store, nodeID dom.
 	}
 	_, ok := domAttributeValue(store, nodeID, "selected")
 	return script.BoolValue(ok), nil
+}
+
+func resolveElementSelectedIndexValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".selectedIndex"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || node.TagName != "select" {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	return script.NumberValue(float64(store.SelectedIndexForNode(nodeID))), nil
 }
 
 func resolveElementStylePropertyValue(session *Session, store *dom.Store, nodeID dom.NodeID, property string) (script.Value, error) {

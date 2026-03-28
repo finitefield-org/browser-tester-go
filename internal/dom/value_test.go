@@ -39,6 +39,9 @@ func TestValueForNodeAndCheckedForNode(t *testing.T) {
 	if got, want := store.ValueForNode(modeID), "b"; got != want {
 		t.Fatalf("ValueForNode(#mode) = %q, want %q", got, want)
 	}
+	if got, want := store.SelectedIndexForNode(modeID), 1; got != want {
+		t.Fatalf("SelectedIndexForNode(#mode) = %d, want %d", got, want)
+	}
 
 	agreeID, ok, err := store.QuerySelector("#agree")
 	if err != nil || !ok {

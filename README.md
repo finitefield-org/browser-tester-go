@@ -102,7 +102,8 @@ runtime slices.
   `String.prototype.charCodeAt()` / `String.prototype.indexOf()` / `String.prototype.replace()` /
   `String.prototype.split()`, `String.prototype.startsWith()` / `String.prototype.endsWith()`,
   `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
-  `Array.prototype.every()` / `Array.prototype.fill()` / `Array.prototype.sort()` / `flatMap()` / `splice()` / `unshift()`,
+  `Array.prototype.every()` / `Array.prototype.fill()` / `Array.prototype.reverse()` /
+  `Array.prototype.sort()` / `flatMap()` / `splice()` / `unshift()`,
   `Number.prototype.toPrecision()` /
   `toExponential()` / `Date.prototype.toLocaleDateString()`, and the bounded array/string/number/date prototype helpers used by
   template-driven bootstrap, plus the live `URL` / `URLSearchParams` query-state bridge
@@ -110,7 +111,8 @@ runtime slices.
   `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for template query handling,
   plus `Object.entries()` / `Object.values()` / `Object.fromEntries()` for plain-object enumeration,
   and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()`, bounded `Uint8Array`
-  construction from array-like / buffer values, bounded `Promise.resolve()`, and bounded promise-style
+  construction from array-like / buffer values, plus `Uint8Array.from()` with map-function support,
+  `JSON.stringify(value, null, space)`, bounded `Promise.resolve()`, and bounded promise-style
   `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
@@ -505,15 +507,16 @@ runtime slices.
   `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
   activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,
   `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
-  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`, and
-  `element.click()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
+  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`,
+  `element.getBoundingClientRect()`, and `element.click()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
   `document` / `element` `addEventListener`, `details.open`, `element.classList`, `element.dataset`,
-  `input.select()`, `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`,
-  `click()`, `appendChild()` / `removeChild()`, browser-global locale reads like `navigator.language`,
+  `input.select()`, `select.value`, `select.selectedIndex`, `document.execCommand("copy")`,
+  `document.createElement()`, `setAttribute()`, `click()`, `appendChild()` / `removeChild()`,
+  browser-global locale reads like `navigator.language`,
   browser-global connectivity reads like `navigator.onLine` (which can be seeded through
   `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap tests), the live `URL` /
-  `URLSearchParams` query-state bridge, and `window.confirm()` / `window.prompt()` driven dialog
-  flows through the typed dialog mock family.
+  `URLSearchParams` query-state bridge, `window.scrollX` / `window.scrollY` read helpers, and
+  `window.confirm()` / `window.prompt()` driven dialog flows through the typed dialog mock family.
 - Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

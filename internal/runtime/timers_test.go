@@ -1,6 +1,12 @@
 package runtime
 
-import "testing"
+import (
+	"fmt"
+	"math"
+	"testing"
+
+	"browsertester/internal/script"
+)
 
 func TestSessionAdvanceTimeRunsTimersInDueOrder(t *testing.T) {
 	s := NewSession(SessionConfig{
@@ -77,6 +83,106 @@ func TestSessionAdvanceTimeRunsRepeatingTimersOncePerAdvance(t *testing.T) {
 	}
 	if got, want := s.DumpDOM(), `<main><div id="log"><span>tick</span><span>tick</span></div></main>`; got != want {
 		t.Fatalf("DumpDOM() after cleared interval = %q, want %q", got, want)
+	}
+}
+
+func TestSessionAdvanceTimeRunsTimerCallbacksWithArguments(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="log"></div></main>`,
+	})
+
+	var calls []string
+	callback := script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+		if len(args) != 2 {
+			return script.UndefinedValue(), fmt.Errorf("timer callback args = %#v, want 2 arguments", args)
+		}
+		calls = append(calls, script.ToJSString(args[0])+"|"+script.ToJSString(args[1]))
+		return script.UndefinedValue(), nil
+	})
+
+	if _, err := s.scheduleTimeoutCallback(callback, []script.Value{script.StringValue("timeout"), script.StringValue("one")}, 5); err != nil {
+		t.Fatalf("scheduleTimeoutCallback(timeout) error = %v", err)
+	}
+	intervalID, err := s.scheduleIntervalCallback(callback, []script.Value{script.StringValue("interval"), script.StringValue("two")}, 5)
+	if err != nil {
+		t.Fatalf("scheduleIntervalCallback(interval) error = %v", err)
+	}
+
+	if err := s.AdvanceTime(5); err != nil {
+		t.Fatalf("AdvanceTime(5) first error = %v", err)
+	}
+	if got, want := len(calls), 2; got != want {
+		t.Fatalf("calls after first advance = %#v, want %d entries", calls, want)
+	}
+	if calls[0] != "timeout|one" || calls[1] != "interval|two" {
+		t.Fatalf("calls after first advance = %#v, want timeout and interval callbacks", calls)
+	}
+
+	if err := s.AdvanceTime(5); err != nil {
+		t.Fatalf("AdvanceTime(5) second error = %v", err)
+	}
+	if got, want := len(calls), 3; got != want {
+		t.Fatalf("calls after second advance = %#v, want %d entries", calls, want)
+	}
+	if calls[2] != "interval|two" {
+		t.Fatalf("calls after second advance = %#v, want interval callback to repeat", calls)
+	}
+
+	s.clearInterval(intervalID)
+	if err := s.AdvanceTime(5); err != nil {
+		t.Fatalf("AdvanceTime(5) after clearInterval error = %v", err)
+	}
+	if got, want := len(calls), 3; got != want {
+		t.Fatalf("calls after clearInterval = %#v, want %d entries", calls, want)
+	}
+}
+
+func TestSessionAdvanceTimeRunsTimersScheduledAtMaxNowWithoutOverflow(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="log"></div></main>`,
+	})
+
+	if err := s.AdvanceTime(math.MaxInt64); err != nil {
+		t.Fatalf("AdvanceTime(MaxInt64) error = %v", err)
+	}
+	if got, want := s.NowMs(), int64(math.MaxInt64); got != want {
+		t.Fatalf("NowMs() after saturating advance = %d, want %d", got, want)
+	}
+
+	if _, err := s.scheduleTimeout(`host:insertAdjacentHTML("#log", "beforeend", "<span>t</span>")`, 1); err != nil {
+		t.Fatalf("scheduleTimeout(max-now) error = %v", err)
+	}
+
+	var intervalID int64
+	intervalCallback := script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+		if err := s.InsertAdjacentHTML("#log", "beforeend", "<span>i</span>"); err != nil {
+			return script.UndefinedValue(), err
+		}
+		s.clearInterval(intervalID)
+		return script.UndefinedValue(), nil
+	})
+	intervalID, err := s.scheduleIntervalCallback(intervalCallback, nil, 1)
+	if err != nil {
+		t.Fatalf("scheduleIntervalCallback(max-now) error = %v", err)
+	}
+
+	timers := s.PendingTimers()
+	if len(timers) != 2 {
+		t.Fatalf("PendingTimers() before delivery = %#v, want 2 entries", timers)
+	}
+	if timers[0].DueAtMs != math.MaxInt64 || timers[1].DueAtMs != math.MaxInt64 {
+		t.Fatalf("PendingTimers() before delivery = %#v, want due-at max saturation", timers)
+	}
+
+	if err := s.AdvanceTime(0); err != nil {
+		t.Fatalf("AdvanceTime(0) at MaxInt64 error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><div id="log"><span>t</span><span>i</span></div></main>`; got != want {
+		t.Fatalf("DumpDOM() after max-now timers = %q, want %q", got, want)
+	}
+	if got := s.PendingTimers(); len(got) != 0 {
+		t.Fatalf("PendingTimers() after delivery = %#v, want empty", got)
 	}
 }
 
