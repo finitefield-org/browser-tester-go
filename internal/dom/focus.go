@@ -73,6 +73,58 @@ func subtreeContainsDescendant(s *Store, ancestorID, nodeID NodeID) bool {
 	return nodeID != 0 && ancestorID != nodeID && subtreeContainsNode(s, ancestorID, nodeID)
 }
 
+func (s *Store) ContainsNode(ancestorID, nodeID NodeID) bool {
+	if s == nil || ancestorID == 0 || nodeID == 0 {
+		return false
+	}
+	if s.Node(ancestorID) == nil || s.Node(nodeID) == nil {
+		return false
+	}
+	return subtreeContainsNode(s, ancestorID, nodeID)
+}
+
+func (s *Store) IsConnected(nodeID NodeID) bool {
+	if s == nil || nodeID == 0 {
+		return false
+	}
+	if nodeID == s.documentID {
+		return true
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return false
+	}
+	for node.Parent != 0 {
+		if node.Parent == s.documentID {
+			return true
+		}
+		node = s.Node(node.Parent)
+		if node == nil {
+			return false
+		}
+	}
+	return false
+}
+
+func (s *Store) RootNodeID(nodeID NodeID) NodeID {
+	if s == nil || nodeID == 0 {
+		return 0
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return 0
+	}
+	current := node
+	for current.Parent != 0 {
+		parent := s.Node(current.Parent)
+		if parent == nil {
+			return 0
+		}
+		current = parent
+	}
+	return current.ID
+}
+
 func subtreeContainsAttribute(s *Store, ancestorID NodeID, attrName string) bool {
 	if s == nil || ancestorID == 0 || strings.TrimSpace(attrName) == "" {
 		return false

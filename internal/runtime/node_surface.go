@@ -92,6 +92,8 @@ func resolveNodeTreeNavigationValue(store *dom.Store, nodeID dom.NodeID, surface
 		return script.NullValue(), true, nil
 	case "childElementCount":
 		return script.NumberValue(float64(childElementCount(store, node))), true, nil
+	case "isConnected":
+		return script.BoolValue(store.IsConnected(nodeID)), true, nil
 	}
 
 	return script.UndefinedValue(), false, nil

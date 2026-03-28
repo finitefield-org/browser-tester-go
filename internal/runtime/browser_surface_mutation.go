@@ -172,6 +172,16 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		return store.SetAttribute(nodeID, "class", script.ToJSString(value))
 	case rest == "textContent" || rest == "innerText" || rest == "outerText":
 		return store.SetTextContent(nodeID, script.ToJSString(value))
+	case rest == "data":
+		if node.Kind != dom.NodeKindText {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetTextContent(nodeID, script.ToJSString(value))
+	case rest == "nodeValue":
+		if node.Kind != dom.NodeKindText {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetTextContent(nodeID, script.ToJSString(value))
 	case rest == "innerHTML":
 		return store.SetInnerHTML(nodeID, script.ToJSString(value))
 	case rest == "outerHTML":
@@ -417,6 +427,169 @@ func browserElementAppendChild(session *Session, store *dom.Store, nodeID dom.No
 	return browserElementReferenceValue(childID, store), nil
 }
 
+func browserNodeBefore(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.before is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) == 0 {
+		return script.UndefinedValue(), nil
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.before is unavailable in this bounded classic-JS slice")
+	}
+	if node.Parent == 0 {
+		return script.UndefinedValue(), nil
+	}
+
+	childIDs, createdIDs, err := browserNodeIDsFromValues(store, "node.before", args)
+	if err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	if err := store.InsertNodeListBefore(nodeID, childIDs); err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserNodeAfter(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.after is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) == 0 {
+		return script.UndefinedValue(), nil
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.after is unavailable in this bounded classic-JS slice")
+	}
+	if node.Parent == 0 {
+		return script.UndefinedValue(), nil
+	}
+
+	childIDs, createdIDs, err := browserNodeIDsFromValues(store, "node.after", args)
+	if err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	if err := store.InsertNodeListAfter(nodeID, childIDs); err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserNodeReplaceWith(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.replaceWith is unavailable in this bounded classic-JS slice")
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.replaceWith is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) == 0 {
+		if err := store.ReplaceNodeWithChildren(nodeID, nil); err != nil {
+			return script.UndefinedValue(), err
+		}
+		return script.UndefinedValue(), nil
+	}
+	if node.Parent == 0 {
+		return script.UndefinedValue(), nil
+	}
+
+	childIDs, createdIDs, err := browserNodeIDsFromValues(store, "node.replaceWith", args)
+	if err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	if err := store.ReplaceNodeWithChildren(nodeID, childIDs); err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserNodeReplaceChildren(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "replaceChildren is unavailable in this bounded classic-JS slice")
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument) {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "replaceChildren is unavailable in this bounded classic-JS slice")
+	}
+	method := "element.replaceChildren"
+	if node.Kind == dom.NodeKindDocument {
+		method = "document.replaceChildren"
+	}
+
+	childIDs, createdIDs, err := browserNodeIDsFromValues(store, method, args)
+	if err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	if err := store.ReplaceChildrenWithNodeIDs(nodeID, childIDs); err != nil {
+		browserDeleteNodeIDs(store, createdIDs)
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserNodeContains(session *Session, store *dom.Store, nodeID dom.NodeID, method string, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("%s expects 1 argument", method)
+	}
+	if args[0].Kind == script.ValueKindNull || args[0].Kind == script.ValueKindUndefined {
+		return script.BoolValue(false), nil
+	}
+	otherID, err := browserNodeIDFromContainsValue(store, args[0], method)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.BoolValue(store.ContainsNode(nodeID, otherID)), nil
+}
+
+func browserNodeGetRootNode(session *Session, store *dom.Store, nodeID dom.NodeID, method string, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("%s accepts no arguments", method)
+	}
+	rootID := store.RootNodeID(nodeID)
+	if rootID == 0 {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
+	}
+	if rootID == store.DocumentID() {
+		return script.HostObjectReference("document"), nil
+	}
+	return browserElementReferenceValue(rootID, store), nil
+}
+
+func browserNodeRemove(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.remove is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) > 0 {
+		return script.UndefinedValue(), fmt.Errorf("node.remove accepts no arguments")
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "node.remove is unavailable in this bounded classic-JS slice")
+	}
+	if node.Parent == 0 {
+		return script.UndefinedValue(), nil
+	}
+	if err := store.RemoveNode(nodeID); err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
 func browserElementRemoveChild(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
 	if session == nil || store == nil {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.removeChild is unavailable in this bounded classic-JS slice")
@@ -615,6 +788,61 @@ func browserNodeIDFromValue(value script.Value, method string) (dom.NodeID, erro
 		return parseElementReferencePath(value.HostReferencePath)
 	}
 	return 0, fmt.Errorf("%s requires a node reference", method)
+}
+
+func browserNodeIDFromContainsValue(store *dom.Store, value script.Value, method string) (dom.NodeID, error) {
+	if store == nil {
+		return 0, script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("%s is unavailable in this bounded classic-JS slice", method))
+	}
+	if value.Kind == script.ValueKindHostReference {
+		switch {
+		case value.HostReferencePath == "document":
+			return store.DocumentID(), nil
+		case strings.HasPrefix(value.HostReferencePath, "element:"):
+			return parseElementReferencePath(value.HostReferencePath)
+		}
+	}
+	return 0, fmt.Errorf("%s requires a node reference", method)
+}
+
+func browserNodeIDsFromValues(store *dom.Store, method string, args []script.Value) ([]dom.NodeID, []dom.NodeID, error) {
+	childIDs := make([]dom.NodeID, 0, len(args))
+	createdIDs := make([]dom.NodeID, 0, len(args))
+	for _, arg := range args {
+		if arg.Kind == script.ValueKindHostReference {
+			switch {
+			case arg.HostReferencePath == "document":
+				childIDs = append(childIDs, store.DocumentID())
+				continue
+			case strings.HasPrefix(arg.HostReferencePath, "element:"):
+				nodeID, err := parseElementReferencePath(arg.HostReferencePath)
+				if err != nil {
+					browserDeleteNodeIDs(store, createdIDs)
+					return nil, nil, err
+				}
+				childIDs = append(childIDs, nodeID)
+				continue
+			}
+		}
+
+		textID, err := store.CreateTextNode(script.ToJSString(arg))
+		if err != nil {
+			browserDeleteNodeIDs(store, createdIDs)
+			return nil, nil, fmt.Errorf("%s failed to create text node: %w", method, err)
+		}
+		createdIDs = append(createdIDs, textID)
+		childIDs = append(childIDs, textID)
+	}
+	return childIDs, createdIDs, nil
+}
+
+func browserDeleteNodeIDs(store *dom.Store, nodeIDs []dom.NodeID) {
+	if store == nil {
+		return
+	}
+	for _, nodeID := range nodeIDs {
+		_ = store.DeleteNode(nodeID)
+	}
 }
 
 func browserHostObjectValue(path string) script.Value {

@@ -237,6 +237,51 @@ func (s *Store) setTextContent(nodeID NodeID, text string, updateTextareaDefault
 	}
 }
 
+func (s *Store) SplitText(nodeID NodeID, offset int) (NodeID, error) {
+	if s == nil {
+		return 0, fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return 0, fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	if node.Kind != NodeKindText {
+		return 0, fmt.Errorf("node %d does not support splitText", nodeID)
+	}
+	if offset < 0 || offset > len(node.Text) {
+		return 0, fmt.Errorf("splitText offset %d is out of bounds for text node length %d", offset, len(node.Text))
+	}
+
+	var parent *Node
+	if node.Parent != 0 {
+		parent = s.Node(node.Parent)
+		if parent == nil {
+			return 0, fmt.Errorf("invalid parent node id: %d", node.Parent)
+		}
+		if indexOfNodeID(parent.Children, nodeID) < 0 {
+			return 0, fmt.Errorf("node %d is not attached to its parent", nodeID)
+		}
+	}
+
+	rightText := node.Text[offset:]
+	node.Text = node.Text[:offset]
+	newID, err := s.CreateTextNode(rightText)
+	if err != nil {
+		return 0, err
+	}
+
+	if parent != nil {
+		index := indexOfNodeID(parent.Children, nodeID)
+		parent.Children = spliceNodeIDs(parent.Children, index+1, 0, []NodeID{newID})
+		if newNode := s.Node(newID); newNode != nil {
+			newNode.Parent = node.Parent
+		}
+		s.syncTextareaDefaultsForSubtree(node.Parent)
+	}
+
+	return newID, nil
+}
+
 func inputType(node *Node) string {
 	if node == nil {
 		return ""

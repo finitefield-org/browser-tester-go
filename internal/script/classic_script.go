@@ -7696,6 +7696,203 @@ func scanClassicJSDelimitedExpressionTerminator(scanner *classicJSStatementParse
 	return scanner.pos, nil
 }
 
+func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser, stopAtColon bool) (int, error) {
+	var quote byte
+	var escape bool
+	var lineComment bool
+	var blockComment bool
+	var parenDepth int
+	var braceDepth int
+	var bracketDepth int
+	var conditionalDepth int
+	canStartRegex := true
+
+	for !scanner.eof() {
+		ch := scanner.peekByte()
+		if lineComment {
+			scanner.pos++
+			if ch == '\n' || ch == '\r' {
+				lineComment = false
+			}
+			continue
+		}
+		if blockComment {
+			if ch == '*' && scanner.pos+1 < len(scanner.source) && scanner.source[scanner.pos+1] == '/' {
+				scanner.pos += 2
+				blockComment = false
+				continue
+			}
+			scanner.pos++
+			continue
+		}
+		if quote != 0 {
+			scanner.pos++
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' {
+				escape = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+			if stopAtColon {
+				if ch == ':' && conditionalDepth == 0 {
+					return scanner.pos, nil
+				}
+			}
+			switch ch {
+			case ',', ';', ')', ']', '}':
+				return scanner.pos, nil
+			}
+		}
+
+		switch ch {
+		case '\'', '"':
+			quote = ch
+			scanner.pos++
+			canStartRegex = false
+		case '`':
+			if _, _, err := scanner.consumeTemplateLiteralParts(); err != nil {
+				return scanner.pos, err
+			}
+			canStartRegex = false
+		case '/':
+			if scanner.pos+1 >= len(scanner.source) {
+				scanner.pos++
+				canStartRegex = true
+				continue
+			}
+			switch scanner.source[scanner.pos+1] {
+			case '/':
+				lineComment = true
+				scanner.pos += 2
+			case '*':
+				blockComment = true
+				scanner.pos += 2
+			default:
+				if canStartRegex {
+					if _, err := scanner.parseRegularExpressionLiteral(); err != nil {
+						return scanner.pos, err
+					}
+					canStartRegex = false
+					continue
+				}
+				scanner.pos++
+				canStartRegex = true
+			}
+		case '(':
+			parenDepth++
+			scanner.pos++
+			canStartRegex = true
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+			scanner.pos++
+			canStartRegex = false
+		case '{':
+			braceDepth++
+			scanner.pos++
+			canStartRegex = true
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			scanner.pos++
+			canStartRegex = false
+		case '[':
+			bracketDepth++
+			scanner.pos++
+			canStartRegex = true
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+			scanner.pos++
+			canStartRegex = false
+		case '?':
+			if scanner.pos+1 < len(scanner.source) {
+				switch scanner.source[scanner.pos+1] {
+				case '?':
+					scanner.pos += 2
+					canStartRegex = true
+					continue
+				case '.':
+					scanner.pos += 2
+					canStartRegex = false
+					continue
+				}
+			}
+			conditionalDepth++
+			scanner.pos++
+			canStartRegex = true
+		case ':':
+			if conditionalDepth > 0 {
+				conditionalDepth--
+				scanner.pos++
+				canStartRegex = true
+				continue
+			}
+			if stopAtColon {
+				return scanner.pos, nil
+			}
+			scanner.pos++
+			canStartRegex = true
+		case ',', ';', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
+			scanner.pos++
+			canStartRegex = true
+		case ' ', '\t', '\n', '\r':
+			scanner.pos++
+			continue
+		case '.':
+			scanner.pos++
+			canStartRegex = false
+		default:
+			if isIdentStart(ch) {
+				scanner.pos++
+				for !scanner.eof() && isIdentPart(scanner.peekByte()) {
+					scanner.pos++
+				}
+				canStartRegex = false
+				continue
+			}
+			if isDigit(ch) {
+				scanner.pos++
+				for !scanner.eof() {
+					next := scanner.peekByte()
+					if isDigit(next) || next == '_' {
+						scanner.pos++
+						continue
+					}
+					break
+				}
+				canStartRegex = false
+				continue
+			}
+			scanner.pos++
+			canStartRegex = false
+		}
+	}
+
+	if quote != 0 {
+		return scanner.pos, NewError(ErrorKindParse, "unterminated quoted string in conditional expression")
+	}
+	if blockComment {
+		return scanner.pos, NewError(ErrorKindParse, "unterminated block comment in conditional expression")
+	}
+	if conditionalDepth > 0 || stopAtColon {
+		return scanner.pos, NewError(ErrorKindParse, "unterminated conditional expression in this bounded classic-JS slice")
+	}
+	return scanner.pos, nil
+}
+
 func scanClassicJSClassMemberTerminator(scanner *classicJSStatementParser) (int, error) {
 	var quote byte
 	var escape bool
@@ -8059,10 +8256,9 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 
 	p.pos++
 	branchStart := p.pos
-	preConditional := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-	skip := *preConditional
+	skip := *p
 	skip.pos = branchStart
-	if _, err := skip.parseLogicalAssignment(); err != nil {
+	if _, err := scanClassicJSConditionalBranchTerminator(&skip, true); err != nil {
 		return jsValue{}, err
 	}
 	skip.skipSpaceAndComments()
@@ -8080,9 +8276,8 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 		if !p.consumeByte(':') {
 			return jsValue{}, NewError(ErrorKindParse, "conditional expressions require a `:` alternate branch in this bounded classic-JS slice")
 		}
-		skipAlternate := *preConditional
-		skipAlternate.pos = p.pos
-		if _, err := skipAlternate.parseLogicalAssignment(); err != nil {
+		skipAlternate := *p
+		if _, err := scanClassicJSConditionalBranchTerminator(&skipAlternate, false); err != nil {
 			return jsValue{}, err
 		}
 		p.pos = skipAlternate.pos

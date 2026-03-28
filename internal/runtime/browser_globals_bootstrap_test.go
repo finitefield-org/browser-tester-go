@@ -1228,6 +1228,24 @@ func TestSessionBootstrapsStringReplaceCallbackAndFromCharCode(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsStringMatchNullGuardOnEmptyString(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const runs = "".match(/ {2,}/g); document.getElementById("out").textContent = String(runs ? runs.length : 0)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0" {
+		t.Fatalf("TextContent(#out) = %q, want 0", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.match null-guard bootstrap", got)
+	}
+}
+
 func TestSessionRejectsMalformedQuotedRegularExpressionLiteral(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const text = 'a"b'; document.getElementById("out").textContent = text.replace(/\"g, "&quot;")</script></main>`
 

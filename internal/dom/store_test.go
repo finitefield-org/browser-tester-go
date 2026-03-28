@@ -60,6 +60,135 @@ func TestTextContentForNode(t *testing.T) {
 	}
 }
 
+func TestWholeTextForNode(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="main"></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+	mainID := mustSelectSingle(t, store, "#main")
+	firstID, err := store.CreateTextNode("hel")
+	if err != nil {
+		t.Fatalf("CreateTextNode(hel) error = %v", err)
+	}
+	secondID, err := store.CreateTextNode("lo")
+	if err != nil {
+		t.Fatalf("CreateTextNode(lo) error = %v", err)
+	}
+	if err := store.AppendChild(mainID, firstID); err != nil {
+		t.Fatalf("AppendChild(main, first) error = %v", err)
+	}
+	if err := store.AppendChild(mainID, secondID); err != nil {
+		t.Fatalf("AppendChild(main, second) error = %v", err)
+	}
+
+	if got, want := store.WholeTextForNode(firstID), "hello"; got != want {
+		t.Fatalf("WholeTextForNode(first) = %q, want %q", got, want)
+	}
+	if got, want := store.WholeTextForNode(secondID), "hello"; got != want {
+		t.Fatalf("WholeTextForNode(second) = %q, want %q", got, want)
+	}
+}
+
+func TestSplitTextForNode(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="main">hello</section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+	mainID := mustSelectSingle(t, store, "#main")
+	children, err := store.ChildNodes(mainID)
+	if err != nil {
+		t.Fatalf("ChildNodes(#main) error = %v", err)
+	}
+	if got, want := children.Length(), 1; got != want {
+		t.Fatalf("ChildNodes(#main) length = %d, want %d", got, want)
+	}
+	textID, ok := children.Item(0)
+	if !ok {
+		t.Fatalf("ChildNodes(#main).Item(0) = no node, want text node")
+	}
+
+	newID, err := store.SplitText(textID, 2)
+	if err != nil {
+		t.Fatalf("SplitText(#text, 2) error = %v", err)
+	}
+
+	children, err = store.ChildNodes(mainID)
+	if err != nil {
+		t.Fatalf("ChildNodes(#main) after split error = %v", err)
+	}
+	if got, want := children.Length(), 2; got != want {
+		t.Fatalf("ChildNodes(#main) after split length = %d, want %d", got, want)
+	}
+	firstID, ok := children.Item(0)
+	if !ok || firstID != textID {
+		t.Fatalf("ChildNodes(#main).Item(0) after split = (%d, %v), want (%d, true)", firstID, ok, textID)
+	}
+	secondID, ok := children.Item(1)
+	if !ok || secondID != newID {
+		t.Fatalf("ChildNodes(#main).Item(1) after split = (%d, %v), want (%d, true)", secondID, ok, newID)
+	}
+	if got, want := store.Node(textID).Text, "he"; got != want {
+		t.Fatalf("SplitText original node text = %q, want %q", got, want)
+	}
+	if got, want := store.Node(newID).Text, "llo"; got != want {
+		t.Fatalf("SplitText new node text = %q, want %q", got, want)
+	}
+	if got, want := store.WholeTextForNode(textID), "hello"; got != want {
+		t.Fatalf("WholeTextForNode(original) after split = %q, want %q", got, want)
+	}
+	if got, want := store.TextContentForNode(mainID), "hello"; got != want {
+		t.Fatalf("TextContentForNode(#main) after split = %q, want %q", got, want)
+	}
+}
+
+func TestSplitTextForDocumentChildNode(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`hello`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+	children, err := store.ChildNodes(store.DocumentID())
+	if err != nil {
+		t.Fatalf("ChildNodes(document) error = %v", err)
+	}
+	if got, want := children.Length(), 1; got != want {
+		t.Fatalf("ChildNodes(document) length = %d, want %d", got, want)
+	}
+	textID, ok := children.Item(0)
+	if !ok {
+		t.Fatalf("ChildNodes(document).Item(0) = no node, want text node")
+	}
+
+	newID, err := store.SplitText(textID, 2)
+	if err != nil {
+		t.Fatalf("SplitText(document text, 2) error = %v", err)
+	}
+
+	children, err = store.ChildNodes(store.DocumentID())
+	if err != nil {
+		t.Fatalf("ChildNodes(document) after split error = %v", err)
+	}
+	if got, want := children.Length(), 2; got != want {
+		t.Fatalf("ChildNodes(document) after split length = %d, want %d", got, want)
+	}
+	firstID, ok := children.Item(0)
+	if !ok || firstID != textID {
+		t.Fatalf("ChildNodes(document).Item(0) after split = (%d, %v), want (%d, true)", firstID, ok, textID)
+	}
+	secondID, ok := children.Item(1)
+	if !ok || secondID != newID {
+		t.Fatalf("ChildNodes(document).Item(1) after split = (%d, %v), want (%d, true)", secondID, ok, newID)
+	}
+	if got, want := store.Node(textID).Text, "he"; got != want {
+		t.Fatalf("SplitText original document child text = %q, want %q", got, want)
+	}
+	if got, want := store.Node(newID).Text, "llo"; got != want {
+		t.Fatalf("SplitText new document child text = %q, want %q", got, want)
+	}
+	if got, want := store.TextContentForNode(store.DocumentID()), "hello"; got != want {
+		t.Fatalf("TextContentForNode(document) after split = %q, want %q", got, want)
+	}
+}
+
 func TestSerializationEscapesSpecialCharacters(t *testing.T) {
 	store := NewStore()
 

@@ -85,7 +85,10 @@ runtime slices.
   `dir`, plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`,
   `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`,
   `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, and `childElementCount`), `location`, `history`, `navigator`, `URL` /
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node
+  `nodeValue` / `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` /
+  `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
+  `normalize()` mutation), `location`, `history`, `navigator`, `URL` /
   `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
   `matchMedia`, `console`, `clipboard`, dynamic session-backed `window.<custom>` object properties such as
@@ -500,15 +503,19 @@ runtime slices.
   plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, and `childElementCount`, plus bounded element reflection reads and writes
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node
+  `nodeValue` / `data` reads and writes, plus `wholeText` reads, `splitText()` mutation, `before()` /
+  `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
+  `normalize()` mutation, and bounded element reflection reads and writes
   on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`,
   `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
   plus direct element text mutations through call-result property chains such as
   `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
   activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,
   `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
-  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`,
-  `element.getBoundingClientRect()`, and `element.click()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
+  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`, `remove()`,
+  `element.getBoundingClientRect()`, and `element.click()`, plus element and document node mutation helpers
+  such as `replaceChildren()`, `before()`, `after()`, `replaceWith()`, and `remove()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
   `document` / `element` `addEventListener`, `details.open`, `element.classList`, `element.dataset`,
   `input.select()`, `select.value`, `select.selectedIndex`, `document.execCommand("copy")`,
   `document.createElement()`, `setAttribute()`, `click()`, `appendChild()` / `removeChild()`,

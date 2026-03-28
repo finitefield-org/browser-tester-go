@@ -53,6 +53,83 @@ func (s *Store) ReplaceChildren(nodeID NodeID, markup string) error {
 	return s.SetInnerHTML(nodeID, markup)
 }
 
+func (s *Store) ReplaceChildrenWithNodeIDs(nodeID NodeID, childIDs []NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	if node.Kind != NodeKindDocument && node.Kind != NodeKindElement {
+		return fmt.Errorf("node %d does not support replaceChildren", nodeID)
+	}
+
+	oldChildren := append([]NodeID(nil), node.Children...)
+	if len(childIDs) == 0 {
+		s.clearFocusedNodeIfSubtreeContains(nodeID, false)
+		s.clearTargetNodeIfSubtreeContains(nodeID, false)
+		node.Children = node.Children[:0]
+		for _, childID := range oldChildren {
+			s.deleteSubtree(childID)
+		}
+		s.syncTextareaDefaultsForSubtree(nodeID)
+		return nil
+	}
+
+	seen := make(map[NodeID]struct{}, len(childIDs))
+	oldParents := make(map[NodeID]NodeID, len(childIDs))
+	for _, childID := range childIDs {
+		if childID == nodeID {
+			return fmt.Errorf("node %d cannot be inserted into itself", childID)
+		}
+		if _, ok := seen[childID]; ok {
+			return fmt.Errorf("node %d is repeated in the replacement list", childID)
+		}
+		seen[childID] = struct{}{}
+
+		child := s.Node(childID)
+		if child == nil {
+			return fmt.Errorf("invalid child node id: %d", childID)
+		}
+		if child.Kind == NodeKindDocument {
+			return fmt.Errorf("document node cannot be inserted")
+		}
+		if node.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+			return fmt.Errorf("document node can only contain element children")
+		}
+		if subtreeContainsNode(s, childID, nodeID) {
+			return fmt.Errorf("node %d cannot be inserted into its own descendant %d", childID, nodeID)
+		}
+
+		oldParents[childID] = child.Parent
+	}
+
+	for _, childID := range childIDs {
+		oldParentID := oldParents[childID]
+		if oldParentID != 0 && oldParentID != nodeID {
+			if oldParent := s.Node(oldParentID); oldParent != nil {
+				oldParent.Children = removeNodeID(oldParent.Children, childID)
+			}
+		}
+		if child := s.Node(childID); child != nil {
+			child.Parent = nodeID
+		}
+	}
+
+	node.Children = append(node.Children[:0], childIDs...)
+	for _, childID := range oldChildren {
+		if _, ok := seen[childID]; ok {
+			continue
+		}
+		s.clearFocusedNodeIfSubtreeContains(childID, true)
+		s.clearTargetNodeIfSubtreeContains(childID, true)
+		s.deleteSubtree(childID)
+	}
+	s.syncTextareaDefaultsForSubtree(nodeID)
+	return nil
+}
+
 func (s *Store) ReplaceChild(parentID, newChildID, oldChildID NodeID) error {
 	if s == nil {
 		return fmt.Errorf("dom store is nil")
@@ -351,6 +428,209 @@ func (s *Store) RemoveNode(nodeID NodeID) error {
 	}
 	s.deleteSubtree(nodeID)
 	s.syncTextareaDefaultsForSubtree(node.Parent)
+	return nil
+}
+
+func (s *Store) DeleteNode(nodeID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	if s.Node(nodeID) == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	s.clearFocusedNodeIfSubtreeContains(nodeID, true)
+	s.clearTargetNodeIfSubtreeContains(nodeID, true)
+	s.deleteSubtree(nodeID)
+	return nil
+}
+
+func (s *Store) InsertNodeListBefore(nodeID NodeID, childIDs []NodeID) error {
+	return s.insertNodeListRelative(nodeID, childIDs, false)
+}
+
+func (s *Store) InsertNodeListAfter(nodeID NodeID, childIDs []NodeID) error {
+	return s.insertNodeListRelative(nodeID, childIDs, true)
+}
+
+func (s *Store) ReplaceNodeWithChildren(nodeID NodeID, childIDs []NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+
+	parentID := node.Parent
+	if parentID == 0 {
+		return nil
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+
+	if len(childIDs) == 0 {
+		s.clearFocusedNodeIfSubtreeContains(nodeID, true)
+		s.clearTargetNodeIfSubtreeContains(nodeID, true)
+		parent.Children = removeNodeID(parent.Children, nodeID)
+		s.deleteSubtree(nodeID)
+		s.syncTextareaDefaultsForSubtree(parentID)
+		return nil
+	}
+	if err := s.insertNodeListRelative(nodeID, childIDs, false); err != nil {
+		return err
+	}
+
+	s.clearFocusedNodeIfSubtreeContains(nodeID, true)
+	s.clearTargetNodeIfSubtreeContains(nodeID, true)
+	parent.Children = removeNodeID(parent.Children, nodeID)
+	s.deleteSubtree(nodeID)
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
+func (s *Store) insertNodeListRelative(nodeID NodeID, childIDs []NodeID, after bool) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+
+	parentID := node.Parent
+	if parentID == 0 {
+		return nil
+	}
+	parent := s.Node(parentID)
+	if parent == nil {
+		return fmt.Errorf("invalid parent node id: %d", parentID)
+	}
+	if len(childIDs) == 0 {
+		return nil
+	}
+
+	working := append([]NodeID(nil), parent.Children...)
+	oldParents := make(map[NodeID]NodeID, len(childIDs))
+	seen := make(map[NodeID]struct{}, len(childIDs))
+	for _, childID := range childIDs {
+		if childID == nodeID {
+			return fmt.Errorf("node %d cannot be inserted relative to itself", childID)
+		}
+		if _, ok := seen[childID]; ok {
+			return fmt.Errorf("node %d is repeated in the insertion list", childID)
+		}
+		seen[childID] = struct{}{}
+
+		child := s.Node(childID)
+		if child == nil {
+			return fmt.Errorf("invalid child node id: %d", childID)
+		}
+		if child.Kind == NodeKindDocument {
+			return fmt.Errorf("document node cannot be inserted")
+		}
+		if parent.Kind == NodeKindDocument && child.Kind != NodeKindElement {
+			return fmt.Errorf("document node can only contain element children")
+		}
+		if subtreeContainsNode(s, childID, parentID) {
+			return fmt.Errorf("node %d cannot be inserted into its own descendant %d", childID, parentID)
+		}
+
+		oldParents[childID] = child.Parent
+		if child.Parent == parentID {
+			working = removeNodeID(working, childID)
+		}
+	}
+
+	index := indexOfNodeID(working, nodeID)
+	if index < 0 {
+		return fmt.Errorf("node %d is not attached to its parent", nodeID)
+	}
+	if after {
+		index++
+	}
+	working = spliceNodeIDs(working, index, 0, childIDs)
+
+	for _, childID := range childIDs {
+		oldParentID := oldParents[childID]
+		if oldParentID != 0 && oldParentID != parentID {
+			if oldParent := s.Node(oldParentID); oldParent != nil {
+				oldParent.Children = removeNodeID(oldParent.Children, childID)
+			}
+		}
+		if child := s.Node(childID); child != nil {
+			child.Parent = parentID
+		}
+	}
+
+	parent.Children = working
+	s.syncTextareaDefaultsForSubtree(parentID)
+	return nil
+}
+
+func (s *Store) Normalize(nodeID NodeID) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+
+	switch node.Kind {
+	case NodeKindDocument, NodeKindElement:
+		if err := s.normalizeSubtree(nodeID); err != nil {
+			return err
+		}
+		return nil
+	case NodeKindText:
+		return nil
+	default:
+		return fmt.Errorf("node %d does not support normalize", nodeID)
+	}
+}
+
+func (s *Store) normalizeSubtree(nodeID NodeID) error {
+	node := s.Node(nodeID)
+	if node == nil {
+		return nil
+	}
+	if node.Kind != NodeKindDocument && node.Kind != NodeKindElement {
+		return nil
+	}
+
+	for i := 0; i < len(node.Children); {
+		childID := node.Children[i]
+		child := s.Node(childID)
+		if child == nil {
+			i++
+			continue
+		}
+		if child.Kind == NodeKindText {
+			if child.Text == "" {
+				s.deleteSubtree(childID)
+				continue
+			}
+			for i+1 < len(node.Children) {
+				nextID := node.Children[i+1]
+				next := s.Node(nextID)
+				if next == nil || next.Kind != NodeKindText {
+					break
+				}
+				child.Text += next.Text
+				s.deleteSubtree(nextID)
+			}
+			i++
+			continue
+		}
+		if err := s.normalizeSubtree(childID); err != nil {
+			return err
+		}
+		i++
+	}
+
+	s.syncTextareaDefaultsForSubtree(nodeID)
 	return nil
 }
 

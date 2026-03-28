@@ -377,7 +377,43 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 		return resolveDocumentDesignModeValue(session, store)
 	case "dir":
 		return resolveDocumentDirValue(session, store)
-	case "nodeType", "nodeName", "nodeValue", "ownerDocument", "parentNode", "parentElement", "firstChild", "lastChild", "firstElementChild", "lastElementChild", "nextSibling", "previousSibling", "nextElementSibling", "previousElementSibling", "childElementCount":
+	case "replaceChildren":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.replaceChildren is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodeReplaceChildren(session, store, store.DocumentID(), args)
+		}), nil
+	case "getRootNode":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.getRootNode is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodeGetRootNode(session, store, store.DocumentID(), "document.getRootNode", args)
+		}), nil
+	case "contains":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.contains is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodeContains(session, store, store.DocumentID(), "document.contains", args)
+		}), nil
+	case "before", "after", "replaceWith", "remove":
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("document.%s is unavailable in this bounded classic-JS slice", rest))
+	case "normalize":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("document.normalize accepts no arguments")
+			}
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.normalize is unavailable in this bounded classic-JS slice")
+			}
+			if err := store.Normalize(store.DocumentID()); err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.UndefinedValue(), nil
+		}), nil
+	case "nodeType", "nodeName", "nodeValue", "ownerDocument", "parentNode", "parentElement", "firstChild", "lastChild", "firstElementChild", "lastElementChild", "nextSibling", "previousSibling", "nextElementSibling", "previousElementSibling", "childElementCount", "isConnected":
 		if value, handled, err := resolveNodeTreeNavigationValue(store, store.DocumentID(), "document."+rest, rest); handled || err != nil {
 			return value, err
 		}
@@ -1044,7 +1080,7 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	switch rest {
 	case "nodeType", "nodeName", "namespaceURI", "nodeValue", "ownerDocument", "parentNode", "parentElement",
 		"firstChild", "lastChild", "firstElementChild", "lastElementChild", "nextSibling",
-		"previousSibling", "nextElementSibling", "previousElementSibling", "childElementCount":
+		"previousSibling", "nextElementSibling", "previousElementSibling", "childElementCount", "isConnected":
 		if value, handled, err := resolveNodeTreeNavigationValue(store, nodeID, "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest, rest); handled || err != nil {
 			return value, err
 		}
@@ -1141,6 +1177,34 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementRemoveChild(session, store, nodeID, args)
 		}), nil
+	case "before":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeBefore(session, store, nodeID, args)
+		}), nil
+	case "after":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeAfter(session, store, nodeID, args)
+		}), nil
+	case "replaceWith":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeReplaceWith(session, store, nodeID, args)
+		}), nil
+	case "replaceChildren":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeReplaceChildren(session, store, nodeID, args)
+		}), nil
+	case "contains":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeContains(session, store, nodeID, "element.contains", args)
+		}), nil
+	case "getRootNode":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeGetRootNode(session, store, nodeID, "element.getRootNode", args)
+		}), nil
+	case "remove":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeRemove(session, store, nodeID, args)
+		}), nil
 	case "select":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementSelect(session, store, nodeID, args)
@@ -1157,6 +1221,44 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return script.HostObjectReference(base + ".attributes"), nil
 	case "tagName":
 		return script.StringValue(strings.ToUpper(node.TagName)), nil
+	case "normalize":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("element.normalize accepts no arguments")
+			}
+			if err := store.Normalize(nodeID); err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.UndefinedValue(), nil
+		}), nil
+	case "data":
+		if node.Kind != dom.NodeKindText {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.StringValue(node.Text), nil
+	case "wholeText":
+		if node.Kind != dom.NodeKindText {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.StringValue(store.WholeTextForNode(nodeID)), nil
+	case "splitText":
+		if node.Kind != dom.NodeKindText {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) != 1 {
+				return script.UndefinedValue(), fmt.Errorf("element.splitText expects 1 argument")
+			}
+			offset, err := scriptInt64Arg("element.splitText", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			newID, err := store.SplitText(nodeID, int(offset))
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return browserElementReferenceValue(newID, store), nil
+		}), nil
 	case "textContent":
 		return script.StringValue(store.TextContentForNode(nodeID)), nil
 	case "innerHTML":

@@ -99,7 +99,7 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `host:replaceChildren()` / `host:cloneNode()` / `host:setInnerHTML()` / `host:setOuterHTML()` /
   `host:insertAdjacentHTML()` / `host:removeNode()` / `host:createElement()` /
   `host:createTextNode()` / `host:appendChild()` / `host:insertBefore()` / `host:replaceChild()` /
-  `host:insertAdjacentElement()` / `host:insertAdjacentText()` / `host:removeChild()`, can read or write a bounded cookie jar through
+  `host:insertAdjacentElement()` / `host:insertAdjacentText()` / `host:removeChild()` / `remove()`, can read or write a bounded cookie jar through
   `host:documentCookie()` / `host:setDocumentCookie()` plus `host:navigatorCookieEnabled()`, and can
   read or write a bounded `window.name` state through `host:windowName()` / `host:setWindowName()`,
   and can read bounded tree-navigation and reflection properties through `document` /
@@ -107,13 +107,16 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `nodeType`, `nodeName`, `nodeValue`, `ownerDocument`, `parentNode`, `parentElement`,
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, `childElementCount`,
+  `contains()`, `isConnected()`, and `getRootNode()`, plus text-node `nodeValue` / `data` reads and writes,
+  `wholeText` reads, `splitText()` mutation, `before()` / `after()` / `replaceWith()` / `remove()`
+  node mutation helpers, and `normalize()` mutation,
   bounded element reflection reads and writes for `className`, `innerText`, `outerText`, `style`,
   `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
   plus bounded standard DOM
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
   `element.classList`, `element.dataset`, `input.select()`, `select.value`, `select.selectedIndex`,
   `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`, `appendChild()` /
-  `removeChild()`, browser-global locale reads like `navigator.language`, browser-global
+  `removeChild()` / `remove()`, browser-global locale reads like `navigator.language`, browser-global
   connectivity reads like `navigator.onLine`
   (which can be seeded through `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap
   tests), the live `URL` / `URLSearchParams` query-state bridge, and `window.confirm()` /
@@ -269,7 +272,10 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
   `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
   `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, and `childElementCount`.
+  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, and `getRootNode()`, plus text-node `nodeValue` /
+  `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` / `after()` /
+  `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
+  `normalize()` mutation.
 - Bounded attribute reflection helpers are available for `GetAttribute` / `HasAttribute` /
   `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.

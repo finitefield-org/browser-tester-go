@@ -63,6 +63,192 @@ func TestTextContentForNodeAndSetTextContent(t *testing.T) {
 	}
 }
 
+func TestContainsNodeReportsInclusiveDescendants(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child">x</span></div><p id="sibling">y</p></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	targetID := mustSelectSingle(t, store, "#target")
+	childID := mustSelectSingle(t, store, "#child")
+	siblingID := mustSelectSingle(t, store, "#sibling")
+
+	if !store.ContainsNode(docID, childID) {
+		t.Fatalf("ContainsNode(document, child) = false, want true")
+	}
+	if !store.ContainsNode(wrapID, childID) {
+		t.Fatalf("ContainsNode(#wrap, #child) = false, want true")
+	}
+	if !store.ContainsNode(targetID, targetID) {
+		t.Fatalf("ContainsNode(#target, #target) = false, want true")
+	}
+	if !store.ContainsNode(childID, childID) {
+		t.Fatalf("ContainsNode(#child, #child) = false, want true")
+	}
+	if store.ContainsNode(childID, targetID) {
+		t.Fatalf("ContainsNode(#child, #target) = true, want false")
+	}
+	if store.ContainsNode(targetID, siblingID) {
+		t.Fatalf("ContainsNode(#target, #sibling) = true, want false")
+	}
+}
+
+func TestIsConnectedTracksConnectionState(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child">x</span></div></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	targetID := mustSelectSingle(t, store, "#target")
+	childID := mustSelectSingle(t, store, "#child")
+	orphanID, err := store.CreateElement("em")
+	if err != nil {
+		t.Fatalf("CreateElement(em) error = %v", err)
+	}
+
+	if !store.IsConnected(docID) {
+		t.Fatalf("IsConnected(document) = false, want true")
+	}
+	if !store.IsConnected(wrapID) {
+		t.Fatalf("IsConnected(#wrap) = false, want true")
+	}
+	if !store.IsConnected(targetID) {
+		t.Fatalf("IsConnected(#target) = false, want true")
+	}
+	if !store.IsConnected(childID) {
+		t.Fatalf("IsConnected(#child) = false, want true")
+	}
+	if store.IsConnected(orphanID) {
+		t.Fatalf("IsConnected(orphan) = true, want false")
+	}
+
+	if err := store.AppendChild(wrapID, orphanID); err != nil {
+		t.Fatalf("AppendChild(#wrap, orphan) error = %v", err)
+	}
+	if !store.IsConnected(orphanID) {
+		t.Fatalf("IsConnected(orphan) after AppendChild = false, want true")
+	}
+
+	if err := store.RemoveNode(orphanID); err != nil {
+		t.Fatalf("RemoveNode(orphan) error = %v", err)
+	}
+	if store.IsConnected(orphanID) {
+		t.Fatalf("IsConnected(orphan) after RemoveNode = true, want false")
+	}
+}
+
+func TestRootNodeIDReturnsTreeRoot(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child">x</span></div></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	targetID := mustSelectSingle(t, store, "#target")
+	childID := mustSelectSingle(t, store, "#child")
+	orphanID, err := store.CreateElement("em")
+	if err != nil {
+		t.Fatalf("CreateElement(em) error = %v", err)
+	}
+
+	if got := store.RootNodeID(docID); got != docID {
+		t.Fatalf("RootNodeID(document) = %d, want %d", got, docID)
+	}
+	if got := store.RootNodeID(wrapID); got != docID {
+		t.Fatalf("RootNodeID(#wrap) = %d, want %d", got, docID)
+	}
+	if got := store.RootNodeID(targetID); got != docID {
+		t.Fatalf("RootNodeID(#target) = %d, want %d", got, docID)
+	}
+	if got := store.RootNodeID(childID); got != docID {
+		t.Fatalf("RootNodeID(#child) = %d, want %d", got, docID)
+	}
+	if got := store.RootNodeID(orphanID); got != orphanID {
+		t.Fatalf("RootNodeID(orphan) = %d, want %d", got, orphanID)
+	}
+	if got := store.RootNodeID(0); got != 0 {
+		t.Fatalf("RootNodeID(0) = %d, want 0", got)
+	}
+}
+
+func TestNormalizeMergesAdjacentTextNodesAndRemovesEmptyTextNodes(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="main"><div id="inner">abc</div></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	mainID := mustSelectSingle(t, store, "#main")
+	innerID := mustSelectSingle(t, store, "#inner")
+	innerChildren, err := store.ChildNodes(innerID)
+	if err != nil {
+		t.Fatalf("ChildNodes(#inner) error = %v", err)
+	}
+	innerTextID, ok := innerChildren.Item(0)
+	if !ok {
+		t.Fatalf("ChildNodes(#inner).Item(0) = no node, want text node")
+	}
+	if _, err := store.SplitText(innerTextID, 1); err != nil {
+		t.Fatalf("SplitText(#inner text, 1) error = %v", err)
+	}
+
+	mergedID, err := store.CreateTextNode("x")
+	if err != nil {
+		t.Fatalf("CreateTextNode(x) error = %v", err)
+	}
+	if err := store.AppendChild(mainID, mergedID); err != nil {
+		t.Fatalf("AppendChild(#main, merged) error = %v", err)
+	}
+	tailID, err := store.CreateTextNode("y")
+	if err != nil {
+		t.Fatalf("CreateTextNode(y) error = %v", err)
+	}
+	if err := store.AppendChild(mainID, tailID); err != nil {
+		t.Fatalf("AppendChild(#main, tail) error = %v", err)
+	}
+	emptyID, err := store.CreateTextNode("")
+	if err != nil {
+		t.Fatalf("CreateTextNode(\"\") error = %v", err)
+	}
+	if err := store.AppendChild(mainID, emptyID); err != nil {
+		t.Fatalf("AppendChild(#main, empty) error = %v", err)
+	}
+
+	if got, want := store.TextContentForNode(mainID), "abcxy"; got != want {
+		t.Fatalf("TextContentForNode(#main) before normalize = %q, want %q", got, want)
+	}
+	if err := store.Normalize(mainID); err != nil {
+		t.Fatalf("Normalize(#main) error = %v", err)
+	}
+
+	if got, want := store.DumpDOM(), `<section id="main"><div id="inner">abc</div>xy</section>`; got != want {
+		t.Fatalf("DumpDOM() after Normalize = %q, want %q", got, want)
+	}
+	innerChildren, err = store.ChildNodes(innerID)
+	if err != nil {
+		t.Fatalf("ChildNodes(#inner) after normalize error = %v", err)
+	}
+	if got, want := innerChildren.Length(), 1; got != want {
+		t.Fatalf("ChildNodes(#inner).Length() after normalize = %d, want %d", got, want)
+	}
+	if got, want := store.Node(innerTextID).Text, "abc"; got != want {
+		t.Fatalf("Normalize merged inner text = %q, want %q", got, want)
+	}
+	if got, want := store.Node(mergedID).Text, "xy"; got != want {
+		t.Fatalf("Normalize merged sibling text = %q, want %q", got, want)
+	}
+	if store.Node(tailID) != nil {
+		t.Fatalf("Normalize kept merged text node %d, want it removed", tailID)
+	}
+	if store.Node(emptyID) != nil {
+		t.Fatalf("Normalize kept empty text node %d, want it removed", emptyID)
+	}
+}
+
 func TestSetOuterHTMLReplacesNodeAndPreservesSiblings(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><b>x</b></div><p id="tail">tail</p></section>`); err != nil {
@@ -127,6 +313,133 @@ func TestInsertAdjacentHTMLPositions(t *testing.T) {
 		if !ok || gotID != wantID {
 			t.Fatalf("Children(#wrap).Item(%d) id = (%q, %v), want %q", i, gotID, ok, wantID)
 		}
+	}
+}
+
+func TestReplaceChildrenWithNodeIDsMovesChildrenAndDeletesRemovedSubtrees(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="keep">keep</span><b id="drop"><i id="gone">gone</i></b></div><p id="source"><em id="moved">move</em></p><div id="probe"></div></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	targetID := mustSelectSingle(t, store, "#target")
+	keepID := mustSelectSingle(t, store, "#keep")
+	sourceID := mustSelectSingle(t, store, "#source")
+	movedID := mustSelectSingle(t, store, "#moved")
+	dropID := mustSelectSingle(t, store, "#drop")
+	goneID := mustSelectSingle(t, store, "#gone")
+
+	if err := store.ReplaceChildrenWithNodeIDs(targetID, []NodeID{sourceID, keepID}); err != nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs(#target, source, keep) error = %v", err)
+	}
+
+	if got, want := store.DumpDOM(), `<section id="wrap"><div id="target"><p id="source"><em id="moved">move</em></p><span id="keep">keep</span></div><div id="probe"></div></section>`; got != want {
+		t.Fatalf("DumpDOM() after ReplaceChildrenWithNodeIDs = %q, want %q", got, want)
+	}
+	if store.Node(keepID) == nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs removed retained node %d", keepID)
+	}
+	if got := store.Node(sourceID); got == nil || got.Parent != targetID {
+		t.Fatalf("ReplaceChildrenWithNodeIDs(source) parent = %#v, want parent %d", got, targetID)
+	}
+	if store.Node(movedID) == nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs removed moved descendant %d", movedID)
+	}
+	if store.Node(dropID) != nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs kept removed node %d", dropID)
+	}
+	if store.Node(goneID) != nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs kept removed descendant %d", goneID)
+	}
+}
+
+func TestReplaceChildrenWithNodeIDsPreservesFocusedAndTargetedRetainedNodes(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="keep">keep</span><b id="drop">drop</b></div><p id="source">move</p></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	targetID := mustSelectSingle(t, store, "#target")
+	keepID := mustSelectSingle(t, store, "#keep")
+	sourceID := mustSelectSingle(t, store, "#source")
+
+	if err := store.SetFocusedNode(keepID); err != nil {
+		t.Fatalf("SetFocusedNode(#keep) error = %v", err)
+	}
+	store.SyncTargetFromURL("https://example.test/page#keep")
+	if got := store.TargetNodeID(); got != keepID {
+		t.Fatalf("TargetNodeID() before ReplaceChildrenWithNodeIDs = %d, want %d", got, keepID)
+	}
+
+	if err := store.ReplaceChildrenWithNodeIDs(targetID, []NodeID{sourceID, keepID}); err != nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs(#target, source, keep) error = %v", err)
+	}
+
+	if got := store.FocusedNodeID(); got != keepID {
+		t.Fatalf("FocusedNodeID() after ReplaceChildrenWithNodeIDs = %d, want %d", got, keepID)
+	}
+	if got := store.TargetNodeID(); got != keepID {
+		t.Fatalf("TargetNodeID() after ReplaceChildrenWithNodeIDs = %d, want %d", got, keepID)
+	}
+}
+
+func TestReplaceChildrenWithNodeIDsSupportsDocumentNode(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main id="root"></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	sectionID, err := store.CreateElement("section")
+	if err != nil {
+		t.Fatalf("CreateElement(section) error = %v", err)
+	}
+	if err := store.SetAttribute(sectionID, "id", "first"); err != nil {
+		t.Fatalf("SetAttribute(section, id) error = %v", err)
+	}
+	emID, err := store.CreateElement("em")
+	if err != nil {
+		t.Fatalf("CreateElement(em) error = %v", err)
+	}
+	textID, err := store.CreateTextNode("x")
+	if err != nil {
+		t.Fatalf("CreateTextNode(x) error = %v", err)
+	}
+	if err := store.AppendChild(emID, textID); err != nil {
+		t.Fatalf("AppendChild(em, text) error = %v", err)
+	}
+	if err := store.AppendChild(sectionID, emID); err != nil {
+		t.Fatalf("AppendChild(section, em) error = %v", err)
+	}
+	probeID, err := store.CreateElement("div")
+	if err != nil {
+		t.Fatalf("CreateElement(div) error = %v", err)
+	}
+	if err := store.SetAttribute(probeID, "id", "second"); err != nil {
+		t.Fatalf("SetAttribute(div, id) error = %v", err)
+	}
+
+	if err := store.ReplaceChildrenWithNodeIDs(docID, []NodeID{sectionID, probeID}); err != nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs(document, section, probe) error = %v", err)
+	}
+
+	if got, want := store.DumpDOM(), `<section id="first"><em>x</em></section><div id="second"></div>`; got != want {
+		t.Fatalf("DumpDOM() after ReplaceChildrenWithNodeIDs(document) = %q, want %q", got, want)
+	}
+	if ids, err := store.Select("#root"); err != nil || len(ids) != 0 {
+		t.Fatalf("Select(#root) after ReplaceChildrenWithNodeIDs(document) = (%v, %v), want no matches", ids, err)
+	}
+}
+
+func TestReplaceChildrenWithNodeIDsRejectsSelfInsertion(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="keep">keep</span></div></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	targetID := mustSelectSingle(t, store, "#target")
+	if err := store.ReplaceChildrenWithNodeIDs(targetID, []NodeID{targetID}); err == nil {
+		t.Fatalf("ReplaceChildrenWithNodeIDs(#target, self) error = nil, want self-insertion error")
 	}
 }
 
@@ -515,6 +828,49 @@ func TestCreateTextNodeReplaceChildAndInsertAdjacentNodeHelpers(t *testing.T) {
 	}
 }
 
+func TestInsertNodeListBeforeAfterAndReplaceNodeWithChildren(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="root"><span id="a">A</span><span id="b">B</span><span id="c">C</span></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	rootID := mustSelectSingle(t, store, "#root")
+	aID := mustSelectSingle(t, store, "#a")
+	bID := mustSelectSingle(t, store, "#b")
+	cID := mustSelectSingle(t, store, "#c")
+
+	beforeTextID, err := store.CreateTextNode("x")
+	if err != nil {
+		t.Fatalf("CreateTextNode(x) error = %v", err)
+	}
+	if err := store.InsertNodeListBefore(bID, []NodeID{beforeTextID, cID}); err != nil {
+		t.Fatalf("InsertNodeListBefore(#b, x, #c) error = %v", err)
+	}
+	afterTextID, err := store.CreateTextNode("y")
+	if err != nil {
+		t.Fatalf("CreateTextNode(y) error = %v", err)
+	}
+	if err := store.InsertNodeListAfter(aID, []NodeID{afterTextID}); err != nil {
+		t.Fatalf("InsertNodeListAfter(#a, y) error = %v", err)
+	}
+	if err := store.ReplaceNodeWithChildren(bID, nil); err != nil {
+		t.Fatalf("ReplaceNodeWithChildren(#b, nil) error = %v", err)
+	}
+
+	if got, want := store.DumpDOM(), `<section id="root"><span id="a">A</span>yx<span id="c">C</span></section>`; got != want {
+		t.Fatalf("DumpDOM() after node list insertion helpers = %q, want %q", got, want)
+	}
+	if node := store.Node(beforeTextID); node == nil || node.Parent != rootID {
+		t.Fatalf("Node(x) after InsertNodeListBefore = %#v, want attached to root", node)
+	}
+	if node := store.Node(afterTextID); node == nil || node.Parent != rootID {
+		t.Fatalf("Node(y) after InsertNodeListAfter = %#v, want attached to root", node)
+	}
+	if node := store.Node(cID); node == nil || node.Parent != rootID {
+		t.Fatalf("Node(#c) after moving before #b = %#v, want attached to root", node)
+	}
+}
+
 func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	var nilStore *Store
 	if _, err := nilStore.InnerHTMLForNode(1); err == nil {
@@ -552,6 +908,18 @@ func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	}
 	if _, err := nilStore.CloneNodeAfter(1, true); err == nil {
 		t.Fatalf("nil CloneNodeAfter() error = nil, want dom store error")
+	}
+	if err := nilStore.DeleteNode(1); err == nil {
+		t.Fatalf("nil DeleteNode() error = nil, want dom store error")
+	}
+	if err := nilStore.InsertNodeListBefore(1, []NodeID{2}); err == nil {
+		t.Fatalf("nil InsertNodeListBefore() error = nil, want dom store error")
+	}
+	if err := nilStore.InsertNodeListAfter(1, []NodeID{2}); err == nil {
+		t.Fatalf("nil InsertNodeListAfter() error = nil, want dom store error")
+	}
+	if err := nilStore.ReplaceNodeWithChildren(1, []NodeID{2}); err == nil {
+		t.Fatalf("nil ReplaceNodeWithChildren() error = nil, want dom store error")
 	}
 
 	store := NewStore()
@@ -630,6 +998,12 @@ func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	}
 	if got, want := store.NodeCount(), beforeCount; got != want {
 		t.Fatalf("NodeCount() after invalid InsertAdjacentText = %d, want %d", got, want)
+	}
+	if err := store.InsertNodeListBefore(targetID, []NodeID{targetID}); err == nil {
+		t.Fatalf("InsertNodeListBefore(self) error = nil, want self-insertion error")
+	}
+	if err := store.InsertNodeListAfter(targetID, []NodeID{targetID}); err == nil {
+		t.Fatalf("InsertNodeListAfter(self) error = nil, want self-insertion error")
 	}
 
 	if err := store.SetOuterHTML(targetID, `<section id="new"></section>`); err == nil {

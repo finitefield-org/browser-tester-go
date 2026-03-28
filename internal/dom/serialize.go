@@ -107,6 +107,56 @@ func (s *Store) TextContentForNode(id NodeID) string {
 	return b.String()
 }
 
+func (s *Store) WholeTextForNode(id NodeID) string {
+	if s == nil {
+		return ""
+	}
+	node := s.nodes[id]
+	if node == nil || node.Kind != NodeKindText {
+		return ""
+	}
+	if node.Parent == 0 {
+		return node.Text
+	}
+	parent := s.nodes[node.Parent]
+	if parent == nil || len(parent.Children) == 0 {
+		return node.Text
+	}
+
+	index := indexOfNodeID(parent.Children, id)
+	if index < 0 {
+		return node.Text
+	}
+
+	start := index
+	for start > 0 {
+		prev := s.nodes[parent.Children[start-1]]
+		if prev == nil || prev.Kind != NodeKindText {
+			break
+		}
+		start--
+	}
+
+	end := index
+	for end+1 < len(parent.Children) {
+		next := s.nodes[parent.Children[end+1]]
+		if next == nil || next.Kind != NodeKindText {
+			break
+		}
+		end++
+	}
+
+	var b strings.Builder
+	for i := start; i <= end; i++ {
+		sibling := s.nodes[parent.Children[i]]
+		if sibling == nil || sibling.Kind != NodeKindText {
+			continue
+		}
+		b.WriteString(sibling.Text)
+	}
+	return b.String()
+}
+
 func (s *Store) serializeNode(b *strings.Builder, id NodeID) {
 	node := s.nodes[id]
 	if node == nil {
