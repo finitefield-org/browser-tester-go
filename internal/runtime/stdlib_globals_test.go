@@ -38,8 +38,10 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 			JSON.stringify(date),
 			date.toISOString(),
 			date.toLocaleDateString("en-US"),
-			Math.abs(-4) + "|" + Math.min(3, 1, 2) + "|" + Math.max(3, 1, 2) + "|" + Math.floor(1.9) + "|" + Math.floor(-1.1),
-			Number.isFinite(1) + "|" + Number.isFinite(Number.NaN),
+			Math.abs(-4) + "|" + Math.pow(2, 3) + "|" + Math.min(3, 1, 2) + "|" + Math.max(3, 1, 2) + "|" + Math.ceil(1.1) + "|" + Math.ceil(-1.1) + "|" + Math.ceil(-0.1) + "|" + Math.floor(1.9) + "|" + Math.floor(-1.1) + "|" + Math.trunc(1.9) + "|" + Math.trunc(-1.9),
+			Number.isFinite(1) + "|" + Number.isFinite(Number.NaN) + "|" + Number.isNaN(Number.NaN),
+			encodeURI("https://example.com/A B?x=春&y=1#frag") + "|" + decodeURI("https://example.com/%3F%23%26%20x") + "|" + encodeURIComponent("A&B 春") + "|" + decodeURIComponent("A%26B%20%E6%98%A5"),
+			CSS.escape(),
 			String(true) + "|" + Boolean(0).valueOf(),
 			Number(15).toString(16) + "|" + (15).valueOf(),
 			"  Go  ".trim().toLowerCase() + "|" + "go".replace("g", "n") + "|" + "ab".lastIndexOf("b") + "|" + "go".slice(1),
@@ -69,8 +71,10 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 		strconv.Quote(wantDate),
 		wantDate,
 		wantLocaleDate,
-		"4|1|3|1|-2",
-		"true|false",
+		"4|8|1|3|2|-1|0|1|-2|1|-1",
+		"true|false|true",
+		"https://example.com/A%20B?x=%E6%98%A5&y=1#frag|https://example.com/%3F%23%26 x|A%26B%20%E6%98%A5|A&B 春",
+		"undefined",
 		"true|false",
 		"f|15",
 		"go|no|1|o",
@@ -181,6 +185,119 @@ func TestRunScriptSupportsNumberIsInteger(t *testing.T) {
 	}
 	if got, want := result.String, "true|false|false|false"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsNumberIsNaN(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Number.isNaN(Number.NaN),
+		Number.isNaN(1.5),
+		Number.isNaN("42"),
+		Number.isNaN()
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|false|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsURIComponentHelpers(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		encodeURI(),
+		decodeURI(),
+		encodeURIComponent(),
+		decodeURIComponent(),
+		encodeURI(true, "ignored"),
+		decodeURI(false, "ignored"),
+		encodeURIComponent(42, "ignored"),
+		decodeURIComponent(42, "ignored"),
+		encodeURIComponent("A&B 春", "ignored"),
+		decodeURIComponent("A%26B%20%e6%98%a5", "ignored"),
+		encodeURIComponent("C++", "ignored"),
+		decodeURIComponent("C%2B%2B", "ignored")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "undefined|undefined|undefined|undefined|true|false|42|42|A%26B%20%E6%98%A5|A&B 春|C%2B%2B|C++"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsURIHelpers(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		encodeURI("https://example.com/A B?x=春&y=1#frag", "ignored"),
+		decodeURI("https://example.com/%2f%3f%23%26%20x", "ignored"),
+		decodeURI("https://example.com/A%20B?x=%E6%98%A5&y=1#frag", "ignored")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "https://example.com/A%20B?x=%E6%98%A5&y=1#frag|https://example.com/%2f%3f%23%26 x|https://example.com/A B?x=春&y=1#frag"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsURIHelpersSymbolInput(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	for _, tc := range []struct {
+		name   string
+		source string
+	}{
+		{name: "encodeURIComponent", source: `encodeURIComponent(Symbol("token"))`},
+		{name: "decodeURIComponent", source: `decodeURIComponent(Symbol("token"))`},
+		{name: "encodeURI", source: `encodeURI(Symbol("token"))`},
+		{name: "decodeURI", source: `decodeURI(Symbol("token"))`},
+	} {
+		if _, err := session.runScriptOnStore(dom.NewStore(), tc.source); err == nil {
+			t.Fatalf("runScriptOnStore(%s) error = nil, want Symbol coercion failure", tc.name)
+		} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+			t.Fatalf("runScriptOnStore(%s) error = %#v, want runtime script error", tc.name, err)
+		} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+			t.Fatalf("runScriptOnStore(%s) error = %v, want Symbol coercion failure", tc.name, err)
+		}
+	}
+}
+
+func TestRunScriptRejectsDecodeURIComponentMalformedSequence(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `decodeURIComponent("%C3%28")`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want URI malformed failure")
+	}
+	if !strings.Contains(err.Error(), "URI malformed") {
+		t.Fatalf("runScriptOnStore() error = %v, want URI malformed message", err)
+	}
+}
+
+func TestRunScriptRejectsDecodeURIMalformedSequence(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `decodeURI("%C3%28")`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want URI malformed failure")
+	}
+	if !strings.Contains(err.Error(), "URI malformed") {
+		t.Fatalf("runScriptOnStore() error = %v, want URI malformed message", err)
 	}
 }
 
@@ -644,15 +761,29 @@ func TestRunScriptUsesSeededMathRandom(t *testing.T) {
 func TestRunScriptSupportsCSSEscapeOnGlobalCSSObject(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
-	result, err := session.runScriptOnStore(dom.NewStore(), `CSS.escape("0") + "|" + CSS.escape("alpha-beta")`)
+	result, err := session.runScriptOnStore(dom.NewStore(), `CSS.escape() + "|" + CSS.escape("0", "ignored") + "|" + CSS.escape("alpha-beta", "ignored")`)
 	if err != nil {
 		t.Fatalf("runScriptOnStore() error = %v", err)
 	}
 	if result.Kind != script.ValueKindString {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
-	if got, want := result.String, `\30 |alpha-beta`; got != want {
+	if got, want := result.String, `undefined|\30 |alpha-beta`; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsCSSEscapeSymbolInput(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `CSS.escape(Symbol("token"))`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Symbol coercion failure")
+	}
+	if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+		t.Fatalf("runScriptOnStore() error = %#v, want runtime script error", err)
+	} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("runScriptOnStore() error = %v, want Symbol coercion failure message", err)
 	}
 }
 
@@ -905,6 +1036,36 @@ func TestRunScriptSupportsMathFloor(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsMathCeil(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `String(Math.ceil(1.1)) + "|" + String(Math.ceil(-1.1)) + "|" + String(1 / Math.ceil(-0.1)) + "|" + String(Math.ceil(2)) + "|" + String(Math.ceil(Number.NaN)) + "|" + String(Math.trunc(1.9)) + "|" + String(Math.trunc(-1.9))`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "2|-1|-Infinity|2|NaN|1|-1"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsMathPow(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `String(Math.pow(2, 3)) + "|" + String(Math.pow(9, 0.5)) + "|" + String(Math.pow(2, -3)) + "|" + String(Math.pow(-2, 0.5))`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "8|3|0.125|NaN"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptRejectsMathFloorArityMismatch(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -914,5 +1075,41 @@ func TestRunScriptRejectsMathFloorArityMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Math.floor expects 1 argument") {
 		t.Fatalf("runScriptOnStore() error = %v, want Math.floor arity message", err)
+	}
+}
+
+func TestRunScriptRejectsMathCeilArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Math.ceil()`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Math.ceil arity failure")
+	}
+	if !strings.Contains(err.Error(), "Math.ceil expects 1 argument") {
+		t.Fatalf("runScriptOnStore() error = %v, want Math.ceil arity message", err)
+	}
+}
+
+func TestRunScriptRejectsMathPowArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Math.pow(2)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Math.pow arity failure")
+	}
+	if !strings.Contains(err.Error(), "Math.pow expects 2 arguments") {
+		t.Fatalf("runScriptOnStore() error = %v, want Math.pow arity message", err)
+	}
+}
+
+func TestRunScriptRejectsMathTruncArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Math.trunc()`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Math.trunc arity failure")
+	}
+	if !strings.Contains(err.Error(), "Math.trunc expects 1 argument") {
+		t.Fatalf("runScriptOnStore() error = %v, want Math.trunc arity message", err)
 	}
 }

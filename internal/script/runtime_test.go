@@ -8659,6 +8659,65 @@ func TestDispatchParsesLocationPropertyInvocation(t *testing.T) {
 	}
 }
 
+func TestDispatchParsesLocationPropertyInvocationSymbolArgs(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"locationSet": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host:locationSet(expr(Symbol("property")), expr(Symbol("value")))`})
+	if err != nil {
+		t.Fatalf("Dispatch(locationSet symbol args) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "locationSet" {
+		t.Fatalf("host call method = %q, want locationSet", call.method)
+	}
+	if len(call.args) != 2 {
+		t.Fatalf("host call args len = %d, want 2", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindSymbol || call.args[0].SymbolDescription != "property" {
+		t.Fatalf("host call arg[0] = %#v, want Symbol(property)", call.args[0])
+	}
+	if call.args[1].Kind != ValueKindSymbol || call.args[1].SymbolDescription != "value" {
+		t.Fatalf("host call arg[1] = %#v, want Symbol(value)", call.args[1])
+	}
+}
+
+func TestDispatchParsesHistoryScrollRestorationInvocationSymbolArgs(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"historySetScrollRestoration": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host:historySetScrollRestoration(expr(Symbol("token")))`})
+	if err != nil {
+		t.Fatalf("Dispatch(historySetScrollRestoration symbol arg) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "historySetScrollRestoration" {
+		t.Fatalf("host call method = %q, want historySetScrollRestoration", call.method)
+	}
+	if len(call.args) != 1 {
+		t.Fatalf("host call args len = %d, want 1", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindSymbol || call.args[0].SymbolDescription != "token" {
+		t.Fatalf("host call arg[0] = %#v, want Symbol(token)", call.args[0])
+	}
+}
+
 func TestDispatchParsesHistoryNavigationInvocations(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -9044,6 +9103,34 @@ func TestDispatchParsesWindowNameInvocations(t *testing.T) {
 				tc.check(t, call, result.Value)
 			}
 		})
+	}
+}
+
+func TestDispatchParsesWindowNameInvocationSymbolArgs(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"setWindowName": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `host:setWindowName(expr(Symbol("token")))`})
+	if err != nil {
+		t.Fatalf("Dispatch(setWindowName symbol arg) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "setWindowName" {
+		t.Fatalf("host call method = %q, want setWindowName", call.method)
+	}
+	if len(call.args) != 1 {
+		t.Fatalf("host call args len = %d, want 1", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindSymbol || call.args[0].SymbolDescription != "token" {
+		t.Fatalf("host call arg[0] = %#v, want Symbol(token)", call.args[0])
 	}
 }
 

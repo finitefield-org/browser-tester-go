@@ -3,6 +3,8 @@ package runtime
 import (
 	"strings"
 	"testing"
+
+	"browsertester/internal/script"
 )
 
 func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
@@ -79,6 +81,49 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsWindowNameSymbolThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><script>window.name = Symbol("token")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+	if got := session.WindowName(); got != "" {
+		t.Fatalf("WindowName() after rejected Symbol input = %q, want empty", got)
+	}
+}
+
+func TestSessionBootstrapsClassListItemSurface(t *testing.T) {
+	const rawHTML = `<main><div id="root" class="alpha beta"></div><div id="out"></div><script>const list = document.getElementById("root").classList; document.getElementById("out").textContent = [list.item(0), list.item(1), list.item(2) === null].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "alpha|beta|true" {
+		t.Fatalf("TextContent(#out) = %q, want alpha|beta|true", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after classList.item bootstrap", got)
+	}
+}
+
+func TestSessionRejectsClassListItemNonNumericIndex(t *testing.T) {
+	const rawHTML = `<main><div id="root" class="alpha beta"></div><script>document.getElementById("root").classList.item("nope")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want runtime error")
+	} else if !strings.Contains(err.Error(), "element.classList.item argument must be numeric") {
+		t.Fatalf("ensureDOM() error = %v, want numeric conversion error", err)
+	}
+}
+
 func TestSessionBootstrapsNumberParseIntSurface(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const a = Number.parseInt("42", 10); const b = parseInt("0x10"); document.getElementById("out").textContent = [a, b].join("|")</script></main>`
 
@@ -112,6 +157,132 @@ func TestSessionBootstrapsNumberIsIntegerSurface(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Number.isInteger bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsNumberIsNaNSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Number.isNaN(Number.NaN), Number.isNaN(1.5), Number.isNaN("42"), Number.isNaN()].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|false|false|false" {
+		t.Fatalf("TextContent(#out) = %q, want true|false|false|false", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Number.isNaN bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsURIComponentHelpers(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const state = { crop: "A&B 春", mode: "C++" }; const shareQuery = Object.keys(state).map(key => encodeURIComponent(key, "ignored") + "=" + encodeURIComponent(String(state[key]), "ignored")).join("&"); window.history.replaceState({}, "", "?" + shareQuery); const restored = {}; window.location.search.slice(1).split("&").forEach(part => { if (!part) return; const index = part.indexOf("="); const key = decodeURIComponent(part.slice(0, index), "ignored"); const value = decodeURIComponent(part.slice(index + 1), "ignored"); restored[key] = value; }); document.getElementById("out").textContent = [shareQuery, restored.crop, restored.mode, window.location.search, decodeURIComponent("%e6%98%a5", "ignored"), encodeURIComponent(), decodeURIComponent(), encodeURIComponent(), decodeURIComponent()].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "crop=A%26B%20%E6%98%A5&mode=C%2B%2B|A&B 春|C++|?crop=A%26B%20%E6%98%A5&mode=C%2B%2B|春|undefined|undefined|undefined|undefined" {
+		t.Fatalf("TextContent(#out) = %q, want share URL round-trip", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after encode/decodeURIComponent bootstrap", got)
+	}
+}
+
+func TestSessionRejectsURIComponentHelpersMalformedSequence(t *testing.T) {
+	const rawHTML = `<main><script>decodeURIComponent("%C3%28")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want URI malformed failure")
+	} else if !strings.Contains(err.Error(), "URI malformed") {
+		t.Fatalf("ensureDOM() error = %v, want URI malformed message", err)
+	}
+}
+
+func TestSessionBootstrapsURIHelpers(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [encodeURI("https://example.com/A B?x=春&y=1#frag", "ignored"), decodeURI("https://example.com/%2f%3f%23%26%20x", "ignored"), decodeURI("https://example.com/A%20B?x=%E6%98%A5&y=1#frag", "ignored")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "https://example.com/A%20B?x=%E6%98%A5&y=1#frag|https://example.com/%2f%3f%23%26 x|https://example.com/A B?x=春&y=1#frag" {
+		t.Fatalf("TextContent(#out) = %q, want URI helper round-trip", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after encode/decodeURI bootstrap", got)
+	}
+}
+
+func TestSessionRejectsURIHelpersSymbolInput(t *testing.T) {
+	const rawHTML = `<main><script>decodeURIComponent(Symbol("token"))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+		t.Fatalf("ensureDOM() error = %#v, want runtime script error", err)
+	} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+}
+
+func TestSessionRejectsHistoryHelpersSymbolInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		rawHTML string
+	}{
+		{
+			name:    "pushState",
+			rawHTML: `<main><script>window.history.pushState(Symbol("token"), "", "?push")</script></main>`,
+		},
+		{
+			name:    "replaceStateState",
+			rawHTML: `<main><script>window.history.replaceState(Symbol("token"), "", "?replace")</script></main>`,
+		},
+		{
+			name:    "replaceStateTitle",
+			rawHTML: `<main><script>window.history.replaceState({}, Symbol("token"), "?replace")</script></main>`,
+		},
+		{
+			name:    "replaceStateURL",
+			rawHTML: `<main><script>window.history.replaceState({}, "", Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := NewSession(SessionConfig{HTML: tc.rawHTML})
+			if _, err := session.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+			} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+				t.Fatalf("ensureDOM() error = %#v, want runtime script error", err)
+			} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+				t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+			}
+		})
+	}
+}
+
+func TestSessionRejectsURIHelpersMalformedSequence(t *testing.T) {
+	const rawHTML = `<main><script>decodeURI("%C3%28")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want URI malformed failure")
+	} else if !strings.Contains(err.Error(), "URI malformed") {
+		t.Fatalf("ensureDOM() error = %v, want URI malformed message", err)
 	}
 }
 
@@ -849,6 +1020,82 @@ func TestSessionBootstrapsCompostInputConverterBuiltins(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after compost builtins bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsMathCeilSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Math.ceil(1.1), Math.ceil(-1.1), 1 / Math.ceil(-0.1)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2|-1|-Infinity" {
+		t.Fatalf("TextContent(#out) = %q, want 2|-1|-Infinity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Math.ceil bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsMathPowSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Math.pow(2, 3), Math.pow(9, 0.5), Math.pow(2, -3)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "8|3|0.125" {
+		t.Fatalf("TextContent(#out) = %q, want 8|3|0.125", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Math.pow bootstrap", got)
+	}
+}
+
+func TestSessionRejectsMathPowWrongArity(t *testing.T) {
+	const rawHTML = `<main><script>Math.pow(2)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Math.pow arity failure")
+	} else if !strings.Contains(err.Error(), "Math.pow expects 2 arguments") {
+		t.Fatalf("ensureDOM() error = %v, want Math.pow arity message", err)
+	}
+}
+
+func TestSessionBootstrapsMathTruncSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Math.trunc(1.9), Math.trunc(-1.9), 1 / Math.trunc(-0.1)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1|-1|-Infinity" {
+		t.Fatalf("TextContent(#out) = %q, want 1|-1|-Infinity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Math.trunc bootstrap", got)
+	}
+}
+
+func TestSessionRejectsMathTruncWrongArity(t *testing.T) {
+	const rawHTML = `<main><script>Math.trunc()</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Math.trunc arity failure")
+	} else if !strings.Contains(err.Error(), "Math.trunc expects 1 argument") {
+		t.Fatalf("ensureDOM() error = %v, want Math.trunc arity message", err)
 	}
 }
 
@@ -1608,7 +1855,7 @@ func TestSessionBootstrapsPendingPromiseResolveOrdering(t *testing.T) {
 }
 
 func TestSessionBootstrapsWindowOpenPopupStub(t *testing.T) {
-	const rawHTML = `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open("", "_blank", "noopener,noreferrer"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`
+	const rawHTML = `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -1636,6 +1883,212 @@ func TestSessionBootstrapsWindowOpenPopupStub(t *testing.T) {
 	}
 	if got := session.PrintCalls(); len(got) != 1 {
 		t.Fatalf("PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestSessionBootstrapsBareOpenPopupStub(t *testing.T) {
+	const rawHTML = `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after click error = %v", err)
+	} else if got != "false|true|complete" {
+		t.Fatalf("TextContent(#out) after click = %q, want false|true|complete", got)
+	}
+	if got := session.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+		t.Fatalf("OpenCalls() = %#v, want one popup open call", got)
+	}
+	if got := session.PrintCalls(); len(got) != 1 {
+		t.Fatalf("PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestSessionBootstrapsOpenPopupStubWithoutArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := NewSession(SessionConfig{HTML: tc.html})
+			if _, err := session.ensureDOM(); err != nil {
+				t.Fatalf("ensureDOM() error = %v", err)
+			}
+
+			if err := session.Click("#go"); err != nil {
+				t.Fatalf("Click(#go) error = %v", err)
+			}
+			if got, err := session.TextContent("#out"); err != nil {
+				t.Fatalf("TextContent(#out) after click error = %v", err)
+			} else if got != "false|true|complete" {
+				t.Fatalf("TextContent(#out) after click = %q, want false|true|complete", got)
+			}
+			if got := session.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("OpenCalls() = %#v, want one popup open call", got)
+			}
+			if got := session.PrintCalls(); len(got) != 1 {
+				t.Fatalf("PrintCalls() = %#v, want one print call", got)
+			}
+		})
+	}
+}
+
+func TestSessionReportsOpenFailureThroughBrowserGlobalsWithoutArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><script>window.open()</script></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><script>open()</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := NewSession(SessionConfig{
+				URL:         "https://example.test/start",
+				HTML:        tc.html,
+				OpenFailure: "open blocked",
+			})
+			if _, err := session.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want open failure")
+			} else if !strings.Contains(err.Error(), "open blocked") {
+				t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+			}
+			if got, want := session.URL(), "https://example.test/start"; got != want {
+				t.Fatalf("URL() after rejected open = %q, want %q", got, want)
+			}
+			if got := session.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("OpenCalls() after rejected open = %#v, want one blank popup call", got)
+			}
+			if got := session.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+				t.Fatalf("DOMError() = %q, want open blocked message", got)
+			}
+		})
+	}
+}
+
+func TestSessionRejectsWindowOpenSymbolThroughBrowserGlobals(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "url",
+			html: `<main><script>window.open(Symbol("token"))</script></main>`,
+		},
+		{
+			name: "target",
+			html: `<main><script>window.open("", Symbol("token"))</script></main>`,
+		},
+		{
+			name: "features",
+			html: `<main><script>window.open("", "", Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := NewSession(SessionConfig{
+				URL:  "https://example.test/start",
+				HTML: tc.html,
+			})
+			if _, err := session.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+			} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+				t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+			}
+			if got, want := session.URL(), "https://example.test/start"; got != want {
+				t.Fatalf("URL() after rejected window.open Symbol input = %q, want %q", got, want)
+			}
+			if got := session.OpenCalls(); len(got) != 0 {
+				t.Fatalf("OpenCalls() after rejected window.open Symbol input = %#v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestSessionReportsWindowOpenFailureThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><script>window.open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`
+
+	session := NewSession(SessionConfig{
+		URL:         "https://example.test/start",
+		HTML:        rawHTML,
+		OpenFailure: "open blocked",
+	})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want open failure")
+	} else if !strings.Contains(err.Error(), "open blocked") {
+		t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+	}
+	if got, want := session.URL(), "https://example.test/start"; got != want {
+		t.Fatalf("URL() after rejected window.open = %q, want %q", got, want)
+	}
+	if got := session.OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("OpenCalls() after rejected window.open = %#v, want one popup call", got)
+	}
+	if got := session.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+		t.Fatalf("DOMError() = %q, want open blocked message", got)
+	}
+}
+
+func TestSessionRejectsBareOpenSymbolThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><script>open(Symbol("token"))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+	if got := session.OpenCalls(); len(got) != 0 {
+		t.Fatalf("OpenCalls() after rejected bare open Symbol input = %#v, want empty", got)
+	}
+}
+
+func TestSessionReportsBareOpenFailureThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><script>open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`
+
+	session := NewSession(SessionConfig{
+		URL:         "https://example.test/start",
+		HTML:        rawHTML,
+		OpenFailure: "open blocked",
+	})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want open failure")
+	} else if !strings.Contains(err.Error(), "open blocked") {
+		t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+	}
+	if got, want := session.URL(), "https://example.test/start"; got != want {
+		t.Fatalf("URL() after rejected bare open = %q, want %q", got, want)
+	}
+	if got := session.OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("OpenCalls() after rejected bare open = %#v, want one popup call", got)
+	}
+	if got := session.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+		t.Fatalf("DOMError() = %q, want open blocked message", got)
 	}
 }
 
@@ -1694,7 +2147,7 @@ func TestSessionBootstrapsDocumentBodyFallbackWithoutBodyElement(t *testing.T) {
 }
 
 func TestSessionBootstrapsElementTextContentAssignment(t *testing.T) {
-	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [CSS.escape("0"), CSS.escape("alpha-beta")].join("|")</script></main>`
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [CSS.escape(), CSS.escape("0", "ignored"), CSS.escape("alpha-beta", "ignored")].join("|")</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -1703,11 +2156,63 @@ func TestSessionBootstrapsElementTextContentAssignment(t *testing.T) {
 
 	if got, err := session.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != `\30 |alpha-beta` {
-		t.Fatalf("TextContent(#out) = %q, want %q", got, `\30 |alpha-beta`)
+	} else if got != `undefined|\30 |alpha-beta` {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, `undefined|\30 |alpha-beta`)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after textContent assignment bootstrap", got)
+	}
+}
+
+func TestSessionRejectsCSSEscapeSymbolInput(t *testing.T) {
+	const rawHTML = `<main><script>CSS.escape(Symbol("token"))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+		t.Fatalf("ensureDOM() error = %#v, want runtime script error", err)
+	} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+}
+
+func TestSessionRejectsLocationAssignReplaceSymbolInput(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "assign",
+			html: `<main><script>window.location.assign(Symbol("token"))</script></main>`,
+		},
+		{
+			name: "replace",
+			html: `<main><script>window.location.replace(Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session := NewSession(SessionConfig{
+				URL:  "https://example.test/start",
+				HTML: tc.html,
+			})
+
+			if _, err := session.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+			} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+				t.Fatalf("ensureDOM() error = %#v, want runtime script error", err)
+			} else if !strings.Contains(scriptErr.Message, "Cannot convert a Symbol value to a string") {
+				t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+			}
+			if got, want := session.URL(), "https://example.test/start"; got != want {
+				t.Fatalf("URL() after rejected location %s symbol input = %q, want %q", tc.name, got, want)
+			}
+			if got := session.Registry().Location().Navigations(); len(got) != 0 {
+				t.Fatalf("Location().Navigations() after rejected location %s symbol input = %#v, want empty", tc.name, got)
+			}
+		})
 	}
 }
 

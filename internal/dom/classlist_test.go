@@ -23,6 +23,15 @@ func TestClassListLiveViewAndSnapshotValues(t *testing.T) {
 	if classList.Contains("missing") {
 		t.Fatalf("ClassList.Contains(missing) = true, want false")
 	}
+	if got, ok := classList.Item(0); !ok || got != "a" {
+		t.Fatalf("ClassList.Item(0) = (%q, %v), want (\"a\", true)", got, ok)
+	}
+	if got, ok := classList.Item(1); !ok || got != "b" {
+		t.Fatalf("ClassList.Item(1) = (%q, %v), want (\"b\", true)", got, ok)
+	}
+	if got, ok := classList.Item(3); ok || got != "" {
+		t.Fatalf("ClassList.Item(3) = (%q, %v), want (\"\", false)", got, ok)
+	}
 
 	values := classList.Values()
 	values[0] = "mutated"
@@ -52,6 +61,9 @@ func TestClassListLiveViewAndSnapshotValues(t *testing.T) {
 	}
 	if got := classList.Values(); len(got) != 2 || got[0] != "x" || got[1] != "y" {
 		t.Fatalf("ClassList live Values() = %#v, want [x y]", got)
+	}
+	if got, ok := classList.Item(0); !ok || got != "x" {
+		t.Fatalf("ClassList live Item(0) = (%q, %v), want (\"x\", true)", got, ok)
 	}
 }
 

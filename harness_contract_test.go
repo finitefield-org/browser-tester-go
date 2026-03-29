@@ -667,6 +667,96 @@ func TestDebugViewReportsScriptCount(t *testing.T) {
 	}
 }
 
+func TestFromHTMLSupportsURIHelpers(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="out"></div><script>document.getElementById("out").textContent = [encodeURI("https://example.com/A B?x=春&y=1#frag", "ignored"), decodeURI("https://example.com/%2f%3f%23%26%20x", "ignored"), decodeURIComponent("A%26B%20%e6%98%a5", "ignored"), encodeURI(), decodeURI(), encodeURIComponent(), decodeURIComponent()].join("|")</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "https://example.com/A%20B?x=%E6%98%A5&y=1#frag|https://example.com/%2f%3f%23%26 x|A&B 春|undefined|undefined|undefined|undefined" {
+		t.Fatalf("TextContent(#out) = %q, want URI helper round-trip", got)
+	}
+}
+
+func TestFromHTMLRejectsMalformedURIComponentHelpers(t *testing.T) {
+	harness, err := FromHTML(`<main><script>decodeURI("%C3%28")</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+	if _, err := harness.TextContent("main"); err == nil {
+		t.Fatalf("TextContent(main) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("TextContent(main) error = %#v, want DOM error", err)
+	}
+	if got := harness.Debug().DOMError(); got == "" {
+		t.Fatalf("Debug().DOMError() = %q, want URI malformed failure", got)
+	} else if !strings.Contains(got, "URI malformed") {
+		t.Fatalf("Debug().DOMError() = %q, want URI malformed message", got)
+	}
+}
+
+func TestFromHTMLRejectsURIHelpersSymbolInput(t *testing.T) {
+	harness, err := FromHTML(`<main><script>decodeURI(Symbol("token"))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+	if _, err := harness.TextContent("main"); err == nil {
+		t.Fatalf("TextContent(main) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("TextContent(main) error = %#v, want DOM error", err)
+	}
+	if got := harness.Debug().DOMError(); got == "" {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure", got)
+	} else if !strings.Contains(got, "runtime:") || !strings.Contains(got, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure message", got)
+	}
+}
+
+func TestFromHTMLRejectsHistoryHelpersSymbolInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		rawHTML string
+	}{
+		{
+			name:    "pushState",
+			rawHTML: `<main><script>window.history.pushState(Symbol("token"), "", "?push")</script></main>`,
+		},
+		{
+			name:    "replaceStateState",
+			rawHTML: `<main><script>window.history.replaceState(Symbol("token"), "", "?replace")</script></main>`,
+		},
+		{
+			name:    "replaceStateTitle",
+			rawHTML: `<main><script>window.history.replaceState({}, Symbol("token"), "?replace")</script></main>`,
+		},
+		{
+			name:    "replaceStateURL",
+			rawHTML: `<main><script>window.history.replaceState({}, "", Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTML(tc.rawHTML)
+			if err != nil {
+				t.Fatalf("FromHTML() error = %v", err)
+			}
+			if _, err := harness.TextContent("main"); err == nil {
+				t.Fatalf("TextContent(main) error = nil, want DOM error")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("TextContent(main) error = %#v, want DOM error", err)
+			}
+			if got := harness.Debug().DOMError(); got == "" {
+				t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure", got)
+			} else if !strings.Contains(got, "runtime:") || !strings.Contains(got, "Cannot convert a Symbol value to a string") {
+				t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure message", got)
+			}
+		})
+	}
+}
+
 func TestDebugViewReportsImageCount(t *testing.T) {
 	harness, err := FromHTML(`<main><img id="first" src="/a"><div id="host"></div><img name="second" src="/b"></main>`)
 	if err != nil {
@@ -3320,6 +3410,45 @@ func TestInlineScriptsCanDriveHistoryThroughPublicFacade(t *testing.T) {
 	}
 }
 
+func TestWriteHTMLRejectsHistorySymbolInputThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name    string
+		html    string
+		wantErr string
+	}{
+		{
+			name:    "pushState",
+			html:    `<main><script>host:historyPushState(expr(Symbol("token")), "", "#step-1")</script></main>`,
+			wantErr: "Cannot convert a Symbol value to a string",
+		},
+		{
+			name:    "replaceState",
+			html:    `<main><script>host:historyReplaceState(expr(Symbol("token")), "", "#step-2")</script></main>`,
+			wantErr: "Cannot convert a Symbol value to a string",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTMLWithURL("https://example.test/app", `<main><div id="out"></div></main>`)
+			if err != nil {
+				t.Fatalf("FromHTMLWithURL() error = %v", err)
+			}
+			if err := harness.WriteHTML(tc.html); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want history Symbol coercion failure")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+			}
+			if got, want := harness.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected history Symbol input = %q, want %q", got, want)
+			}
+			if got, want := harness.HTML(), `<main><div id="out"></div></main>`; got != want {
+				t.Fatalf("HTML() after rejected history Symbol input = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestInlineScriptsCanDriveWebStorageThroughPublicFacade(t *testing.T) {
 	harness, err := NewHarnessBuilder().
 		URL("https://example.test/app").
@@ -4570,6 +4699,15 @@ func TestClassListAndDatasetContracts(t *testing.T) {
 	if !classList.Contains("beta") {
 		t.Fatalf("ClassList.Contains(beta) = false, want true")
 	}
+	if got, ok := classList.Item(0); !ok || got != "alpha" {
+		t.Fatalf("ClassList.Item(0) = (%q, %v), want (\"alpha\", true)", got, ok)
+	}
+	if got, ok := classList.Item(1); !ok || got != "beta" {
+		t.Fatalf("ClassList.Item(1) = (%q, %v), want (\"beta\", true)", got, ok)
+	}
+	if got, ok := classList.Item(2); ok || got != "" {
+		t.Fatalf("ClassList.Item(2) = (%q, %v), want (\"\", false)", got, ok)
+	}
 
 	classes := classList.Values()
 	classes[0] = "mutated"
@@ -4664,6 +4802,9 @@ func TestClassListAndDatasetContractsRejectInvalidInputs(t *testing.T) {
 	}
 	if emptyClassList.Contains("alpha") {
 		t.Fatalf("zero ClassListView.Contains(alpha) = true, want false")
+	}
+	if got, ok := emptyClassList.Item(0); ok || got != "" {
+		t.Fatalf("zero ClassListView.Item(0) = (%q, %v), want (\"\", false)", got, ok)
 	}
 	if err := emptyClassList.Add("alpha"); err == nil {
 		t.Fatalf("zero ClassListView.Add() error = nil, want DOM error")
@@ -5100,6 +5241,45 @@ func TestInlineScriptsCanDriveLocationMockThroughPublicActions(t *testing.T) {
 	}
 }
 
+func TestWriteHTMLRejectsLocationSymbolInputThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "assign",
+			html: `<main><script>window.location.assign(Symbol("token"))</script></main>`,
+		},
+		{
+			name: "replace",
+			html: `<main><script>window.location.replace(Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTMLWithURL("https://example.test/app", `<main><div id="out"></div></main>`)
+			if err != nil {
+				t.Fatalf("FromHTMLWithURL() error = %v", err)
+			}
+			if err := harness.WriteHTML(tc.html); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want location Symbol coercion failure")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+			}
+			if got, want := harness.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected location Symbol input = %q, want %q", got, want)
+			}
+			if got, want := harness.HTML(), `<main><div id="out"></div></main>`; got != want {
+				t.Fatalf("HTML() after rejected location Symbol input = %q, want %q", got, want)
+			}
+			if got := harness.Mocks().Location().Navigations(); len(got) != 0 {
+				t.Fatalf("Mocks().Location().Navigations() after rejected location Symbol input = %#v, want empty", got)
+			}
+		})
+	}
+}
+
 func TestInlineScriptsCanSetLocationPropertiesThroughPublicActions(t *testing.T) {
 	markup := `<main><div id="out"></div><script>host:locationSet("hash", "#step1"); host:locationSet("pathname", "next"); host:locationSet("search", "?mode=full")</script></main>`
 	harness, err := FromHTMLWithURL("https://example.test/start?old=1", markup)
@@ -5125,6 +5305,301 @@ func TestInlineScriptsCanSetLocationPropertiesThroughPublicActions(t *testing.T)
 				t.Fatalf("Mocks().Location().Navigations()[%d] = %q, want %q", i, got[i], want[i])
 			}
 		}
+	}
+}
+
+func TestWriteHTMLRejectsLocationSetSymbolInputThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "property",
+			html: `<main><script>host:locationSet(expr(Symbol("token")), "#step1")</script></main>`,
+		},
+		{
+			name: "value",
+			html: `<main><script>host:locationSet("hash", expr(Symbol("token")))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTMLWithURL("https://example.test/app", `<main><div id="out"></div></main>`)
+			if err != nil {
+				t.Fatalf("FromHTMLWithURL() error = %v", err)
+			}
+			if err := harness.WriteHTML(tc.html); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want locationSet Symbol coercion failure")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+			}
+			if got, want := harness.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected locationSet Symbol input = %q, want %q", got, want)
+			}
+			if got, want := harness.HTML(), `<main><div id="out"></div></main>`; got != want {
+				t.Fatalf("HTML() after rejected locationSet Symbol input = %q, want %q", got, want)
+			}
+			if got := harness.Mocks().Location().Navigations(); len(got) != 0 {
+				t.Fatalf("Mocks().Location().Navigations() after rejected locationSet Symbol input = %#v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestWriteHTMLRejectsWindowOpenSymbolInputThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "url",
+			html: `<main><div id="out">new</div><script>window.open(Symbol("token"))</script></main>`,
+		},
+		{
+			name: "target",
+			html: `<main><div id="out">new</div><script>window.open("", Symbol("token"))</script></main>`,
+		},
+		{
+			name: "features",
+			html: `<main><div id="out">new</div><script>window.open("", "", Symbol("token"))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTMLWithURL("https://example.test/app", `<main><div id="out">old</div></main>`)
+			if err != nil {
+				t.Fatalf("FromHTMLWithURL() error = %v", err)
+			}
+
+			if err := harness.WriteHTML(tc.html); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want window.open Symbol coercion failure")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+			} else if !strings.Contains(got.Message, "Cannot convert a Symbol value to a string") {
+				t.Fatalf("WriteHTML() error = %v, want Symbol coercion failure message", err)
+			}
+			if got, want := harness.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected window.open Symbol input = %q, want %q", got, want)
+			}
+			if got, want := harness.HTML(), `<main><div id="out">old</div></main>`; got != want {
+				t.Fatalf("HTML() after rejected window.open Symbol input = %q, want %q", got, want)
+			}
+			if got := harness.Debug().OpenCalls(); len(got) != 0 {
+				t.Fatalf("Debug().OpenCalls() after rejected window.open Symbol input = %#v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestWriteHTMLReportsWindowOpenFailureThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().
+		URL("https://example.test/app").
+		HTML(`<main><div id="out">old</div></main>`).
+		OpenFailure("open blocked").
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if err := harness.WriteHTML(`<main><div id="out">new</div><script>window.open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`); err == nil {
+		t.Fatalf("WriteHTML() error = nil, want open failure")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+	} else if !strings.Contains(got.Message, "open blocked") {
+		t.Fatalf("WriteHTML() error = %v, want open blocked message", err)
+	}
+	if got, want := harness.URL(), "https://example.test/app"; got != want {
+		t.Fatalf("URL() after rejected window.open = %q, want %q", got, want)
+	}
+	if got, want := harness.HTML(), `<main><div id="out">old</div></main>`; got != want {
+		t.Fatalf("HTML() after rejected window.open = %q, want %q", got, want)
+	}
+	if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("Debug().OpenCalls() after rejected window.open = %#v, want one popup call", got)
+	}
+}
+
+func TestFromHTMLRejectsBareOpenSymbolInputThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><script>open(Symbol("token"))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+	if _, err := harness.TextContent("main"); err == nil {
+		t.Fatalf("TextContent(main) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("TextContent(main) error = %#v, want DOM error", err)
+	}
+	if got := harness.Debug().DOMError(); got == "" {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure", got)
+	} else if !strings.Contains(got, "runtime:") || !strings.Contains(got, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure message", got)
+	}
+	if got := harness.Debug().OpenCalls(); len(got) != 0 {
+		t.Fatalf("Debug().OpenCalls() after rejected bare open Symbol input = %#v, want empty", got)
+	}
+}
+
+func TestWriteHTMLReportsBareOpenFailureThroughPublicFacade(t *testing.T) {
+	harness, err := NewHarnessBuilder().
+		URL("https://example.test/app").
+		HTML(`<main><div id="out">old</div></main>`).
+		OpenFailure("open blocked").
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if err := harness.WriteHTML(`<main><div id="out">new</div><script>open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`); err == nil {
+		t.Fatalf("WriteHTML() error = nil, want open failure")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+	} else if !strings.Contains(got.Message, "open blocked") {
+		t.Fatalf("WriteHTML() error = %v, want open blocked message", err)
+	}
+	if got, want := harness.URL(), "https://example.test/app"; got != want {
+		t.Fatalf("URL() after rejected bare open = %q, want %q", got, want)
+	}
+	if got, want := harness.HTML(), `<main><div id="out">old</div></main>`; got != want {
+		t.Fatalf("HTML() after rejected bare open = %q, want %q", got, want)
+	}
+	if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("Debug().OpenCalls() after rejected bare open = %#v, want one popup call", got)
+	}
+}
+
+func TestWriteHTMLReportsOpenFailureWithoutArgumentsThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><div id="out">old</div></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><div id="out">old</div></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := NewHarnessBuilder().
+				URL("https://example.test/app").
+				HTML(tc.html).
+				OpenFailure("open blocked").
+				Build()
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+
+			script := `window.open()`
+			if tc.name == "bare open" {
+				script = `open()`
+			}
+			if err := harness.WriteHTML(`<main><div id="out">new</div><script>` + script + `</script></main>`); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want open failure")
+			} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+				t.Fatalf("WriteHTML() error = %#v, want DOM error", err)
+			} else if !strings.Contains(got.Message, "open blocked") {
+				t.Fatalf("WriteHTML() error = %v, want open blocked message", err)
+			}
+			if got, want := harness.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected open = %q, want %q", got, want)
+			}
+			if got, want := harness.HTML(), `<main><div id="out">old</div></main>`; got != want {
+				t.Fatalf("HTML() after rejected open = %q, want %q", got, want)
+			}
+			if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("Debug().OpenCalls() after rejected open = %#v, want one blank popup call", got)
+			}
+		})
+	}
+}
+
+func TestFromHTMLCanDriveBareOpenThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "false|true|complete" {
+		t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+	}
+	if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "" {
+		t.Fatalf("Debug().OpenCalls() = %#v, want one popup open call", got)
+	}
+	if got := harness.Debug().PrintCalls(); len(got) != 1 {
+		t.Fatalf("Debug().PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestFromHTMLCanDriveWindowOpenThroughPublicFacade(t *testing.T) {
+	harness, err := FromHTML(`<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "false|true|complete" {
+		t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+	}
+	if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "" {
+		t.Fatalf("Debug().OpenCalls() = %#v, want one popup open call", got)
+	}
+	if got := harness.Debug().PrintCalls(); len(got) != 1 {
+		t.Fatalf("Debug().PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestFromHTMLCanDriveOpenWithoutArgumentsThroughPublicFacade(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			harness, err := FromHTML(tc.html)
+			if err != nil {
+				t.Fatalf("FromHTML() error = %v", err)
+			}
+
+			if err := harness.Click("#go"); err != nil {
+				t.Fatalf("Click(#go) error = %v", err)
+			}
+			if got, err := harness.TextContent("#out"); err != nil {
+				t.Fatalf("TextContent(#out) error = %v", err)
+			} else if got != "false|true|complete" {
+				t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+			}
+			if got := harness.Debug().OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("Debug().OpenCalls() = %#v, want one popup open call", got)
+			}
+			if got := harness.Debug().PrintCalls(); len(got) != 1 {
+				t.Fatalf("Debug().PrintCalls() = %#v, want one print call", got)
+			}
+		})
 	}
 }
 
@@ -5263,6 +5738,35 @@ func TestInlineScriptsCanDriveWindowNameThroughPublicActions(t *testing.T) {
 	}
 }
 
+func TestInlineScriptsRejectWindowNameSymbolThroughPublicActions(t *testing.T) {
+	harness, err := FromHTMLWithURL(
+		"https://example.test/start",
+		`<main><div id="out">old</div><script>host:setWindowName("alpha"); host:setInnerHTML("#out", "done")</script></main>`,
+	)
+	if err != nil {
+		t.Fatalf("FromHTMLWithURL() error = %v", err)
+	}
+	beforeDOM := harness.Debug().DumpDOM()
+	beforeHTML := harness.HTML()
+	beforeWindowName := harness.Debug().WindowName()
+
+	if err := harness.WriteHTML(`<main><script>host:setWindowName(expr(Symbol("token")))</script></main>`); err == nil {
+		t.Fatalf("WriteHTML(setWindowName Symbol) error = nil, want coercion failure")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("WriteHTML(setWindowName Symbol) error = %#v, want DOM error", err)
+	}
+
+	if got, want := harness.Debug().WindowName(), beforeWindowName; got != want {
+		t.Fatalf("Debug().WindowName() after rejected Symbol = %q, want %q", got, want)
+	}
+	if got, want := harness.Debug().DumpDOM(), beforeDOM; got != want {
+		t.Fatalf("Debug().DumpDOM() after rejected Symbol = %q, want %q", got, want)
+	}
+	if got, want := harness.HTML(), beforeHTML; got != want {
+		t.Fatalf("HTML() after rejected Symbol = %q, want %q", got, want)
+	}
+}
+
 func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 	const initialURL = "https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=initial"
 	const rawHTML = `<main><div id="agri-unit-converter-root">root</div><div id="result"></div><div id="formatted"></div><div id="href"></div><script>const root = document.getElementById("agri-unit-converter-root"); const current = new URL(window.location.href); const formatted = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(1.23); window.location.search.length; sessionStorage.setItem("mode", navigator.onLine && "search"); window.history.replaceState({}, "", "?mode=raw#ready"); localStorage.setItem("format", formatted); matchMedia("(prefers-reduced-motion: reduce)"); clipboard.writeText(root.textContent); setTimeout("noop", 5); queueMicrotask("noop"); host:setTextContent("#result", expr(root.textContent)); host:setTextContent("#formatted", expr(formatted)); host:setTextContent("#href", expr(current.href))</script></main>`
@@ -5324,18 +5828,35 @@ func TestInlineScriptsCanBootstrapRawHtmlWithBrowserGlobals(t *testing.T) {
 }
 
 func TestInlineScriptsCanUseCSSEscapeOnGlobalCSSObject(t *testing.T) {
-	harness, err := FromHTML(`<main><div id="out"></div><script>document.getElementById("out").textContent = [CSS.escape("0"), CSS.escape("alpha-beta")].join("|")</script></main>`)
+	harness, err := FromHTML(`<main><div id="out"></div><script>document.getElementById("out").textContent = [CSS.escape(), CSS.escape("0", "ignored"), CSS.escape("alpha-beta", "ignored")].join("|")</script></main>`)
 	if err != nil {
 		t.Fatalf("FromHTML() error = %v", err)
 	}
 
 	if got, err := harness.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != `\30 |alpha-beta` {
-		t.Fatalf("TextContent(#out) = %q, want %q", got, `\30 |alpha-beta`)
+	} else if got != `undefined|\30 |alpha-beta` {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, `undefined|\30 |alpha-beta`)
 	}
 	if got := harness.Debug().DOMError(); got != "" {
 		t.Fatalf("Debug().DOMError() = %q, want empty after CSS.escape bootstrap", got)
+	}
+}
+
+func TestInlineScriptsRejectCSSEscapeSymbolInput(t *testing.T) {
+	harness, err := FromHTML(`<main><script>CSS.escape(Symbol("token"))</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+	if _, err := harness.TextContent("main"); err == nil {
+		t.Fatalf("TextContent(main) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("TextContent(main) error = %#v, want DOM error", err)
+	}
+	if got := harness.Debug().DOMError(); got == "" {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure", got)
+	} else if !strings.Contains(got, "runtime:") || !strings.Contains(got, "Cannot convert a Symbol value to a string") {
+		t.Fatalf("Debug().DOMError() = %q, want Symbol coercion failure message", got)
 	}
 }
 
@@ -5953,6 +6474,35 @@ func TestInlineScriptsRejectInvalidHistoryScrollRestorationThroughPublicActions(
 		t.Fatalf("Debug().NavigationLog() after rejected history scroll restoration = %#v, want %#v", got, want)
 	} else if got[0] != want[0] {
 		t.Fatalf("Debug().NavigationLog()[0] after rejected history scroll restoration = %q, want %q", got[0], want[0])
+	}
+}
+
+func TestInlineScriptsRejectHistoryScrollRestorationSymbolThroughPublicActions(t *testing.T) {
+	harness, err := FromHTMLWithURL(
+		"https://example.test/app",
+		`<main><script>host:historySetScrollRestoration("manual")</script></main>`,
+	)
+	if err != nil {
+		t.Fatalf("FromHTMLWithURL() error = %v", err)
+	}
+
+	if err := harness.WriteHTML(`<main><script>host:historySetScrollRestoration(expr(Symbol("token")))</script></main>`); err == nil {
+		t.Fatalf("WriteHTML(historySetScrollRestoration Symbol) error = nil, want coercion failure")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("WriteHTML(historySetScrollRestoration Symbol) error = %#v, want DOM error", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><script>host:historySetScrollRestoration("manual")</script></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after rejected historySetScrollRestoration Symbol = %q, want %q", got, want)
+	}
+	if got, want := harness.HTML(), `<main><script>host:historySetScrollRestoration("manual")</script></main>`; got != want {
+		t.Fatalf("HTML() after rejected historySetScrollRestoration Symbol = %q, want %q", got, want)
+	}
+	if got, want := harness.Debug().HistoryScrollRestoration(), "manual"; got != want {
+		t.Fatalf("Debug().HistoryScrollRestoration() after rejected Symbol = %q, want %q", got, want)
+	}
+	if got, want := harness.URL(), "https://example.test/app"; got != want {
+		t.Fatalf("URL() after rejected historySetScrollRestoration Symbol = %q, want %q", got, want)
 	}
 }
 

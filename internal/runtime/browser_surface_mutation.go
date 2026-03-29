@@ -47,7 +47,11 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 		if session == nil {
 			return script.NewError(script.ErrorKindUnsupported, "window.name is unavailable in this bounded classic-JS slice")
 		}
-		if err := session.setWindowName(script.ToJSString(value)); err != nil {
+		text, err := browserToStringValue(value)
+		if err != nil {
+			return err
+		}
+		if err := session.setWindowName(text); err != nil {
 			return err
 		}
 		return nil

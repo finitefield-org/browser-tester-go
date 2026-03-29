@@ -122,6 +122,28 @@ func TestSessionHistoryInspectionHelpers(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsHistoryScrollRestorationSymbolInputFromInlineScript(t *testing.T) {
+	s := NewSession(SessionConfig{
+		URL:  "https://example.test/app",
+		HTML: `<main><script>host:historySetScrollRestoration(expr(Symbol("token")))</script></main>`,
+	})
+
+	if _, err := s.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+	if got, want := s.windowHistoryScrollRestoration(), "auto"; got != want {
+		t.Fatalf("windowHistoryScrollRestoration() after rejected Symbol input = %q, want %q", got, want)
+	}
+	if got, want := s.URL(), "https://example.test/app"; got != want {
+		t.Fatalf("URL() after rejected Symbol input = %q, want %q", got, want)
+	}
+	if got := s.Registry().Location().Navigations(); len(got) != 0 {
+		t.Fatalf("Location().Navigations() after rejected Symbol input = %#v, want empty", got)
+	}
+}
+
 func TestSessionHistoryEntriesInspectionHelpers(t *testing.T) {
 	s := NewSession(SessionConfig{
 		URL:  "https://example.test/app",
@@ -349,6 +371,48 @@ func TestSessionRejectsHistoryArityMismatchesFromInlineScript(t *testing.T) {
 			}
 			if got, want := s.URL(), "https://example.test/app"; got != want {
 				t.Fatalf("URL() after rejected history script = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSessionRejectsHistorySymbolInputFromInlineScript(t *testing.T) {
+	tests := []struct {
+		name    string
+		html    string
+		wantErr string
+	}{
+		{
+			name:    "pushState",
+			html:    `<main><script>host:historyPushState(expr(Symbol("token")), "", "#step-1")</script></main>`,
+			wantErr: "Cannot convert a Symbol value to a string",
+		},
+		{
+			name:    "replaceState",
+			html:    `<main><script>host:historyReplaceState(expr(Symbol("token")), "", "#step-2")</script></main>`,
+			wantErr: "Cannot convert a Symbol value to a string",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSession(SessionConfig{
+				URL: "https://example.test/app",
+			})
+
+			if err := s.WriteHTML(tc.html); err == nil {
+				t.Fatalf("WriteHTML() error = nil, want history Symbol coercion failure")
+			} else if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("WriteHTML() error = %q, want substring %q", err, tc.wantErr)
+			}
+			if got, want := s.URL(), "https://example.test/app"; got != want {
+				t.Fatalf("URL() after rejected history Symbol input = %q, want %q", got, want)
+			}
+			if got, want := s.windowHistoryLength(), 1; got != want {
+				t.Fatalf("windowHistoryLength() after rejected history Symbol input = %d, want %d", got, want)
+			}
+			if got, ok := s.windowHistoryState(); ok || got != "null" {
+				t.Fatalf("windowHistoryState() after rejected history Symbol input = (%q, %v), want (\"null\", false)", got, ok)
 			}
 		})
 	}

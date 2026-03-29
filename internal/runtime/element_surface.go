@@ -173,8 +173,65 @@ func resolveElementStylePropertyValue(session *Session, store *dom.Store, nodeID
 			}
 			return script.StringValue(elementStylePropertyValue(store, nodeID, name)), nil
 		}), nil
-	case "setProperty", "removeProperty", "getPropertyPriority":
-		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	case "setProperty":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) < 2 {
+				return script.UndefinedValue(), fmt.Errorf("element.style.setProperty requires 2 or 3 arguments")
+			}
+			if len(args) > 3 {
+				return script.UndefinedValue(), fmt.Errorf("element.style.setProperty accepts at most 3 arguments")
+			}
+			name, err := scriptStringArg("element.style.setProperty", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			if normalizeStylePropertyName(name) == "csstext" {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.style.setProperty does not support cssText")
+			}
+			priority := ""
+			if len(args) == 3 {
+				priority = strings.ToLower(strings.TrimSpace(script.ToJSString(args[2])))
+				if priority != "" && priority != "important" {
+					return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.style.setProperty priority must be empty or \"important\"")
+				}
+			}
+			if err := setElementStylePropertyValueWithPriority(store, nodeID, name, script.ToJSString(args[1]), priority); err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.UndefinedValue(), nil
+		}), nil
+	case "removeProperty":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			name, err := scriptStringArg("element.style.removeProperty", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			if len(args) > 1 {
+				return script.UndefinedValue(), fmt.Errorf("element.style.removeProperty accepts at most 1 argument")
+			}
+			if normalizeStylePropertyName(name) == "csstext" {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.style.removeProperty does not support cssText")
+			}
+			value, err := removeElementStylePropertyValue(store, nodeID, name)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.StringValue(value), nil
+		}), nil
+	case "getPropertyPriority":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			name, err := scriptStringArg("element.style.getPropertyPriority", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			if len(args) > 1 {
+				return script.UndefinedValue(), fmt.Errorf("element.style.getPropertyPriority accepts at most 1 argument")
+			}
+			if normalizeStylePropertyName(name) == "csstext" {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.style.getPropertyPriority does not support cssText")
+			}
+			return script.StringValue(elementStylePropertyPriority(store, nodeID, name)), nil
+		}), nil
 	case "toString", "valueOf":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if len(args) > 0 {
@@ -266,6 +323,21 @@ func resolveElementClassListPropertyValue(session *Session, store *dom.Store, no
 		return script.HostObjectReference("element:" + strconv.FormatInt(int64(nodeID), 10) + ".classList"), nil
 	case "length":
 		return script.NumberValue(float64(len(classList.Values()))), nil
+	case "item":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) != 1 {
+				return script.UndefinedValue(), fmt.Errorf("element.classList.item expects 1 argument")
+			}
+			index, err := browserInt64Value("element.classList.item", args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			token, ok := classList.Item(int(index))
+			if !ok {
+				return script.NullValue(), nil
+			}
+			return script.StringValue(token), nil
+		}), nil
 	case "contains":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			token, err := scriptStringArg(surface+".contains", args, 0)
@@ -396,8 +468,9 @@ func unsupportedElementSurfaceError(surface string) error {
 }
 
 type styleDeclaration struct {
-	name  string
-	value string
+	name     string
+	value    string
+	priority string
 }
 
 func elementStyleText(store *dom.Store, nodeID dom.NodeID) string {
@@ -422,18 +495,83 @@ func elementStyleDeclarations(store *dom.Store, nodeID dom.NodeID) []styleDeclar
 	}
 	declarations := make([]styleDeclaration, 0, len(parts))
 	for _, part := range parts {
-		colon := strings.IndexByte(part, ':')
-		if colon <= 0 {
+		declaration, ok := parseStyleDeclaration(part)
+		if !ok {
 			continue
 		}
-		name := strings.ToLower(strings.TrimSpace(part[:colon]))
-		value := strings.TrimSpace(part[colon+1:])
-		if name == "" {
-			continue
-		}
-		declarations = append(declarations, styleDeclaration{name: name, value: value})
+		declarations = append(declarations, declaration)
 	}
 	return declarations
+}
+
+func parseStyleDeclaration(part string) (styleDeclaration, bool) {
+	colon := strings.IndexByte(part, ':')
+	if colon <= 0 {
+		return styleDeclaration{}, false
+	}
+	name := strings.ToLower(strings.TrimSpace(part[:colon]))
+	value, priority := splitStyleDeclarationValueAndPriority(strings.TrimSpace(part[colon+1:]))
+	if name == "" {
+		return styleDeclaration{}, false
+	}
+	return styleDeclaration{name: name, value: value, priority: priority}, true
+}
+
+func splitStyleDeclarationValueAndPriority(value string) (string, string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", ""
+	}
+	const importantSuffix = "!important"
+	if len(trimmed) < len(importantSuffix) {
+		return trimmed, ""
+	}
+	if !strings.HasSuffix(strings.ToLower(trimmed), importantSuffix) {
+		return trimmed, ""
+	}
+	if !styleTextBalanced(trimmed[:len(trimmed)-len(importantSuffix)]) {
+		return trimmed, ""
+	}
+	prefix := strings.TrimSpace(trimmed[:len(trimmed)-len(importantSuffix)])
+	if prefix == "" {
+		return trimmed, ""
+	}
+	return prefix, "important"
+}
+
+func styleTextBalanced(text string) bool {
+	var quote byte
+	var escape bool
+	var parenDepth int
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if quote != 0 {
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' {
+				escape = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		}
+	}
+	return quote == 0 && parenDepth == 0 && !escape
 }
 
 func splitStyleDeclarations(input string) []string {
@@ -504,7 +642,25 @@ func elementStylePropertyValue(store *dom.Store, nodeID dom.NodeID, property str
 	return ""
 }
 
+func elementStylePropertyPriority(store *dom.Store, nodeID dom.NodeID, property string) string {
+	normalized := normalizeStylePropertyName(property)
+	if normalized == "" {
+		return ""
+	}
+	declarations := elementStyleDeclarations(store, nodeID)
+	for i := len(declarations) - 1; i >= 0; i-- {
+		if declarations[i].name == normalized {
+			return declarations[i].priority
+		}
+	}
+	return ""
+}
+
 func setElementStylePropertyValue(store *dom.Store, nodeID dom.NodeID, property, value string) error {
+	return setElementStylePropertyValueWithPriority(store, nodeID, property, value, "")
+}
+
+func setElementStylePropertyValueWithPriority(store *dom.Store, nodeID dom.NodeID, property, value, priority string) error {
 	normalized := normalizeStylePropertyName(property)
 	if normalized == "" {
 		return fmt.Errorf("style property name must not be empty")
@@ -527,8 +683,44 @@ func setElementStylePropertyValue(store *dom.Store, nodeID dom.NodeID, property,
 		}
 		next = append(next, declaration)
 	}
-	next = append(next, styleDeclaration{name: normalized, value: value})
+	next = append(next, styleDeclaration{name: normalized, value: value, priority: normalizeStylePriority(priority)})
 	return store.SetAttribute(nodeID, "style", serializeStyleDeclarations(next))
+}
+
+func removeElementStylePropertyValue(store *dom.Store, nodeID dom.NodeID, property string) (string, error) {
+	normalized := normalizeStylePropertyName(property)
+	if normalized == "" {
+		return "", fmt.Errorf("style property name must not be empty")
+	}
+	if store == nil {
+		return "", fmt.Errorf("dom store is nil")
+	}
+	node := store.Node(nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return "", fmt.Errorf("node %d is not an element", nodeID)
+	}
+	if normalized == "csstext" {
+		return "", fmt.Errorf("style property name must not be cssText")
+	}
+	declarations := elementStyleDeclarations(store, nodeID)
+	next := make([]styleDeclaration, 0, len(declarations))
+	removed := ""
+	found := false
+	for _, declaration := range declarations {
+		if declaration.name == normalized {
+			removed = declaration.value
+			found = true
+			continue
+		}
+		next = append(next, declaration)
+	}
+	if !found {
+		return "", nil
+	}
+	if err := store.SetAttribute(nodeID, "style", serializeStyleDeclarations(next)); err != nil {
+		return "", err
+	}
+	return removed, nil
 }
 
 func setElementStyleText(store *dom.Store, nodeID dom.NodeID, text string) error {
@@ -567,6 +759,16 @@ func normalizeStylePropertyName(name string) string {
 	return strings.ToLower(b.String())
 }
 
+func normalizeStylePriority(priority string) string {
+	normalized := strings.ToLower(strings.TrimSpace(priority))
+	switch normalized {
+	case "", "important":
+		return normalized
+	default:
+		return normalized
+	}
+}
+
 func serializeStyleDeclarations(declarations []styleDeclaration) string {
 	if len(declarations) == 0 {
 		return ""
@@ -577,7 +779,12 @@ func serializeStyleDeclarations(declarations []styleDeclaration) string {
 		if name == "" {
 			continue
 		}
-		parts = append(parts, name+": "+strings.TrimSpace(declaration.value))
+		value := strings.TrimSpace(declaration.value)
+		if declaration.priority != "" {
+			parts = append(parts, name+": "+value+" !"+strings.TrimSpace(declaration.priority))
+			continue
+		}
+		parts = append(parts, name+": "+value)
 	}
 	return strings.Join(parts, "; ")
 }

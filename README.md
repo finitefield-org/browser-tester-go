@@ -40,8 +40,7 @@ runtime slices.
   - `SetFiles`
   - `CaptureDownload`
 - bounded `window.history` host helpers for inline scripts:
-  - `historyPushState`
-  - `historyReplaceState`
+  - `historyPushState` / `historyReplaceState` / `historySetScrollRestoration` use browser-style string coercion for string inputs, including runtime rejection of `Symbol` inputs
   - `historyBack`
   - `historyForward`
   - `historyGo`
@@ -88,10 +87,10 @@ runtime slices.
   `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node
   `nodeValue` / `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` /
   `after()` / `append()` / `prepend()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
-  `normalize()` mutation), `location`, `history`, `navigator`, `URL` /
+  `normalize()` mutation), `location` (including `assign()` / `replace()` / `reload()` and property setters with browser-style string coercion and runtime rejection of `Symbol` inputs), `history`, `navigator`, `URL` /
   `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
-  `matchMedia`, `console`, `clipboard`, dynamic session-backed `window.<custom>` object properties such as
+  `matchMedia`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
   `window.crypto` / `window.hashApi`, and
   bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Uint8Array` element checks, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
@@ -100,8 +99,8 @@ runtime slices.
   / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
   `Array.isArray()`,
   `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.parseInt()` / global `parseInt()` / `Number.isInteger()` / `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.floor()` / `Math.min()` / `Math.max()` /
-  `Math.round()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
+  `Number.parseInt()` / global `parseInt()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
+  `Math.round()` / `Math.trunc()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
   `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
   `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
   `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
@@ -285,6 +284,7 @@ runtime slices.
   unsupported in this slice; `return(value)` closes the iterator in this slice, and `throw(value)`
   remains an explicit runtime error in this slice, with an omitted argument treated as `undefined`.
 - bounded `window.name` helpers for inline scripts:
+  - `window.name` string inputs use browser-style string coercion, including runtime rejection of `Symbol` inputs
   - `windowName`
   - `setWindowName`
 - `Prompt` returns the submitted text plus a boolean that is `false` when the prompt is canceled.
@@ -440,8 +440,8 @@ runtime slices.
   - `ToggleAttribute`
   - `RemoveAttribute`
 - live class/dataset views:
-  - `ClassList`
-  - `Dataset`
+  - `ClassList` (`Values`, `Contains`, `Item`, `Add`, `Remove`)
+  - `Dataset` (`Values`, `Get`, `Set`, `Remove`)
 - tree mutation helpers:
   - `InnerHTML`
   - `TextContent`
@@ -529,8 +529,9 @@ runtime slices.
   `nodeValue` / `data` reads and writes, plus `wholeText` reads, `splitText()` mutation, `before()` /
   `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation, and bounded element reflection reads and writes
-  on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`,
-  `attributes`, `getAttributeNode()`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
+  on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`
+  (including `setProperty()` / `removeProperty()` / `getPropertyPriority()`), `attributes`,
+  `getAttributeNode()`, and `classList` reads including `item()`, and `dataset` reads, writes, and deletes through the same surface,
   plus direct element text mutations through call-result property chains such as
   `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
   activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,

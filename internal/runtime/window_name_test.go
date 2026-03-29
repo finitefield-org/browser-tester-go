@@ -1,6 +1,9 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSessionWindowNameDefaultsAndPersists(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
@@ -44,5 +47,20 @@ func TestSessionWriteHTMLRestoresWindowNameOnFailure(t *testing.T) {
 
 	if got := s.WindowName(); got != "alpha" {
 		t.Fatalf("windowName() after failed WriteHTML = %q, want alpha", got)
+	}
+}
+
+func TestSessionRejectsWindowNameSymbolInputFromInlineScript(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><script>host:setWindowName(expr(Symbol("token")))</script></main>`,
+	})
+
+	if _, err := s.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+	} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+		t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+	}
+	if got := s.WindowName(); got != "" {
+		t.Fatalf("WindowName() after rejected Symbol input = %q, want empty", got)
 	}
 }

@@ -47,6 +47,17 @@ func (c ClassList) Contains(token string) bool {
 	return false
 }
 
+func (c ClassList) Item(index int) (string, bool) {
+	tokens, _, err := c.current()
+	if err != nil {
+		return "", false
+	}
+	if index < 0 || index >= len(tokens) {
+		return "", false
+	}
+	return tokens[index], true
+}
+
 func (c ClassList) Add(tokens ...string) error {
 	current, hasAttr, node, err := c.currentWithNode()
 	if err != nil {

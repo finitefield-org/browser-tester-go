@@ -112,16 +112,11 @@ func styleDeclarationsFromText(text string) []styleDeclaration {
 	}
 	declarations := make([]styleDeclaration, 0, len(parts))
 	for _, part := range parts {
-		colon := strings.IndexByte(part, ':')
-		if colon <= 0 {
+		declaration, ok := parseStyleDeclaration(part)
+		if !ok {
 			continue
 		}
-		name := strings.ToLower(strings.TrimSpace(part[:colon]))
-		value := strings.TrimSpace(part[colon+1:])
-		if name == "" {
-			continue
-		}
-		declarations = append(declarations, styleDeclaration{name: name, value: value})
+		declarations = append(declarations, declaration)
 	}
 	return declarations
 }

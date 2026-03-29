@@ -14,9 +14,9 @@ func resolveCSSReference(path string) (script.Value, error) {
 		return script.HostObjectReference("CSS"), nil
 	case "escape":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			input := ""
-			if len(args) > 0 {
-				input = script.ToJSString(args[0])
+			input, err := browserToStringArg(args)
+			if err != nil {
+				return script.UndefinedValue(), err
 			}
 			return script.StringValue(cssEscapeIdentifier(input)), nil
 		}), nil

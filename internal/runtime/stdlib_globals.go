@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"browsertester/internal/dom"
 	"browsertester/internal/script"
@@ -39,6 +40,22 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 	case strings.HasPrefix(path, "JSON."):
 		value, err := resolveJSONReference(strings.TrimPrefix(path, "JSON."))
 		return value, true, err
+	case path == "encodeURIComponent":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserEncodeURIComponent(args)
+		}), true, nil
+	case path == "decodeURIComponent":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserDecodeURIComponent(args)
+		}), true, nil
+	case path == "encodeURI":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserEncodeURI(args)
+		}), true, nil
+	case path == "decodeURI":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserDecodeURI(args)
+		}), true, nil
 	case path == "Map":
 		return script.BuiltinMapValue(), true, nil
 	case path == "Set":
@@ -285,6 +302,10 @@ func resolveNumberReference(path string) (script.Value, error) {
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserIsInteger(args)
 		}), nil
+	case "isNaN":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserIsNaN(args)
+		}), nil
 	case "isFinite":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if len(args) != 1 {
@@ -372,6 +393,181 @@ func browserIsInteger(args []script.Value) (script.Value, error) {
 	return script.BoolValue(math.Trunc(value) == value), nil
 }
 
+func browserIsNaN(args []script.Value) (script.Value, error) {
+	if len(args) == 0 {
+		return script.BoolValue(false), nil
+	}
+	if args[0].Kind != script.ValueKindNumber {
+		return script.BoolValue(false), nil
+	}
+	return script.BoolValue(math.IsNaN(args[0].Number)), nil
+}
+
+func browserEncodeURIComponent(args []script.Value) (script.Value, error) {
+	return browserEncodeURIWithOptions(args, "")
+}
+
+func browserEncodeURI(args []script.Value) (script.Value, error) {
+	return browserEncodeURIWithOptions(args, browserURIReservedCharacters)
+}
+
+func browserEncodeURIWithOptions(args []script.Value, extraUnescaped string) (script.Value, error) {
+	source, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	var b strings.Builder
+	b.Grow(len(source) * 3)
+	for i := 0; i < len(source); i++ {
+		ch := source[i]
+		if browserIsURIUnescaped(ch, extraUnescaped) {
+			b.WriteByte(ch)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(browserURIComponentHex[ch>>4])
+		b.WriteByte(browserURIComponentHex[ch&0x0F])
+	}
+	return script.StringValue(b.String()), nil
+}
+
+func browserDecodeURIComponent(args []script.Value) (script.Value, error) {
+	return browserDecodeURIWithPreserve(args, "")
+}
+
+func browserDecodeURI(args []script.Value) (script.Value, error) {
+	return browserDecodeURIWithPreserve(args, browserURIReservedCharacters)
+}
+
+func browserDecodeURIWithPreserve(args []script.Value, preserveEscapeSet string) (script.Value, error) {
+	input, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	decoded, err := browserDecodeURIString(input, preserveEscapeSet)
+	if err != nil {
+		return script.UndefinedValue(), fmt.Errorf("URI malformed")
+	}
+	return script.StringValue(decoded), nil
+}
+
+func browserIsURIComponentUnescaped(ch byte) bool {
+	switch {
+	case ch >= 'a' && ch <= 'z':
+		return true
+	case ch >= 'A' && ch <= 'Z':
+		return true
+	case ch >= '0' && ch <= '9':
+		return true
+	case ch == '-' || ch == '_' || ch == '.' || ch == '!' || ch == '~' || ch == '*' || ch == '\'' || ch == '(' || ch == ')':
+		return true
+	default:
+		return false
+	}
+}
+
+func browserIsURIUnescaped(ch byte, extraUnescaped string) bool {
+	if browserIsURIComponentUnescaped(ch) {
+		return true
+	}
+	return strings.IndexByte(extraUnescaped, ch) >= 0
+}
+
+const browserURIComponentHex = "0123456789ABCDEF"
+const browserURIReservedCharacters = ";/?:@&=+$,#"
+
+func browserDecodeURIString(input string, preserveEscapeSet string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(input))
+	for i := 0; i < len(input); {
+		if input[i] != '%' {
+			b.WriteByte(input[i])
+			i++
+			continue
+		}
+
+		decoded, next, preserve, err := browserParseURIEscapedSequence(input, i, preserveEscapeSet)
+		if err != nil {
+			return "", err
+		}
+		if preserve {
+			b.WriteString(input[i:next])
+		} else {
+			b.WriteString(string(decoded))
+		}
+		i = next
+	}
+	return b.String(), nil
+}
+
+func browserParseURIEscapedSequence(input string, start int, preserveEscapeSet string) ([]byte, int, bool, error) {
+	if start+3 > len(input) || input[start] != '%' {
+		return nil, start, false, fmt.Errorf("URI malformed")
+	}
+
+	first, ok := browserURIHexOctet(input[start+1 : start+3])
+	if !ok {
+		return nil, start, false, fmt.Errorf("URI malformed")
+	}
+
+	length := browserURIEscapedUTF8Length(first)
+	if length == 0 {
+		preserve := strings.IndexByte(preserveEscapeSet, first) >= 0
+		return []byte{first}, start + 3, preserve, nil
+	}
+	if length < 0 {
+		return nil, start, false, fmt.Errorf("URI malformed")
+	}
+
+	decoded := make([]byte, 1, length)
+	decoded[0] = first
+	next := start + 3
+	for len(decoded) < length {
+		if next+3 > len(input) || input[next] != '%' {
+			return nil, start, false, fmt.Errorf("URI malformed")
+		}
+		octet, ok := browserURIHexOctet(input[next+1 : next+3])
+		if !ok || octet&0xC0 != 0x80 {
+			return nil, start, false, fmt.Errorf("URI malformed")
+		}
+		decoded = append(decoded, octet)
+		next += 3
+	}
+	if !utf8.Valid(decoded) {
+		return nil, start, false, fmt.Errorf("URI malformed")
+	}
+
+	preserve := len(decoded) == 1 && decoded[0] < utf8.RuneSelf && strings.IndexByte(preserveEscapeSet, decoded[0]) >= 0
+	return decoded, next, preserve, nil
+}
+
+func browserURIEscapedUTF8Length(first byte) int {
+	switch {
+	case first>>7 == 0:
+		return 0
+	case first>>5 == 0b110:
+		return 2
+	case first>>4 == 0b1110:
+		return 3
+	case first>>3 == 0b11110:
+		return 4
+	default:
+		return -1
+	}
+}
+
+func browserURIHexOctet(twoHexDigits string) (byte, bool) {
+	if len(twoHexDigits) != 2 {
+		return 0, false
+	}
+	hi := browserParseIntDigitValue(twoHexDigits[0])
+	lo := browserParseIntDigitValue(twoHexDigits[1])
+	if hi < 0 || hi > 15 || lo < 0 || lo > 15 {
+		return 0, false
+	}
+	return byte(hi<<4 | lo), true
+}
+
 func browserParseIntDigits(source string, radix int) string {
 	end := 0
 	for end < len(source) {
@@ -409,6 +605,32 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 				return script.UndefinedValue(), err
 			}
 			return script.NumberValue(math.Abs(number)), nil
+		}), nil
+	case "pow":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) != 2 {
+				return script.UndefinedValue(), fmt.Errorf("Math.pow expects 2 arguments")
+			}
+			base, err := coerceNumber(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			exponent, err := coerceNumber(args[1])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.NumberValue(math.Pow(base, exponent)), nil
+		}), nil
+	case "ceil":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) != 1 {
+				return script.UndefinedValue(), fmt.Errorf("Math.ceil expects 1 argument")
+			}
+			number, err := coerceNumber(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.NumberValue(math.Ceil(number)), nil
 		}), nil
 	case "min":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {

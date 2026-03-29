@@ -65,6 +65,183 @@ func TestSessionAppliesConfigSeedsDeterministically(t *testing.T) {
 	}
 }
 
+func TestSessionReportsOpenCallsWhenWindowOpenFails(t *testing.T) {
+	s := NewSession(SessionConfig{
+		URL:         "https://example.test/start",
+		HTML:        `<main><script>window.open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`,
+		OpenFailure: "open blocked",
+	})
+
+	if _, err := s.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want seeded open failure")
+	} else if !strings.Contains(err.Error(), "open blocked") {
+		t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+	}
+	if got, want := s.URL(), "https://example.test/start"; got != want {
+		t.Fatalf("URL() after failed window.open = %q, want %q", got, want)
+	}
+	if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("OpenCalls() after failed window.open = %#v, want one popup call", got)
+	}
+	if got := s.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+		t.Fatalf("DOMError() = %q, want open blocked message", got)
+	}
+}
+
+func TestSessionReportsOpenCallsWhenBareOpenFails(t *testing.T) {
+	s := NewSession(SessionConfig{
+		URL:         "https://example.test/start",
+		HTML:        `<main><script>open("https://example.test/popup", "_blank", "noopener,noreferrer")</script></main>`,
+		OpenFailure: "open blocked",
+	})
+
+	if _, err := s.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want seeded open failure")
+	} else if !strings.Contains(err.Error(), "open blocked") {
+		t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+	}
+	if got, want := s.URL(), "https://example.test/start"; got != want {
+		t.Fatalf("URL() after failed bare open = %q, want %q", got, want)
+	}
+	if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "https://example.test/popup" {
+		t.Fatalf("OpenCalls() after failed bare open = %#v, want one popup call", got)
+	}
+	if got := s.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+		t.Fatalf("DOMError() = %q, want open blocked message", got)
+	}
+}
+
+func TestSessionBootstrapsWindowOpenPopupStubThroughSession(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+	})
+
+	if _, err := s.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := s.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "false|true|complete" {
+		t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+	}
+	if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+		t.Fatalf("OpenCalls() = %#v, want one popup open call", got)
+	}
+	if got := s.PrintCalls(); len(got) != 1 {
+		t.Fatalf("PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestSessionBootstrapsBareOpenPopupStubThroughSession(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open("", "_blank", "noopener,noreferrer", "ignored"); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+	})
+
+	if _, err := s.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := s.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "false|true|complete" {
+		t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+	}
+	if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+		t.Fatalf("OpenCalls() = %#v, want one popup open call", got)
+	}
+	if got := s.PrintCalls(); len(got) != 1 {
+		t.Fatalf("PrintCalls() = %#v, want one print call", got)
+	}
+}
+
+func TestSessionBootstrapsOpenPopupStubWithoutArgumentsThroughSession(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = window.open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><button id="go">go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { const win = open(); win.document.open(); win.document.write("<p>print view</p>"); win.document.close(); win.focus(); win.print(); document.getElementById("out").textContent = [String(win.closed), String(win.opener === null), String(win.document.readyState)].join("|"); });</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSession(SessionConfig{HTML: tc.html})
+			if _, err := s.ensureDOM(); err != nil {
+				t.Fatalf("ensureDOM() error = %v", err)
+			}
+
+			if err := s.Click("#go"); err != nil {
+				t.Fatalf("Click(#go) error = %v", err)
+			}
+			if got, err := s.TextContent("#out"); err != nil {
+				t.Fatalf("TextContent(#out) error = %v", err)
+			} else if got != "false|true|complete" {
+				t.Fatalf("TextContent(#out) = %q, want false|true|complete", got)
+			}
+			if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("OpenCalls() = %#v, want one popup open call", got)
+			}
+			if got := s.PrintCalls(); len(got) != 1 {
+				t.Fatalf("PrintCalls() = %#v, want one print call", got)
+			}
+		})
+	}
+}
+
+func TestSessionReportsOpenFailureWhenOpenCalledWithoutArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "window.open",
+			html: `<main><script>window.open()</script></main>`,
+		},
+		{
+			name: "bare open",
+			html: `<main><script>open()</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSession(SessionConfig{
+				URL:         "https://example.test/start",
+				HTML:        tc.html,
+				OpenFailure: "open blocked",
+			})
+
+			if _, err := s.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want open failure")
+			} else if !strings.Contains(err.Error(), "open blocked") {
+				t.Fatalf("ensureDOM() error = %v, want open blocked message", err)
+			}
+			if got, want := s.URL(), "https://example.test/start"; got != want {
+				t.Fatalf("URL() after rejected open = %q, want %q", got, want)
+			}
+			if got := s.OpenCalls(); len(got) != 1 || got[0].URL != "" {
+				t.Fatalf("OpenCalls() after rejected open = %#v, want one blank popup call", got)
+			}
+			if got := s.DOMError(); got == "" || !strings.Contains(got, "open blocked") {
+				t.Fatalf("DOMError() = %q, want open blocked message", got)
+			}
+		})
+	}
+}
+
 func TestSessionReportsMatchMediaRules(t *testing.T) {
 	s := NewSession(SessionConfig{
 		MatchMedia: map[string]bool{"(prefers-reduced-motion: reduce)": true},
@@ -874,6 +1051,46 @@ func TestSessionInlineScriptsCanSetLocationProperties(t *testing.T) {
 	}
 	if got := s.Registry().Location().Navigations(); len(got) != 3 || got[0] != "https://example.test/start?old=1#next" || got[1] != "https://example.test/detail?old=1#next" || got[2] != "https://example.test/detail?mode=full#next" {
 		t.Fatalf("Location().Navigations() after locationSet bootstrap = %#v, want ordered property updates", got)
+	}
+}
+
+func TestSessionRejectsLocationSetSymbolInputFromInlineScript(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "property",
+			html: `<main><script>host:locationSet(expr(Symbol("token")), "#next")</script></main>`,
+		},
+		{
+			name: "value",
+			html: `<main><script>host:locationSet("hash", expr(Symbol("token")))</script></main>`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSession(SessionConfig{
+				URL:  "https://example.test/start",
+				HTML: tc.html,
+			})
+
+			if _, err := s.ensureDOM(); err == nil {
+				t.Fatalf("ensureDOM() error = nil, want Symbol coercion failure")
+			} else if !strings.Contains(err.Error(), "Cannot convert a Symbol value to a string") {
+				t.Fatalf("ensureDOM() error = %v, want Symbol coercion failure message", err)
+			}
+			if got, want := s.URL(), "https://example.test/start"; got != want {
+				t.Fatalf("URL() after rejected locationSet %s symbol input = %q, want %q", tc.name, got, want)
+			}
+			if got := s.Registry().Location().Navigations(); len(got) != 0 {
+				t.Fatalf("Location().Navigations() after rejected locationSet %s symbol input = %#v, want empty", tc.name, got)
+			}
+			if got, want := s.windowHistoryLength(), 1; got != want {
+				t.Fatalf("windowHistoryLength() after rejected locationSet %s symbol input = %d, want %d", tc.name, got, want)
+			}
+		})
 	}
 }
 

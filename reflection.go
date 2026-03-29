@@ -15,6 +15,10 @@ func (v ClassListView) Contains(token string) bool {
 	return v.list.Contains(token)
 }
 
+func (v ClassListView) Item(index int) (string, bool) {
+	return v.list.Item(index)
+}
+
 func (v ClassListView) Add(tokens ...string) error {
 	if v.list == (dom.ClassList{}) {
 		return NewError(ErrorKindDOM, "class list is unavailable")

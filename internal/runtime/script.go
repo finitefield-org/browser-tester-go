@@ -498,12 +498,15 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.UndefinedValue(), nil
 
 	case "locationAssign":
-		url, err := scriptStringArg(method, args, 0)
-		if err != nil {
-			return script.UndefinedValue(), err
+		if len(args) == 0 {
+			return script.UndefinedValue(), fmt.Errorf("%s requires argument %d", method, 1)
 		}
 		if len(args) > 1 {
 			return script.UndefinedValue(), fmt.Errorf("locationAssign accepts at most 1 argument")
+		}
+		url, err := browserRequiredStringArg(method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
 		}
 		if h.session == nil {
 			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
@@ -514,12 +517,15 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.UndefinedValue(), nil
 
 	case "locationReplace":
-		url, err := scriptStringArg(method, args, 0)
-		if err != nil {
-			return script.UndefinedValue(), err
+		if len(args) == 0 {
+			return script.UndefinedValue(), fmt.Errorf("%s requires argument %d", method, 1)
 		}
 		if len(args) > 1 {
 			return script.UndefinedValue(), fmt.Errorf("locationReplace accepts at most 1 argument")
+		}
+		url, err := browserRequiredStringArg(method, args, 0)
+		if err != nil {
+			return script.UndefinedValue(), err
 		}
 		if h.session == nil {
 			return script.UndefinedValue(), fmt.Errorf("inline script session is unavailable")
@@ -542,11 +548,11 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.UndefinedValue(), nil
 
 	case "locationSet":
-		property, err := scriptStringArg(method, args, 0)
+		property, err := browserRequiredStringArg(method, args, 0)
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		value, err := scriptStringArg(method, args, 1)
+		value, err := browserRequiredStringArg(method, args, 1)
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
@@ -620,7 +626,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.StringValue(h.session.windowHistoryScrollRestoration()), nil
 
 	case "historySetScrollRestoration":
-		value, err := scriptStringArg(method, args, 0)
+		value, err := browserRequiredStringArg(method, args, 0)
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
@@ -639,17 +645,17 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if len(args) < 2 || len(args) > 3 {
 			return script.UndefinedValue(), fmt.Errorf("history.pushState() expects 2 or 3 arguments")
 		}
-		state, err := scriptStringArg(method, args, 0)
+		state, err := browserToStringValue(args[0])
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		title, err := scriptStringArg(method, args, 1)
+		title, err := browserToStringValue(args[1])
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
 		url := ""
 		if len(args) == 3 {
-			url, err = scriptStringArg(method, args, 2)
+			url, err = browserToStringValue(args[2])
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
@@ -666,17 +672,17 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		if len(args) < 2 || len(args) > 3 {
 			return script.UndefinedValue(), fmt.Errorf("history.replaceState() expects 2 or 3 arguments")
 		}
-		state, err := scriptStringArg(method, args, 0)
+		state, err := browserToStringValue(args[0])
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
-		title, err := scriptStringArg(method, args, 1)
+		title, err := browserToStringValue(args[1])
 		if err != nil {
 			return script.UndefinedValue(), err
 		}
 		url := ""
 		if len(args) == 3 {
-			url, err = scriptStringArg(method, args, 2)
+			url, err = browserToStringValue(args[2])
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
@@ -981,7 +987,7 @@ func (h *inlineScriptHost) Call(method string, args []script.Value) (script.Valu
 		return script.StringValue(h.session.WindowName()), nil
 
 	case "setWindowName":
-		value, err := scriptStringArg(method, args, 0)
+		value, err := browserRequiredStringArg(method, args, 0)
 		if err != nil {
 			return script.UndefinedValue(), err
 		}

@@ -656,7 +656,7 @@ func resolveLocationReference(session *Session, path string) (script.Value, erro
 			if session == nil {
 				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "location.assign is unavailable in this bounded classic-JS slice")
 			}
-			url, err := scriptStringArg("location.assign", args, 0)
+			url, err := browserRequiredStringArg("location.assign", args, 0)
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
@@ -670,7 +670,7 @@ func resolveLocationReference(session *Session, path string) (script.Value, erro
 			if session == nil {
 				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "location.replace is unavailable in this bounded classic-JS slice")
 			}
-			url, err := scriptStringArg("location.replace", args, 0)
+			url, err := browserRequiredStringArg("location.replace", args, 0)
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
@@ -740,11 +740,20 @@ func resolveHistoryReference(session *Session, path string) (script.Value, error
 			if len(args) < 2 || len(args) > 3 {
 				return script.UndefinedValue(), fmt.Errorf("history.pushState expects 2 or 3 arguments")
 			}
-			state := script.ToJSString(args[0])
-			title := script.ToJSString(args[1])
+			state, err := browserToStringValue(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			title, err := browserToStringValue(args[1])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
 			url := ""
 			if len(args) == 3 {
-				url = script.ToJSString(args[2])
+				url, err = browserToStringValue(args[2])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
 			}
 			if err := session.windowHistoryPushState(state, title, url); err != nil {
 				return script.UndefinedValue(), err
@@ -759,11 +768,20 @@ func resolveHistoryReference(session *Session, path string) (script.Value, error
 			if len(args) < 2 || len(args) > 3 {
 				return script.UndefinedValue(), fmt.Errorf("history.replaceState expects 2 or 3 arguments")
 			}
-			state := script.ToJSString(args[0])
-			title := script.ToJSString(args[1])
+			state, err := browserToStringValue(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			title, err := browserToStringValue(args[1])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
 			url := ""
 			if len(args) == 3 {
-				url = script.ToJSString(args[2])
+				url, err = browserToStringValue(args[2])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
 			}
 			if err := session.windowHistoryReplaceState(state, title, url); err != nil {
 				return script.UndefinedValue(), err
@@ -2054,14 +2072,21 @@ func browserOpen(session *Session, args []script.Value) (script.Value, error) {
 	if session == nil {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "open is unavailable in this bounded classic-JS slice")
 	}
-	if len(args) > 3 {
-		return script.UndefinedValue(), fmt.Errorf("open expects at most 3 arguments")
-	}
 	url := ""
 	if len(args) > 0 {
 		var err error
-		url, err = scriptStringArg("open", args, 0)
+		url, err = browserToStringValue(args[0])
 		if err != nil {
+			return script.UndefinedValue(), err
+		}
+	}
+	if len(args) > 1 {
+		if _, err := browserToStringValue(args[1]); err != nil {
+			return script.UndefinedValue(), err
+		}
+	}
+	if len(args) > 2 {
+		if _, err := browserToStringValue(args[2]); err != nil {
 			return script.UndefinedValue(), err
 		}
 	}
