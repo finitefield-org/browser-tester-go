@@ -95,6 +95,10 @@ func (h *inlineScriptHost) ResolveHostReference(path string) (script.Value, erro
 }
 
 func resolveBrowserGlobalReference(session *Session, store *dom.Store, path string) (script.Value, error) {
+	return resolveBrowserGlobalReferenceWithPrefix(session, store, path, false)
+}
+
+func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store, path string, prefixed bool) (script.Value, error) {
 	normalized := strings.TrimSpace(path)
 	if normalized == "" {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
@@ -102,7 +106,7 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 
 	for _, prefix := range []string{"window.", "self.", "globalThis.", "top.", "parent.", "frames."} {
 		if strings.HasPrefix(normalized, prefix) {
-			return resolveBrowserGlobalReference(session, store, normalized[len(prefix):])
+			return resolveBrowserGlobalReferenceWithPrefix(session, store, normalized[len(prefix):], true)
 		}
 	}
 
@@ -200,6 +204,9 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 	case "HTMLSelectElement":
 		return script.HostConstructorReference("HTMLSelectElement"), nil
 	case "URL":
+		if prefixed {
+			return script.HostConstructorReference("URL"), nil
+		}
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserURLConstructor(session, args)
 		}), nil
@@ -346,6 +353,10 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 	}
 	if strings.HasPrefix(normalized, "element:") {
 		return resolveElementReference(session, store, normalized)
+	}
+
+	if prefixed {
+		return script.UndefinedValue(), nil
 	}
 
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))

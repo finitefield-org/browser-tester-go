@@ -1133,6 +1133,52 @@ func TestSessionBootstrapsAsyncTimerCallbackCanvasPngExport(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsAsyncTimerCallbackCanvasPngExportWithWindowURLAlias(t *testing.T) {
+	const rawHTML = `<main><button id="go" type="button">Go</button><div id="out"></div><script>` +
+		`async function svgMarkupToPngBlob(svgMarkup, widthPx, heightPx, surface) { const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" }); const urlSurface = surface || URL; const url = urlSurface.createObjectURL(blob); try { const image = await new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = url; }); const canvas = document.createElement("canvas"); canvas.width = widthPx; canvas.height = heightPx; const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); return await new Promise((resolve, reject) => { canvas.toBlob((pngBlob) => { if (pngBlob) resolve(pngBlob); else reject(new Error("png blob failed")); }, "image/png"); }); } finally { urlSurface.revokeObjectURL(url); } }` +
+		`function downloadBlob(filename, blob, surface) { const urlSurface = surface || URL; const url = urlSurface.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); urlSurface.revokeObjectURL(url); }` +
+		`document.getElementById("go").addEventListener("click", () => { const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; if (window.URL !== URL) { throw new Error("window.URL alias mismatch"); } window.setTimeout(async () => { const direct = await svgMarkupToPngBlob(svg, 8, 8, URL); downloadBlob("canvas-direct.png", direct, URL); document.getElementById("out").textContent = "direct"; }, 230); window.setTimeout(async () => { const alias = await svgMarkupToPngBlob(svg, 8, 8, window.URL); downloadBlob("canvas-window.png", alias, window.URL); document.getElementById("out").textContent += "|window"; }, 460); });` +
+		`</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if err := session.AdvanceTime(460); err != nil {
+		t.Fatalf("AdvanceTime(460) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "direct|window" {
+		t.Fatalf("TextContent(#out) = %q, want direct|window", got)
+	}
+	downloads := session.Registry().Downloads().Artifacts()
+	if len(downloads) != 2 {
+		t.Fatalf("Downloads().Artifacts() = %#v, want two captured PNG downloads", downloads)
+	}
+	if downloads[0].FileName != "canvas-direct.png" {
+		t.Fatalf("Downloads()[0].FileName = %q, want canvas-direct.png", downloads[0].FileName)
+	}
+	if downloads[1].FileName != "canvas-window.png" {
+		t.Fatalf("Downloads()[1].FileName = %q, want canvas-window.png", downloads[1].FileName)
+	}
+	for i, download := range downloads {
+		if len(download.Bytes) < 8 {
+			t.Fatalf("Downloads()[%d].Bytes length = %d, want PNG signature bytes", i, len(download.Bytes))
+		}
+		if got, want := string(download.Bytes[:8]), "\x89PNG\r\n\x1a\n"; got != want {
+			t.Fatalf("Downloads()[%d].Bytes signature = %q, want PNG signature", i, got)
+		}
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after async timer canvas PNG export with window.URL alias", got)
+	}
+}
+
 func TestSessionBootstrapsAsyncTimerCallbackAwaitingPromiseResolve(t *testing.T) {
 	const rawHTML = `<main><button id="go" type="button">Go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { window.setTimeout(async () => { const value = await Promise.resolve("ok"); document.getElementById("out").textContent = value; }, 230); });</script></main>`
 
@@ -3733,6 +3779,24 @@ func TestSessionBootstrapsTemplateLocaleAndExternalWindowGlobals(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsWindowLucideFeatureDetectionWithoutSeededExternalScript(t *testing.T) {
+	rawHTML := `<main><div id="icons"><i data-lucide="arrow-left-right"></i></div><div id="status"></div><script>document.getElementById("status").textContent = window.lucide ? "loaded" : "skipped"; if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); }</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "skipped" {
+		t.Fatalf("TextContent(#status) = %q, want skipped", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty when guarded custom window globals are absent", got)
+	}
+}
+
 func TestSessionBootstrapsExternalJSVarGlobalVisibleToBareIdentifier(t *testing.T) {
 	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
 	rawHTML := `<main><div id="icons"></div><div id="status"></div><script src="` + scriptURL + `"></script><script>lucide.createIcons(); host:setTextContent("#status", "ok")</script></main>`
@@ -3755,6 +3819,34 @@ func TestSessionBootstrapsExternalJSVarGlobalVisibleToBareIdentifier(t *testing.
 	}
 	if got := session.Registry().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
 		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
+	}
+}
+
+func TestSessionBootstrapsUnpkgLucideExternalJSWindowGlobal(t *testing.T) {
+	const scriptURL = "https://unpkg.com/lucide@latest"
+	rawHTML := `<main><div id="icons"></div><div id="status"></div><script src="` + scriptURL + `"></script><script>if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); } document.getElementById("status").textContent = window.lucide && typeof window.lucide.createIcons === "function" ? "ok" : "skipped"</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	session.Registry().ExternalJS().RespondSource(scriptURL, `window.lucide = { createIcons: function () { document.getElementById("icons").textContent = "loaded"; } };`)
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#icons"); err != nil {
+		t.Fatalf("TextContent(#icons) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#icons) = %q, want loaded", got)
+	}
+	if got, err := session.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#status) = %q, want ok", got)
+	}
+	if got := session.Registry().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after unpkg Lucide bootstrap", got)
 	}
 }
 

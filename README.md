@@ -88,10 +88,11 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `nodeValue` / `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` /
   `after()` / `append()` / `prepend()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation), `location` (including `assign()` / `replace()` / `reload()` and property setters with browser-style string coercion and runtime rejection of `Symbol` inputs), `history`, `navigator`, `URL` /
-  `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
+  `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()` with `window.URL` alias parity, `DOMParser.parseFromString()` for
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `element.scrollIntoView()` as a bounded no-op scroll helper, `Intl.NumberFormat` / `Intl.NumberFormat.prototype.resolvedOptions()` / `Intl.NumberFormat.prototype.formatToParts()` / `Intl.NumberFormat.supportedLocalesOf()` / `Intl.Collator.supportedLocalesOf()` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
   `matchMedia`, `fetch()`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
-  `window.crypto` / `window.hashApi`, and
+  `window.crypto` / `window.hashApi` (unset reads through `window` / `self` / `globalThis` /
+  `top` / `parent` / `frames` return `undefined` like browser feature detection), and
   bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Image` / `HTMLImageElement` / `HTMLCanvasElement` / `Uint8Array` element checks, plus inline-script `toggleAttribute(name, force)` and `classList.toggle(token, force)` calls that use browser-style truthiness coercion for the optional force argument, plus blob-backed `Image` / `HTMLImageElement` `load` / `error` callbacks and bounded `canvas.getContext("2d")` / `drawImage()` / `toBlob()` / `toDataURL()` PNG export, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
