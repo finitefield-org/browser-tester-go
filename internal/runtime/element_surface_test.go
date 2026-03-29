@@ -23,6 +23,44 @@ func TestSessionInlineScriptsCanReadElementReflectionSurfaces(t *testing.T) {
 	}
 }
 
+func TestSessionInlineScriptsCanReadAndWriteDocumentElementLang(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<!doctype html><html lang="en-US"><body><div id="probe"></div><script>const root = document.documentElement; const before = root.lang; root.lang = "fr-CA"; host:setTextContent("#probe", expr(before + "|" + root.lang))</script></body></html>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after documentElement.lang reflection bridge error = %v", err)
+	} else if got != "en-US|fr-CA" {
+		t.Fatalf("TextContent(#probe) after documentElement.lang reflection bridge = %q, want %q", got, "en-US|fr-CA")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after documentElement.lang reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsTreatMissingDocumentElementLangAsEmptyString(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<!doctype html><html><body><div id="probe"></div><script>const root = document.documentElement; host:setTextContent("#probe", expr("[" + root.lang + "]"))</script></body></html>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after missing documentElement.lang reflection bridge error = %v", err)
+	} else if got != "[]" {
+		t.Fatalf("TextContent(#probe) after missing documentElement.lang reflection bridge = %q, want %q", got, "[]")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after missing documentElement.lang reflection bridge", got)
+	}
+}
+
 func TestSessionInlineScriptsCanMutateElementStyleReflectionSurfaces(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<main><div id="box" style="color: green; background: transparent; --accent: orange !important"></div><div id="probe"></div><script>const box = document.querySelector("#box"); const removed = box.style.removeProperty("color"); box.style.setProperty("background", "blue"); box.style.setProperty("--accent", "purple", "important"); host:setTextContent("#probe", expr([removed, box.style.getPropertyValue("background"), box.style.getPropertyPriority("--accent"), box.style.cssText].join("|")))</script></main>`,

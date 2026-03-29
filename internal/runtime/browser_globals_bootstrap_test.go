@@ -81,6 +81,50 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsFetchThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><div id="meta"></div><div id="body"></div><script>window.fetch("https://example.test/api/message").then(function (response) { document.getElementById("meta").textContent = [response.url, response.status, response.ok].join("|"); return response.text().then(function (text) { document.getElementById("body").textContent = text; }); });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	session.Registry().Fetch().RespondText("https://example.test/api/message", 201, "ok body")
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#meta"); err != nil {
+		t.Fatalf("TextContent(#meta) error = %v", err)
+	} else if got != "https://example.test/api/message|201|true" {
+		t.Fatalf("TextContent(#meta) = %q, want fetch response metadata", got)
+	}
+	if got, err := session.TextContent("#body"); err != nil {
+		t.Fatalf("TextContent(#body) error = %v", err)
+	} else if got != "ok body" {
+		t.Fatalf("TextContent(#body) = %q, want response body", got)
+	}
+	if got := session.FetchCalls(); len(got) != 1 || got[0].URL != "https://example.test/api/message" {
+		t.Fatalf("FetchCalls() = %#v, want one fetch call", got)
+	}
+}
+
+func TestSessionBootstrapsFetchFailureThroughBrowserGlobalsCatchChain(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>fetch("https://example.test/api/broken").catch(function (reason) { document.getElementById("out").textContent = reason; });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	session.Registry().Fetch().Fail("https://example.test/api/broken", "boom")
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `fetch("https://example.test/api/broken") failed: boom` {
+		t.Fatalf("TextContent(#out) = %q, want fetch failure reason", got)
+	}
+	if got := session.FetchCalls(); len(got) != 1 || got[0].URL != "https://example.test/api/broken" {
+		t.Fatalf("FetchCalls() = %#v, want one broken fetch call", got)
+	}
+}
+
 func TestSessionRejectsWindowNameSymbolThroughBrowserGlobals(t *testing.T) {
 	const rawHTML = `<main><script>window.name = Symbol("token")</script></main>`
 
@@ -377,7 +421,7 @@ func TestSessionBootstrapsStringConcat(t *testing.T) {
 }
 
 func TestSessionBootstrapsStringLocaleCompare(t *testing.T) {
-	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["b".localeCompare("a"), "a".localeCompare("a"), "a".localeCompare("b")].join("|")</script></main>`
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["b".localeCompare("a"), "a".localeCompare("a"), "a".localeCompare("b"), "ä".localeCompare("z", "sv"), "item 2".localeCompare("item 10", undefined, { numeric: true })].join("|")</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -386,20 +430,22 @@ func TestSessionBootstrapsStringLocaleCompare(t *testing.T) {
 
 	if got, err := session.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != "1|0|-1" {
-		t.Fatalf("TextContent(#out) = %q, want 1|0|-1", got)
+	} else if got != "1|0|-1|1|-1" {
+		t.Fatalf("TextContent(#out) = %q, want 1|0|-1|1|-1", got)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after string localeCompare bootstrap", got)
 	}
 }
 
-func TestSessionRejectsStringLocaleCompareWithLocales(t *testing.T) {
-	const rawHTML = `<main><script>"a".localeCompare("b", "en")</script></main>`
+func TestSessionRejectsStringLocaleCompareWithInvalidOptions(t *testing.T) {
+	const rawHTML = `<main><script>"a".localeCompare("b", "en", "true")</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err == nil {
-		t.Fatalf("ensureDOM() error = nil, want unsupported error from String.localeCompare locales")
+		t.Fatalf("ensureDOM() error = nil, want runtime error from String.localeCompare options")
+	} else if !strings.Contains(err.Error(), "String.localeCompare options argument must be an object") {
+		t.Fatalf("ensureDOM() error = %v, want String.localeCompare options validation error", err)
 	}
 }
 
@@ -458,7 +504,7 @@ func TestSessionBootstrapsStringRepeat(t *testing.T) {
 }
 
 func TestSessionBootstrapsStringReplaceAll(t *testing.T) {
-	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["gooo".replaceAll("oo", "b"), "gooo".replaceAll(/o/g, "a")].join("|")</script></main>`
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["gooo".replaceAll("oo", "b"), "gooo".replaceAll(/o/g, "a"), "gooo".replaceAll("o", (match, offset, input) => match + ":" + offset), "A1B2".replaceAll(/([A-Z])([0-9])/g, (match, letter, digit, offset, input) => letter.toLowerCase() + digit + ":" + offset)].join("|")</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -467,8 +513,8 @@ func TestSessionBootstrapsStringReplaceAll(t *testing.T) {
 
 	if got, err := session.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != "gbo|gaaa" {
-		t.Fatalf("TextContent(#out) = %q, want gbo|gaaa", got)
+	} else if got != "gbo|gaaa|go:1o:2o:3|a1:0b2:2" {
+		t.Fatalf("TextContent(#out) = %q, want gbo|gaaa|go:1o:2o:3|a1:0b2:2", got)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after string replaceAll bootstrap", got)
@@ -1023,6 +1069,42 @@ func TestSessionBootstrapsCompostInputConverterBuiltins(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsInfinityGlobalSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>let bestScore = -Infinity; document.getElementById("out").textContent = [String(bestScore), String(Infinity), String(Number.POSITIVE_INFINITY), String(Number.NEGATIVE_INFINITY)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "-Infinity|Infinity|Infinity|-Infinity" {
+		t.Fatalf("TextContent(#out) = %q, want -Infinity|Infinity|Infinity|-Infinity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Infinity bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateInstanceOfSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(0); document.getElementById("out").textContent = [date instanceof Date, Number.isNaN(date.getTime())].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|false" {
+		t.Fatalf("TextContent(#out) = %q, want true|false", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date instanceof bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsMathCeilSurface(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Math.ceil(1.1), Math.ceil(-1.1), 1 / Math.ceil(-0.1)].join("|")</script></main>`
 
@@ -1096,6 +1178,24 @@ func TestSessionRejectsMathTruncWrongArity(t *testing.T) {
 		t.Fatalf("ensureDOM() error = nil, want Math.trunc arity failure")
 	} else if !strings.Contains(err.Error(), "Math.trunc expects 1 argument") {
 		t.Fatalf("ensureDOM() error = %v, want Math.trunc arity message", err)
+	}
+}
+
+func TestSessionBootstrapsMathRemainingMethods(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Math.acos(1), Math.atan2(1, 1), Math.clz32(1), Math.imul(-1, 2), Math.fround(16777217), Math.hypot(3, 4), Math.log1p(1), Math.sign(-3), String(1 / Math.sign(-0)), String(1 / Math.min(0, -0)), String(1 / Math.max(-0, 0))].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0|0.7853981633974483|31|-2|16777216|5|0.6931471805599453|-1|-Infinity|-Infinity|Infinity" {
+		t.Fatalf("TextContent(#out) = %q, want 0|0.7853981633974483|31|-2|16777216|5|0.6931471805599453|-1|-Infinity|-Infinity|Infinity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Math remaining methods bootstrap", got)
 	}
 }
 
@@ -1614,6 +1714,24 @@ func TestSessionBootstrapsRequestAnimationFramePromiseResolution(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after rAF promise resolution bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsPromiseRejectionCatchChain(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>new Promise((resolve, reject) => { reject("boom"); }).catch(function (reason) { document.getElementById("out").textContent = reason; });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "boom" {
+		t.Fatalf("TextContent(#out) = %q, want boom", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after promise rejection bootstrap", got)
 	}
 }
 

@@ -215,6 +215,7 @@ func sanitizeSkippedValue(value Value) Value {
 		if value.PromiseState != nil && value.PromiseState.resolved {
 			cloned.PromiseState = &classicJSPromiseState{
 				resolved: true,
+				rejected: value.PromiseState.rejected,
 				value:    sanitizeSkippedValue(value.PromiseState.value),
 			}
 		}
@@ -8874,6 +8875,12 @@ func (p *classicJSStatementParser) parseUnary() (jsValue, error) {
 		if promise, ok := pendingPromiseState(value.value); ok {
 			return jsValue{}, classicJSAwaitSignal{promise: promise}
 		}
+		if settled, rejected, settledValue := promiseSettlement(value.value); settled {
+			if rejected {
+				return jsValue{}, classicJSThrowSignal{value: settledValue}
+			}
+			return scalarJSValue(unwrapPromiseValue(settledValue)), nil
+		}
 		return scalarJSValue(unwrapPromiseValue(value.value)), nil
 	}
 
@@ -10440,6 +10447,11 @@ func (p *classicJSStatementParser) ReplaceArrayBindings(oldValue Value, newValue
 func classicJSInstanceOf(left Value, right Value) (bool, error) {
 	if right.Kind == ValueKindHostReference && right.HostReferenceKind == HostReferenceKindConstructor {
 		switch right.HostReferencePath {
+		case "Date":
+			if _, ok := BrowserDateTimestamp(left); ok {
+				return true, nil
+			}
+			return false, nil
 		case "Blob":
 			if left.Kind != ValueKindHostReference {
 				return false, nil
@@ -12175,19 +12187,10 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 
 	resultPromise := &classicJSPromiseState{}
 	resolveAsyncResult := func(value Value) {
-		if promise, ok := pendingPromiseState(value); ok {
-			promise.addWaiter(func(resolved Value) {
-				resultPromise.resolve(unwrapPromiseValue(resolved))
-			})
-			return
-		}
-		resultPromise.resolve(unwrapPromiseValue(value))
+		settlePromiseFromResult(resultPromise, value)
 	}
 	asyncResultValue := func() jsValue {
-		if resultPromise.resolved {
-			return scalarJSValue(PromiseValue(resultPromise.value))
-		}
-		return scalarJSValue(PendingPromiseValue(resultPromise))
+		return scalarJSValue(promiseValueFromState(resultPromise))
 	}
 
 	var resumeAsyncState func(classicJSResumeState)
@@ -12209,7 +12212,11 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 				if resumeState == nil {
 					resumeState = state
 				}
-				awaitedPromise.addWaiter(func(Value) {
+				awaitedPromise.addWaiter(func(next Value, rejected bool) {
+					if rejected {
+						resultPromise.reject(next)
+						return
+					}
 					resumeAsyncState(resumeState)
 				})
 				return
@@ -12232,7 +12239,11 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 		_, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, fn.allowReturn, nil, p.newTarget, p.hasNewTarget, fn.privateClass, nil)
 		if err != nil {
 			if awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err); ok {
-				awaitedPromise.addWaiter(func(Value) {
+				awaitedPromise.addWaiter(func(next Value, rejected bool) {
+					if rejected {
+						resultPromise.reject(next)
+						return
+					}
 					resumeAsyncState(resumeState)
 				})
 				return asyncResultValue(), nil
@@ -12256,7 +12267,11 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	value, err := evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, p.newTarget, p.hasNewTarget, fn.privateClass, nil)
 	if err != nil {
 		if awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err); ok {
-			awaitedPromise.addWaiter(func(Value) {
+			awaitedPromise.addWaiter(func(next Value, rejected bool) {
+				if rejected {
+					resultPromise.reject(next)
+					return
+				}
 				resumeAsyncState(resumeState)
 			})
 			return asyncResultValue(), nil
@@ -12271,12 +12286,6 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 		return jsValue{}, err
 	}
 	if fn.async {
-		if promise, ok := pendingPromiseState(value); ok {
-			promise.addWaiter(func(resolved Value) {
-				resultPromise.resolve(unwrapPromiseValue(resolved))
-			})
-			return asyncResultValue(), nil
-		}
 		resolveAsyncResult(value)
 		return asyncResultValue(), nil
 	}

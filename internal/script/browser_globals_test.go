@@ -537,6 +537,29 @@ func TestDispatchSupportsBrowserPromiseThenCatch(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsRejectedBrowserPromiseCatchChain(t *testing.T) {
+	host := &promiseCaptureHost{}
+	promise, _, rejectPromise := NewPendingPromiseWithReject()
+	rejectPromise(StringValue("boom"))
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"host":    HostObjectReference("host"),
+		"promise": promise,
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `promise.catch(function (reason) { host.echo(reason); return "handled:" + reason; }).then(function (value) { host.echo(value); }); "done"`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(rejected browser promise chain) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "done" {
+		t.Fatalf("Dispatch(rejected browser promise chain) value = %#v, want string done", result.Value)
+	}
+	if got, want := strings.Join(host.echoes, "|"), "boom|handled:boom"; got != want {
+		t.Fatalf("host echoes = %q, want %q", got, want)
+	}
+}
+
 func TestDispatchPropagatesPromiseThenCallbackErrors(t *testing.T) {
 	host := &browserBootstrapHost{}
 	runtime := NewRuntimeWithBindings(host, map[string]Value{

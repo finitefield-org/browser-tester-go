@@ -260,6 +260,8 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		return store.SetAttribute(nodeID, "id", script.ToJSString(value))
 	case rest == "style":
 		return setElementStyleText(store, nodeID, script.ToJSString(value))
+	case rest == "lang":
+		return store.SetAttribute(nodeID, "lang", script.ToJSString(value))
 	case strings.HasPrefix(rest, "style."):
 		return setElementStylePropertyValue(store, nodeID, strings.TrimPrefix(rest, "style."), script.ToJSString(value))
 	case rest == "dataset":
@@ -737,6 +739,12 @@ func browserElementClick(session *Session, store *dom.Store, nodeID dom.NodeID, 
 	node := nodeFromStore(store, nodeID)
 	if node == nil || node.Kind != dom.NodeKindElement {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.click is unavailable in this bounded classic-JS slice")
+	}
+	if err := session.blurFocusedNodeIfNeeded(store, nodeID); err != nil {
+		return script.UndefinedValue(), err
+	}
+	if session.domStore != nil && session.domStore != store {
+		return script.UndefinedValue(), session.drainMicrotasks(session.domStore)
 	}
 
 	prevented, err := session.dispatchEventListeners(store, nodeID, "click")

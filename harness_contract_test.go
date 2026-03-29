@@ -3823,6 +3823,12 @@ func TestInteractionSliceReportsFocusAndLog(t *testing.T) {
 	if err := harness.Click("#cta"); err != nil {
 		t.Fatalf("Click(#cta) error = %v", err)
 	}
+	if got := harness.Debug().FocusedSelector(); got != "" {
+		t.Fatalf("Debug().FocusedSelector() after Click = %q, want empty", got)
+	}
+	if err := harness.Focus("#name"); err != nil {
+		t.Fatalf("Focus(#name) after Click error = %v", err)
+	}
 	if err := harness.Blur(); err != nil {
 		t.Fatalf("Blur() error = %v", err)
 	}
@@ -3837,8 +3843,8 @@ func TestInteractionSliceReportsFocusAndLog(t *testing.T) {
 	}
 
 	log := harness.Debug().Interactions()
-	if len(log) != 3 {
-		t.Fatalf("Debug().Interactions() len = %d, want 3", len(log))
+	if len(log) != 4 {
+		t.Fatalf("Debug().Interactions() len = %d, want 4", len(log))
 	}
 	if log[0].Kind != InteractionKindFocus || log[0].Selector != "#name" {
 		t.Fatalf("Debug().Interactions()[0] = %#v, want focus #name", log[0])
@@ -3846,8 +3852,11 @@ func TestInteractionSliceReportsFocusAndLog(t *testing.T) {
 	if log[1].Kind != InteractionKindClick || log[1].Selector != "#cta" {
 		t.Fatalf("Debug().Interactions()[1] = %#v, want click #cta", log[1])
 	}
-	if log[2].Kind != InteractionKindBlur || log[2].Selector != "#name" {
-		t.Fatalf("Debug().Interactions()[2] = %#v, want blur #name", log[2])
+	if log[2].Kind != InteractionKindFocus || log[2].Selector != "#name" {
+		t.Fatalf("Debug().Interactions()[2] = %#v, want focus #name", log[2])
+	}
+	if log[3].Kind != InteractionKindBlur || log[3].Selector != "#name" {
+		t.Fatalf("Debug().Interactions()[3] = %#v, want blur #name", log[3])
 	}
 
 	log[0].Selector = "mutated"

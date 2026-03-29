@@ -1480,10 +1480,13 @@ func TestSessionTracksFocusAndInteractions(t *testing.T) {
 	if err := s.Click("#cta"); err != nil {
 		t.Fatalf("Click(#cta) error = %v", err)
 	}
-	if got, want := s.FocusedSelector(), "#name"; got != want {
+	if got, want := s.FocusedSelector(), ""; got != want {
 		t.Fatalf("FocusedSelector() after Click = %q, want %q", got, want)
 	}
 
+	if err := s.Focus("#name"); err != nil {
+		t.Fatalf("Focus(#name) after Click error = %v", err)
+	}
 	if err := s.Blur(); err != nil {
 		t.Fatalf("Blur() error = %v", err)
 	}
@@ -1495,8 +1498,8 @@ func TestSessionTracksFocusAndInteractions(t *testing.T) {
 	}
 
 	log := s.InteractionLog()
-	if len(log) != 3 {
-		t.Fatalf("InteractionLog() len = %d, want 3", len(log))
+	if len(log) != 4 {
+		t.Fatalf("InteractionLog() len = %d, want 4", len(log))
 	}
 	if log[0].Kind != InteractionKindFocus || log[0].Selector != "#name" {
 		t.Fatalf("InteractionLog()[0] = %#v, want focus #name", log[0])
@@ -1504,14 +1507,73 @@ func TestSessionTracksFocusAndInteractions(t *testing.T) {
 	if log[1].Kind != InteractionKindClick || log[1].Selector != "#cta" {
 		t.Fatalf("InteractionLog()[1] = %#v, want click #cta", log[1])
 	}
-	if log[2].Kind != InteractionKindBlur || log[2].Selector != "#name" {
-		t.Fatalf("InteractionLog()[2] = %#v, want blur #name", log[2])
+	if log[2].Kind != InteractionKindFocus || log[2].Selector != "#name" {
+		t.Fatalf("InteractionLog()[2] = %#v, want focus #name", log[2])
+	}
+	if log[3].Kind != InteractionKindBlur || log[3].Selector != "#name" {
+		t.Fatalf("InteractionLog()[3] = %#v, want blur #name", log[3])
 	}
 
 	log[0].Selector = "mutated"
 	fresh := s.InteractionLog()
 	if fresh[0].Selector != "#name" {
 		t.Fatalf("fresh InteractionLog()[0].Selector = %q, want %q", fresh[0].Selector, "#name")
+	}
+}
+
+func TestSessionClickBlursFocusedTextInputBeforeClickHandler(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="reference-date" type="date"><button id="apply">Apply</button><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("apply").addEventListener("click", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,
+	})
+
+	if err := s.Focus("#reference-date"); err != nil {
+		t.Fatalf("Focus(#reference-date) error = %v", err)
+	}
+	if err := s.TypeText("#reference-date", "2026-03-15"); err != nil {
+		t.Fatalf("TypeText(#reference-date) error = %v", err)
+	}
+	if err := s.Click("#apply"); err != nil {
+		t.Fatalf("Click(#apply) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2026-03-15" {
+		t.Fatalf("TextContent(#out) = %q, want 2026-03-15", got)
+	}
+	if got, want := s.FocusedSelector(), ""; got != want {
+		t.Fatalf("FocusedSelector() after Click = %q, want %q", got, want)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after click blur regression", got)
+	}
+}
+
+func TestSessionFocusBlursFocusedTextInputBeforeNextFocusHandler(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="reference-date" type="date"><input id="next"><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("next").addEventListener("focus", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,
+	})
+
+	if err := s.Focus("#reference-date"); err != nil {
+		t.Fatalf("Focus(#reference-date) error = %v", err)
+	}
+	if err := s.TypeText("#reference-date", "2026-03-15"); err != nil {
+		t.Fatalf("TypeText(#reference-date) error = %v", err)
+	}
+	if err := s.Focus("#next"); err != nil {
+		t.Fatalf("Focus(#next) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2026-03-15" {
+		t.Fatalf("TextContent(#out) = %q, want 2026-03-15", got)
+	}
+	if got, want := s.FocusedSelector(), "#next"; got != want {
+		t.Fatalf("FocusedSelector() after Focus = %q, want %q", got, want)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after focus blur regression", got)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"math/bits"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +73,8 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		}), true, nil
 	case path == "NaN":
 		return script.NumberValue(math.NaN()), true, nil
+	case path == "Infinity":
+		return script.NumberValue(math.Inf(1)), true, nil
 	case path == "CSS":
 		return script.HostObjectReference("CSS"), true, nil
 	case strings.HasPrefix(path, "CSS."):
@@ -318,6 +321,10 @@ func resolveNumberReference(path string) (script.Value, error) {
 		}), nil
 	case "NaN":
 		return script.NumberValue(math.NaN()), nil
+	case "POSITIVE_INFINITY":
+		return script.NumberValue(math.Inf(1)), nil
+	case "NEGATIVE_INFINITY":
+		return script.NumberValue(math.Inf(-1)), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Number."+path))
 }
@@ -595,6 +602,22 @@ func browserParseIntDigitValue(ch byte) int {
 
 func resolveMathReference(session *Session, path string) (script.Value, error) {
 	switch strings.TrimPrefix(path, ".") {
+	case "E":
+		return script.NumberValue(math.E), nil
+	case "LN10":
+		return script.NumberValue(math.Ln10), nil
+	case "LN2":
+		return script.NumberValue(math.Ln2), nil
+	case "LOG10E":
+		return script.NumberValue(math.Log10E), nil
+	case "LOG2E":
+		return script.NumberValue(math.Log2E), nil
+	case "PI":
+		return script.NumberValue(math.Pi), nil
+	case "SQRT1_2":
+		return script.NumberValue(1 / math.Sqrt2), nil
+	case "SQRT2":
+		return script.NumberValue(math.Sqrt2), nil
 	case "abs":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if len(args) != 1 {
@@ -621,6 +644,162 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 			}
 			return script.NumberValue(math.Pow(base, exponent)), nil
 		}), nil
+	case "acos":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Acos)
+		}), nil
+	case "acosh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Acosh)
+		}), nil
+	case "asin":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Asin)
+		}), nil
+	case "asinh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Asinh)
+		}), nil
+	case "atan":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Atan)
+		}), nil
+	case "atan2":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathBinary(args, math.Atan2)
+		}), nil
+	case "atanh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Atanh)
+		}), nil
+	case "cbrt":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Cbrt)
+		}), nil
+	case "clz32":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			number, err := browserMathNumberArg(args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.NumberValue(float64(bits.LeadingZeros32(browserMathToUint32(number)))), nil
+		}), nil
+	case "cos":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Cos)
+		}), nil
+	case "cosh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Cosh)
+		}), nil
+	case "exp":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Exp)
+		}), nil
+	case "expm1":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Expm1)
+		}), nil
+	case "fround":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			number, err := browserMathNumberArg(args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return script.NumberValue(float64(float32(number))), nil
+		}), nil
+	case "hypot":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) == 0 {
+				return script.NumberValue(0), nil
+			}
+			result := 0.0
+			for _, arg := range args {
+				number, err := coerceNumber(arg)
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				if math.IsInf(number, 0) {
+					return script.NumberValue(math.Inf(1)), nil
+				}
+				if math.IsNaN(number) {
+					result = math.NaN()
+					continue
+				}
+				result = math.Hypot(result, number)
+			}
+			return script.NumberValue(result), nil
+		}), nil
+	case "imul":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			left, err := browserMathNumberArg(args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			right, err := browserMathNumberArg(args, 1)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			leftInt := browserMathToInt32(left)
+			rightInt := browserMathToInt32(right)
+			return script.NumberValue(float64(int32(uint32(leftInt) * uint32(rightInt)))), nil
+		}), nil
+	case "log":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Log)
+		}), nil
+	case "log10":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Log10)
+		}), nil
+	case "log1p":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Log1p)
+		}), nil
+	case "log2":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Log2)
+		}), nil
+	case "sign":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			number, err := browserMathNumberArg(args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			switch {
+			case math.IsNaN(number):
+				return script.NumberValue(math.NaN()), nil
+			case number == 0:
+				if math.Signbit(number) {
+					return script.NumberValue(math.Copysign(0, -1)), nil
+				}
+				return script.NumberValue(0), nil
+			case number > 0:
+				return script.NumberValue(1), nil
+			default:
+				return script.NumberValue(-1), nil
+			}
+		}), nil
+	case "sin":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Sin)
+		}), nil
+	case "sinh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Sinh)
+		}), nil
+	case "sqrt":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Sqrt)
+		}), nil
+	case "tan":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Tan)
+		}), nil
+	case "tanh":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserMathUnary(args, math.Tanh)
+		}), nil
 	case "ceil":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if len(args) != 1 {
@@ -638,6 +817,8 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 				return script.NumberValue(math.Inf(1)), nil
 			}
 			result := math.Inf(1)
+			hasZero := false
+			hasNegativeZero := false
 			for _, arg := range args {
 				value, err := coerceNumber(arg)
 				if err != nil {
@@ -646,9 +827,18 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 				if math.IsNaN(value) {
 					return script.NumberValue(math.NaN()), nil
 				}
+				if value == 0 {
+					hasZero = true
+					if math.Signbit(value) {
+						hasNegativeZero = true
+					}
+				}
 				if value < result {
 					result = value
 				}
+			}
+			if result == 0 && hasZero && hasNegativeZero {
+				return script.NumberValue(math.Copysign(0, -1)), nil
 			}
 			return script.NumberValue(result), nil
 		}), nil
@@ -658,6 +848,8 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 				return script.NumberValue(math.Inf(-1)), nil
 			}
 			result := math.Inf(-1)
+			hasZero := false
+			hasPositiveZero := false
 			for _, arg := range args {
 				value, err := coerceNumber(arg)
 				if err != nil {
@@ -666,9 +858,18 @@ func resolveMathReference(session *Session, path string) (script.Value, error) {
 				if math.IsNaN(value) {
 					return script.NumberValue(math.NaN()), nil
 				}
+				if value == 0 {
+					hasZero = true
+					if !math.Signbit(value) {
+						hasPositiveZero = true
+					}
+				}
 				if value > result {
 					result = value
 				}
+			}
+			if result == 0 && hasZero && hasPositiveZero {
+				return script.NumberValue(0), nil
 			}
 			return script.NumberValue(result), nil
 		}), nil
@@ -924,7 +1125,7 @@ func browserPromiseConstructor(session *Session, store *dom.Store, args []script
 		return script.UndefinedValue(), fmt.Errorf("Promise executor must be callable")
 	}
 
-	promiseValue, resolvePromise := script.NewPendingPromise()
+	promiseValue, resolvePromise, rejectPromise := script.NewPendingPromiseWithReject()
 	resolveFn := script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 		value := script.UndefinedValue()
 		if len(args) > 0 {
@@ -934,11 +1135,20 @@ func browserPromiseConstructor(session *Session, store *dom.Store, args []script
 		return script.UndefinedValue(), nil
 	})
 	rejectFn := script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-		return script.UndefinedValue(), fmt.Errorf("Promise rejection is unsupported in this bounded classic-JS slice")
+		value := script.UndefinedValue()
+		if len(args) > 0 {
+			value = args[0]
+		}
+		rejectPromise(value)
+		return script.UndefinedValue(), nil
 	})
 	host := &inlineScriptHost{session: session, store: store}
 	if _, err := script.InvokeCallableValue(host, executor, []script.Value{resolveFn, rejectFn}, script.UndefinedValue(), false); err != nil {
-		return script.UndefinedValue(), err
+		if throwValue, ok := script.ThrowValueFromError(err); ok {
+			rejectPromise(throwValue)
+		} else {
+			rejectPromise(script.StringValue(err.Error()))
+		}
 	}
 	return promiseValue, nil
 }
@@ -1423,6 +1633,49 @@ func coerceNumber(value script.Value) (float64, error) {
 	default:
 		return 0, fmt.Errorf("argument must be a primitive number in this bounded slice")
 	}
+}
+
+func browserMathNumberArg(args []script.Value, index int) (float64, error) {
+	if index < len(args) {
+		return coerceNumber(args[index])
+	}
+	return coerceNumber(script.UndefinedValue())
+}
+
+func browserMathUnary(args []script.Value, fn func(float64) float64) (script.Value, error) {
+	number, err := browserMathNumberArg(args, 0)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.NumberValue(fn(number)), nil
+}
+
+func browserMathBinary(args []script.Value, fn func(float64, float64) float64) (script.Value, error) {
+	left, err := browserMathNumberArg(args, 0)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	right, err := browserMathNumberArg(args, 1)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.NumberValue(fn(left, right)), nil
+}
+
+func browserMathToUint32(value float64) uint32 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value == 0 {
+		return 0
+	}
+	truncated := math.Trunc(value)
+	truncated = math.Mod(truncated, 4294967296)
+	if truncated < 0 {
+		truncated += 4294967296
+	}
+	return uint32(truncated)
+}
+
+func browserMathToInt32(value float64) int32 {
+	return int32(browserMathToUint32(value))
 }
 
 func browserUint16Value(value script.Value) (uint16, error) {

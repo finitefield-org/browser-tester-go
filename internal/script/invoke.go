@@ -45,3 +45,8 @@ func InvokeCallableValue(host HostBindings, callee Value, args []Value, receiver
 func ThrowValue(value Value) error {
 	return classicJSThrowSignal{value: value}
 }
+
+// ThrowValueFromError extracts a bounded JS throw value from an error signal.
+func ThrowValueFromError(err error) (Value, bool) {
+	return classicJSThrowSignalValue(err)
+}

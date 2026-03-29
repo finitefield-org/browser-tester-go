@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"math"
+	"math/bits"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -204,6 +206,116 @@ func TestRunScriptSupportsNumberIsNaN(t *testing.T) {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
 	if got, want := result.String, "true|false|false|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsMathConstants(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Math.E,
+		Math.LN10,
+		Math.LN2,
+		Math.LOG10E,
+		Math.LOG2E,
+		Math.PI,
+		Math.SQRT1_2,
+		Math.SQRT2
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	want := strings.Join([]string{
+		strconv.FormatFloat(math.E, 'f', -1, 64),
+		strconv.FormatFloat(math.Ln10, 'f', -1, 64),
+		strconv.FormatFloat(math.Ln2, 'f', -1, 64),
+		strconv.FormatFloat(math.Log10E, 'f', -1, 64),
+		strconv.FormatFloat(math.Log2E, 'f', -1, 64),
+		strconv.FormatFloat(math.Pi, 'f', -1, 64),
+		strconv.FormatFloat(1/math.Sqrt2, 'f', -1, 64),
+		strconv.FormatFloat(math.Sqrt2, 'f', -1, 64),
+	}, "|")
+	if got := result.String; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsMathRemainingMethods(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		String(Math.acos(1)),
+		String(Math.acosh(1)),
+		String(Math.asin(0)),
+		String(Math.asinh(0)),
+		String(Math.atan(0)),
+		String(Math.atan2(1, 1)),
+		String(Math.atanh(0)),
+		String(Math.cbrt(27)),
+		String(Math.clz32(1)),
+		String(Math.cos(0)),
+		String(Math.cosh(0)),
+		String(Math.exp(1)),
+		String(Math.expm1(1)),
+		String(Math.fround(16777217)),
+		String(Math.hypot(3, 4)),
+		String(Math.imul(-1, 2)),
+		String(Math.log(1)),
+		String(Math.log10(1000)),
+		String(Math.log1p(1)),
+		String(Math.log2(8)),
+		String(Math.sign(-3)),
+		String(1 / Math.sign(-0)),
+		String(Math.sin(0)),
+		String(Math.sinh(0)),
+		String(Math.sqrt(9)),
+		String(Math.tan(0)),
+		String(Math.tanh(0)),
+		String(1 / Math.min(0, -0)),
+		String(1 / Math.max(-0, 0))
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	want := strings.Join([]string{
+		strconv.FormatFloat(math.Acos(1), 'f', -1, 64),
+		strconv.FormatFloat(math.Acosh(1), 'f', -1, 64),
+		strconv.FormatFloat(math.Asin(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Asinh(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Atan(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Atan2(1, 1), 'f', -1, 64),
+		strconv.FormatFloat(math.Atanh(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Cbrt(27), 'f', -1, 64),
+		strconv.FormatFloat(float64(bits.LeadingZeros32(1)), 'f', -1, 64),
+		strconv.FormatFloat(math.Cos(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Cosh(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Exp(1), 'f', -1, 64),
+		strconv.FormatFloat(math.Expm1(1), 'f', -1, 64),
+		strconv.FormatFloat(float64(float32(16777217)), 'f', -1, 64),
+		strconv.FormatFloat(math.Hypot(3, 4), 'f', -1, 64),
+		"-2",
+		strconv.FormatFloat(math.Log(1), 'f', -1, 64),
+		strconv.FormatFloat(math.Log10(1000), 'f', -1, 64),
+		strconv.FormatFloat(math.Log1p(1), 'f', -1, 64),
+		strconv.FormatFloat(math.Log2(8), 'f', -1, 64),
+		"-1",
+		"-Infinity",
+		strconv.FormatFloat(math.Sin(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Sinh(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Sqrt(9), 'f', -1, 64),
+		strconv.FormatFloat(math.Tan(0), 'f', -1, 64),
+		strconv.FormatFloat(math.Tanh(0), 'f', -1, 64),
+		"-Infinity",
+		"Infinity",
+	}, "|")
+	if got := result.String; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
 	}
 }
@@ -1099,6 +1211,18 @@ func TestRunScriptRejectsMathPowArityMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Math.pow expects 2 arguments") {
 		t.Fatalf("runScriptOnStore() error = %v, want Math.pow arity message", err)
+	}
+}
+
+func TestRunScriptRejectsMathRemainingMethodsOnObjectInput(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Math.log({})`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Math.log type failure")
+	}
+	if !strings.Contains(err.Error(), "argument must be a primitive number") {
+		t.Fatalf("runScriptOnStore() error = %v, want Math.log type message", err)
 	}
 }
 

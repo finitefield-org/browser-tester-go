@@ -90,7 +90,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `normalize()` mutation), `location` (including `assign()` / `replace()` / `reload()` and property setters with browser-style string coercion and runtime rejection of `Symbol` inputs), `history`, `navigator`, `URL` /
   `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
-  `matchMedia`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
+  `matchMedia`, `fetch()`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
   `window.crypto` / `window.hashApi`, and
   bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Uint8Array` element checks, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
@@ -99,13 +99,13 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
   `Array.isArray()`,
   `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.parseInt()` / global `parseInt()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
-  `Math.round()` / `Math.trunc()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
+  `Number.parseInt()` / global `parseInt()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
+  `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
   `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
   `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
   `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
   `String.prototype.trimEnd()` / `String.prototype.padStart()` / `String.prototype.padEnd()` /
-  `String.prototype.repeat()` / `String.prototype.toLowerCase()` / `String.prototype.toUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare()` /
+  `String.prototype.repeat()` / `String.prototype.toLowerCase()` / `String.prototype.toUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare(locale, options)` / `String.prototype.replaceAll(callback replacers)` /
   `String.prototype.startsWith()` / `String.prototype.endsWith()`,
   `Array.prototype.at()` / `Array.prototype.includes()` / `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
   `Array.prototype.findLast()` / `Array.prototype.findLastIndex()` /
@@ -121,8 +121,8 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()`, bounded `Uint8Array`
   construction from array-like / buffer values, plus `Uint8Array.from()` with map-function support,
   `JSON.stringify(value, null, space)`, bounded `Promise.resolve()`, and bounded promise-style
-  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`, with
-  rejected-promise propagation still tracked in `TODO.md`
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()` and `fetch()`,
+  including executor `reject(...)` paths and rejected-promise propagation
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:

@@ -208,7 +208,7 @@ func TestDispatchSupportsStringLocaleCompare(t *testing.T) {
 	runtime := NewRuntime(nil)
 
 	result, err := runtime.Dispatch(DispatchRequest{
-		Source: `["b".localeCompare("a"), "a".localeCompare("a"), "a".localeCompare("b")].join("|")`,
+		Source: `["b".localeCompare("a"), "a".localeCompare("a"), "a".localeCompare("b"), "ä".localeCompare("z", "sv"), "item 2".localeCompare("item 10", undefined, { numeric: true })].join("|")`,
 	})
 	if err != nil {
 		t.Fatalf("Dispatch(String.localeCompare) error = %v", err)
@@ -216,24 +216,24 @@ func TestDispatchSupportsStringLocaleCompare(t *testing.T) {
 	if result.Value.Kind != ValueKindString {
 		t.Fatalf("Dispatch(String.localeCompare) kind = %q, want %q", result.Value.Kind, ValueKindString)
 	}
-	if result.Value.String != "1|0|-1" {
-		t.Fatalf("Dispatch(String.localeCompare) value = %q, want %q", result.Value.String, "1|0|-1")
+	if result.Value.String != "1|0|-1|1|-1" {
+		t.Fatalf("Dispatch(String.localeCompare) value = %q, want %q", result.Value.String, "1|0|-1|1|-1")
 	}
 }
 
-func TestDispatchRejectsInvalidStringLocaleCompareLocales(t *testing.T) {
+func TestDispatchRejectsInvalidStringLocaleCompareOptions(t *testing.T) {
 	runtime := NewRuntime(nil)
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `"a".localeCompare("b", "en")`})
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"a".localeCompare("b", "en", "true")`})
 	if err == nil {
-		t.Fatalf("Dispatch(String.localeCompare locales) error = nil, want error")
+		t.Fatalf("Dispatch(String.localeCompare options) error = nil, want error")
 	}
 	scriptErr, ok := err.(Error)
 	if !ok {
-		t.Fatalf("Dispatch(String.localeCompare locales) error type = %T, want script.Error", err)
+		t.Fatalf("Dispatch(String.localeCompare options) error type = %T, want script.Error", err)
 	}
-	if scriptErr.Kind != ErrorKindUnsupported {
-		t.Fatalf("Dispatch(String.localeCompare locales) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.localeCompare options) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestDispatchSupportsStringReplaceAll(t *testing.T) {
 	runtime := NewRuntime(nil)
 
 	result, err := runtime.Dispatch(DispatchRequest{
-		Source: `["gooo".replaceAll("oo", "b"), "gooo".replaceAll(/o/g, "a")].join("|")`,
+		Source: `["gooo".replaceAll("oo", "b"), "gooo".replaceAll(/o/g, "a"), "gooo".replaceAll("o", (match, offset, input) => match + ":" + offset), "A1B2".replaceAll(/([A-Z])([0-9])/g, (match, letter, digit, offset, input) => letter.toLowerCase() + digit + ":" + offset)].join("|")`,
 	})
 	if err != nil {
 		t.Fatalf("Dispatch(String.replaceAll) error = %v", err)
@@ -266,8 +266,8 @@ func TestDispatchSupportsStringReplaceAll(t *testing.T) {
 	if result.Value.Kind != ValueKindString {
 		t.Fatalf("Dispatch(String.replaceAll) kind = %q, want %q", result.Value.Kind, ValueKindString)
 	}
-	if result.Value.String != "gbo|gaaa" {
-		t.Fatalf("Dispatch(String.replaceAll) value = %q, want %q", result.Value.String, "gbo|gaaa")
+	if result.Value.String != "gbo|gaaa|go:1o:2o:3|a1:0b2:2" {
+		t.Fatalf("Dispatch(String.replaceAll) value = %q, want %q", result.Value.String, "gbo|gaaa|go:1o:2o:3|a1:0b2:2")
 	}
 }
 
@@ -287,19 +287,20 @@ func TestDispatchRejectsInvalidStringReplaceAllRegexFlags(t *testing.T) {
 	}
 }
 
-func TestDispatchRejectsInvalidStringReplaceAllCallbackReplacer(t *testing.T) {
+func TestDispatchSupportsStringReplaceAllCallbackReplacer(t *testing.T) {
 	runtime := NewRuntime(nil)
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `"gooo".replaceAll("oo", (match) => match)`})
-	if err == nil {
-		t.Fatalf("Dispatch(String.replaceAll callback) error = nil, want error")
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `"gooo".replaceAll("oo", (match, offset, input) => match.toUpperCase() + ":" + offset + ":" + input).concat("|", "A1B2".replaceAll(/([A-Z])([0-9])/g, (match, letter, digit, offset, input) => letter.toLowerCase() + digit + ":" + offset))`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.replaceAll callback) error = %v", err)
 	}
-	scriptErr, ok := err.(Error)
-	if !ok {
-		t.Fatalf("Dispatch(String.replaceAll callback) error type = %T, want script.Error", err)
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.replaceAll callback) kind = %q, want %q", result.Value.Kind, ValueKindString)
 	}
-	if scriptErr.Kind != ErrorKindUnsupported {
-		t.Fatalf("Dispatch(String.replaceAll callback) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	if result.Value.String != "gOO:1:goooo|a1:0b2:2" {
+		t.Fatalf("Dispatch(String.replaceAll callback) value = %q, want %q", result.Value.String, "gOO:1:goooo|a1:0b2:2")
 	}
 }
 

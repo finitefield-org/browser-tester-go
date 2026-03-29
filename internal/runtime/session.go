@@ -48,6 +48,8 @@ type Session struct {
 	domReady                 bool
 	domErr                   error
 	focusedSelector          string
+	focusedControlValue      string
+	hasFocusedControlValue   bool
 	writingHTML              bool
 	interactions             []Interaction
 	eventListeners           []eventListenerRecord
@@ -787,6 +789,12 @@ func (s *Session) Click(selector string) (err error) {
 		Kind:     InteractionKindClick,
 		Selector: normalized,
 	})
+	if err := s.blurFocusedNodeIfNeeded(store, nodeID); err != nil {
+		return err
+	}
+	if s.domStore != nil && s.domStore != store {
+		return s.drainMicrotasks(s.domStore)
+	}
 	prevented, err := s.dispatchEventListeners(store, nodeID, "click")
 	if err != nil {
 		return err
@@ -855,27 +863,27 @@ func (s *Session) focusNode(store *dom.Store, nodeID dom.NodeID, selector string
 			s.discardMicrotasks()
 		}
 	}()
-	previousNodeID := store.FocusedNodeID()
-	if previousNodeID != 0 && previousNodeID != nodeID {
-		store.ClearFocusedNode()
-		s.focusedSelector = ""
-		if _, err := s.dispatchTargetEventListeners(store, previousNodeID, "blur"); err != nil {
-			return err
-		}
+	if err := s.blurFocusedNodeIfNeeded(store, nodeID); err != nil {
+		return err
+	}
+	if s.domStore != nil && s.domStore != store {
+		return s.drainMicrotasks(s.domStore)
 	}
 	if err := store.SetFocusedNode(nodeID); err != nil {
 		return err
 	}
-	normalized := strings.TrimSpace(selector)
-	s.focusedSelector = normalized
+	s.setFocusedState(store, nodeID, selector)
 	if recordInteraction {
 		s.interactions = append(s.interactions, Interaction{
 			Kind:     InteractionKindFocus,
-			Selector: normalized,
+			Selector: strings.TrimSpace(selector),
 		})
 	}
 	if _, err := s.dispatchTargetEventListeners(store, nodeID, "focus"); err != nil {
 		return err
+	}
+	if s.domStore != nil && s.domStore != store {
+		return s.drainMicrotasks(s.domStore)
 	}
 	return s.drainMicrotasks(store)
 }
@@ -891,7 +899,7 @@ func (s *Session) blurNode(store *dom.Store, nodeID dom.NodeID, selector string,
 		})
 	}
 	if store == nil || nodeID == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 		return nil
 	}
 	defer func() {
@@ -899,12 +907,88 @@ func (s *Session) blurNode(store *dom.Store, nodeID dom.NodeID, selector string,
 			s.discardMicrotasks()
 		}
 	}()
+	dispatchChange := s.shouldDispatchChangeOnBlur(store, nodeID)
 	store.ClearFocusedNode()
-	s.focusedSelector = ""
+	s.clearFocusedState()
 	if _, err := s.dispatchTargetEventListeners(store, nodeID, "blur"); err != nil {
 		return err
 	}
+	if s.domStore != nil && s.domStore != store {
+		return s.drainMicrotasks(s.domStore)
+	}
+	if dispatchChange {
+		if _, err := s.dispatchEventListeners(store, nodeID, "change"); err != nil {
+			return err
+		}
+		if s.domStore != nil && s.domStore != store {
+			return s.drainMicrotasks(s.domStore)
+		}
+	}
 	return s.drainMicrotasks(store)
+}
+
+func (s *Session) blurFocusedNodeIfNeeded(store *dom.Store, targetNodeID dom.NodeID) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	if store == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	focusedNodeID := store.FocusedNodeID()
+	if focusedNodeID == 0 || focusedNodeID == targetNodeID {
+		return nil
+	}
+	return s.blurNode(store, focusedNodeID, s.focusedSelector, false)
+}
+
+func (s *Session) setFocusedState(store *dom.Store, nodeID dom.NodeID, selector string) {
+	if s == nil {
+		return
+	}
+	s.focusedSelector = strings.TrimSpace(selector)
+	if store == nil || !shouldCommitFormControlChangeOnBlur(store, nodeID) {
+		s.focusedControlValue = ""
+		s.hasFocusedControlValue = false
+		return
+	}
+	s.focusedControlValue = store.ValueForNode(nodeID)
+	s.hasFocusedControlValue = true
+}
+
+func (s *Session) clearFocusedState() {
+	if s == nil {
+		return
+	}
+	s.focusedSelector = ""
+	s.focusedControlValue = ""
+	s.hasFocusedControlValue = false
+}
+
+func (s *Session) shouldDispatchChangeOnBlur(store *dom.Store, nodeID dom.NodeID) bool {
+	if s == nil || store == nil || nodeID == 0 || !s.hasFocusedControlValue {
+		return false
+	}
+	if !shouldCommitFormControlChangeOnBlur(store, nodeID) {
+		return false
+	}
+	return store.ValueForNode(nodeID) != s.focusedControlValue
+}
+
+func shouldCommitFormControlChangeOnBlur(store *dom.Store, nodeID dom.NodeID) bool {
+	if store == nil || nodeID == 0 {
+		return false
+	}
+	node := store.Node(nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return false
+	}
+	if node.TagName == "textarea" {
+		return true
+	}
+	if node.TagName != "input" {
+		return false
+	}
+	return isTextInputType(inputType(node))
 }
 
 func defaultFocusedSelectorForNode(store *dom.Store, nodeID dom.NodeID) string {

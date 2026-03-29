@@ -703,6 +703,7 @@ func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Val
 			cloned := value
 			cloned.PromiseState = &classicJSPromiseState{
 				resolved: true,
+				rejected: value.PromiseState.rejected,
 				value:    next,
 			}
 			return cloned, true
@@ -854,6 +855,7 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 			cloned := value
 			cloned.PromiseState = &classicJSPromiseState{
 				resolved: true,
+				rejected: value.PromiseState.rejected,
 				value:    next,
 			}
 			return cloned, true

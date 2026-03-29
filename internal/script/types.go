@@ -209,6 +209,18 @@ func PromiseValue(value Value) Value {
 	}
 }
 
+func RejectedPromiseValue(reason Value) Value {
+	copied := reason
+	return Value{
+		Kind: ValueKindPromise,
+		PromiseState: &classicJSPromiseState{
+			resolved: true,
+			rejected: true,
+			value:    copied,
+		},
+	}
+}
+
 func PendingPromiseValue(state *classicJSPromiseState) Value {
 	return Value{
 		Kind:         ValueKindPromise,
@@ -219,6 +231,11 @@ func PendingPromiseValue(state *classicJSPromiseState) Value {
 func NewPendingPromise() (Value, func(Value)) {
 	state := &classicJSPromiseState{}
 	return PendingPromiseValue(state), state.resolve
+}
+
+func NewPendingPromiseWithReject() (Value, func(Value), func(Value)) {
+	state := &classicJSPromiseState{}
+	return PendingPromiseValue(state), state.resolve, state.reject
 }
 
 func InvocationValue(source string) Value {
@@ -329,6 +346,62 @@ func unwrapPromiseValue(value Value) Value {
 		value = *value.Promise
 	}
 	return value
+}
+
+func promiseHandlerIsAbsent(value Value) bool {
+	return value.Kind == ValueKindUndefined || value.Kind == ValueKindNull
+}
+
+func promiseSettlement(value Value) (settled bool, rejected bool, settlement Value) {
+	if value.Kind != ValueKindPromise {
+		return false, false, UndefinedValue()
+	}
+	if value.PromiseState != nil {
+		if !value.PromiseState.resolved {
+			return false, false, UndefinedValue()
+		}
+		return true, value.PromiseState.rejected, value.PromiseState.value
+	}
+	if value.Promise == nil {
+		return false, false, UndefinedValue()
+	}
+	return true, false, *value.Promise
+}
+
+func promiseValueFromState(state *classicJSPromiseState) Value {
+	if state == nil || !state.resolved {
+		return PendingPromiseValue(state)
+	}
+	if state.rejected {
+		return RejectedPromiseValue(state.value)
+	}
+	return PromiseValue(state.value)
+}
+
+func settlePromiseFromResult(target *classicJSPromiseState, result Value) bool {
+	if target == nil {
+		return false
+	}
+	if pendingPromise, ok := pendingPromiseState(result); ok {
+		pendingPromise.addWaiter(func(next Value, rejected bool) {
+			if rejected {
+				target.reject(next)
+				return
+			}
+			target.resolve(unwrapPromiseValue(next))
+		})
+		return true
+	}
+	if settled, rejected, settlement := promiseSettlement(result); settled {
+		if rejected {
+			target.reject(settlement)
+		} else {
+			target.resolve(unwrapPromiseValue(settlement))
+		}
+		return false
+	}
+	target.resolve(unwrapPromiseValue(result))
+	return false
 }
 
 func pendingPromiseState(value Value) (*classicJSPromiseState, bool) {

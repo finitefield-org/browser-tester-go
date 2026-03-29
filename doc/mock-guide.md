@@ -7,6 +7,10 @@ detail, and they are not a loose bag of `Set*` helpers.
 needs deterministic network, dialogs, clipboard, location, open/close/print/scroll, matchMedia,
 download, file-input, or storage behavior.
 
+The `Fetch` family also backs browser-global `fetch()` calls in raw HTML / inline scripts, so the
+same response and error rules apply whether the request comes from `Harness.Fetch()` or script
+code.
+
 ## Current Mock Families
 
 - `Fetch`

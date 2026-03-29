@@ -52,7 +52,7 @@ func (s *Session) SetInnerHTML(selector, markup string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func (s *Session) ReplaceChildren(selector, markup string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -114,7 +114,7 @@ func (s *Session) ReplaceWith(selector, markup string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -131,7 +131,7 @@ func (s *Session) SetTextContent(selector, text string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -148,7 +148,7 @@ func (s *Session) SetOuterHTML(selector, markup string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -176,7 +176,7 @@ func (s *Session) RemoveNode(selector string) error {
 		return err
 	}
 	if store.FocusedNodeID() == 0 || normalized == s.focusedSelector {
-		s.focusedSelector = ""
+		s.clearFocusedState()
 	}
 	return nil
 }
@@ -212,6 +212,8 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevReady := s.domReady
 	prevErr := s.domErr
 	prevFocused := s.focusedSelector
+	prevFocusedControlValue := s.focusedControlValue
+	prevHasFocusedControlValue := s.hasFocusedControlValue
 	prevListeners := append([]eventListenerRecord(nil), s.eventListeners...)
 	prevNextEventListenerID := s.nextEventListenerID
 	prevDispatch := s.eventDispatch
@@ -262,6 +264,8 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.domReady = prevReady
 			s.domErr = prevErr
 			s.focusedSelector = prevFocused
+			s.focusedControlValue = prevFocusedControlValue
+			s.hasFocusedControlValue = prevHasFocusedControlValue
 			s.eventListeners = prevListeners
 			s.nextEventListenerID = prevNextEventListenerID
 			s.eventDispatch = prevDispatch
@@ -305,7 +309,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	s.domStore = store
 	s.domReady = true
 	s.domErr = nil
-	s.focusedSelector = ""
+	s.clearFocusedState()
 	s.eventListeners = nil
 	s.nextEventListenerID = 0
 	s.eventDispatch = nil

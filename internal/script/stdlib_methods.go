@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"browsertester/internal/collation"
 )
 
 func (p *classicJSStatementParser) invokeCallableValue(callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
@@ -705,18 +707,27 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 		}), true, nil
 	case "localeCompare":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
-			if len(args) > 1 {
-				for _, arg := range args[1:] {
-					if arg.Kind != ValueKindUndefined {
-						return UndefinedValue(), NewError(ErrorKindUnsupported, "String.localeCompare locale/options are not supported in this bounded classic-JS slice")
-					}
-				}
-			}
 			target := "undefined"
 			if len(args) > 0 {
 				target = ToJSString(args[0])
 			}
-			return NumberValue(float64(strings.Compare(value.String, target))), nil
+			locale := "en-US"
+			if len(args) > 1 && args[1].Kind != ValueKindUndefined && args[1].Kind != ValueKindNull {
+				locale = strings.TrimSpace(ToJSString(args[1]))
+			}
+			numeric := false
+			if len(args) > 2 && args[2].Kind != ValueKindUndefined && args[2].Kind != ValueKindNull {
+				if args[2].Kind != ValueKindObject {
+					return UndefinedValue(), NewError(ErrorKindRuntime, "String.localeCompare options argument must be an object")
+				}
+				if option, ok := lookupObjectProperty(args[2].Object, "numeric"); ok {
+					if option.Kind != ValueKindBool {
+						return UndefinedValue(), NewError(ErrorKindRuntime, "String.localeCompare numeric must be a boolean")
+					}
+					numeric = option.Bool
+				}
+			}
+			return NumberValue(float64(collation.Compare(value.String, target, locale, numeric))), nil
 		}), true, nil
 	case "replace":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -759,7 +770,25 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				return UndefinedValue(), NewError(ErrorKindRuntime, "String.replaceAll expects 2 arguments")
 			}
 			if args[1].Kind == ValueKindFunction || args[1].Kind == ValueKindHostReference {
-				return UndefinedValue(), NewError(ErrorKindUnsupported, "String.replaceAll only supports string replacements in this bounded classic-JS slice")
+				if compiled, flags, ok, err := classicJSRegExpValue(args[0]); ok || err != nil {
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					if !strings.Contains(flags, "g") {
+						return UndefinedValue(), NewError(ErrorKindRuntime, "String.replaceAll requires a global regular expression")
+					}
+					updated, err := replaceRegexpWithCallback(p.host, compiled, value.String, args[1], true)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					return StringValue(updated), nil
+				}
+				search := ToJSString(args[0])
+				updated, err := replaceStringAllWithCallback(p.host, value.String, search, args[1])
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				return StringValue(updated), nil
 			}
 			replacement := ToJSString(args[1])
 			if compiled, flags, ok, err := classicJSRegExpValue(args[0]); ok || err != nil {
@@ -1433,6 +1462,7 @@ func (p *classicJSStatementParser) resolvePromisePrototypeMethod(value Value, na
 
 	resolved := unwrapPromiseValue(value)
 	pending, isPending := pendingPromiseState(value)
+	_, rejected, settledValue := promiseSettlement(value)
 
 	switch name {
 	case "then":
@@ -1440,54 +1470,110 @@ func (p *classicJSStatementParser) resolvePromisePrototypeMethod(value Value, na
 			if len(args) > 2 {
 				return UndefinedValue(), fmt.Errorf("Promise.then accepts at most 2 arguments")
 			}
+			handlerAbsent := func(index int) bool {
+				return len(args) <= index || promiseHandlerIsAbsent(args[index])
+			}
+
+			chainHandlerResult := func(result Value) (Value, error) {
+				resultPromise := &classicJSPromiseState{}
+				if settlePromiseFromResult(resultPromise, result) {
+					return PendingPromiseValue(resultPromise), nil
+				}
+				return promiseValueFromState(resultPromise), nil
+			}
+
 			if !isPending || pending == nil {
-				if len(args) == 0 || args[0].Kind == ValueKindUndefined || args[0].Kind == ValueKindNull {
+				if rejected {
+					if handlerAbsent(1) {
+						return RejectedPromiseValue(settledValue), nil
+					}
+					result, err := p.invokeCallableValue(args[1], []Value{settledValue}, UndefinedValue(), false)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					return chainHandlerResult(result)
+				}
+				if handlerAbsent(0) {
 					return PromiseValue(resolved), nil
 				}
 				result, err := p.invokeCallableValue(args[0], []Value{resolved}, UndefinedValue(), false)
 				if err != nil {
 					return UndefinedValue(), err
 				}
-				return PromiseValue(unwrapPromiseValue(result)), nil
+				return chainHandlerResult(result)
 			}
 
 			resultPromise := &classicJSPromiseState{}
-			fulfill := func(resolvedValue Value) {
-				if len(args) == 0 || args[0].Kind == ValueKindUndefined || args[0].Kind == ValueKindNull {
+			pending.addWaiter(func(resolvedValue Value, rejected bool) {
+				if rejected {
+					if handlerAbsent(1) {
+						resultPromise.reject(resolvedValue)
+						return
+					}
+					result, err := p.invokeCallableValue(args[1], []Value{resolvedValue}, UndefinedValue(), false)
+					if err != nil {
+						resultPromise.reject(rejectionReasonFromError(err))
+						return
+					}
+					settlePromiseFromResult(resultPromise, result)
+					return
+				}
+				if handlerAbsent(0) {
 					resultPromise.resolve(unwrapPromiseValue(resolvedValue))
 					return
 				}
 				result, err := p.invokeCallableValue(args[0], []Value{unwrapPromiseValue(resolvedValue)}, UndefinedValue(), false)
 				if err != nil {
-					resultPromise.resolve(UndefinedValue())
+					resultPromise.reject(rejectionReasonFromError(err))
 					return
 				}
-				if chainedPromise, ok := pendingPromiseState(result); ok {
-					chainedPromise.addWaiter(func(next Value) {
-						resultPromise.resolve(unwrapPromiseValue(next))
-					})
-					return
-				}
-				resultPromise.resolve(unwrapPromiseValue(result))
-			}
-			pending.addWaiter(func(resolvedValue Value) {
-				fulfill(resolvedValue)
+				settlePromiseFromResult(resultPromise, result)
 			})
-			return PendingPromiseValue(resultPromise), nil
+			return promiseValueFromState(resultPromise), nil
 		}), true, nil
 	case "catch":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) > 1 {
 				return UndefinedValue(), fmt.Errorf("Promise.catch accepts at most 1 argument")
 			}
+			handlerAbsent := func(index int) bool {
+				return len(args) <= index || promiseHandlerIsAbsent(args[index])
+			}
 			if !isPending || pending == nil {
-				return PromiseValue(resolved), nil
+				if !rejected {
+					return PromiseValue(resolved), nil
+				}
+				if handlerAbsent(0) {
+					return RejectedPromiseValue(settledValue), nil
+				}
+				result, err := p.invokeCallableValue(args[0], []Value{settledValue}, UndefinedValue(), false)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				resultPromise := &classicJSPromiseState{}
+				if settlePromiseFromResult(resultPromise, result) {
+					return PendingPromiseValue(resultPromise), nil
+				}
+				return promiseValueFromState(resultPromise), nil
 			}
 			resultPromise := &classicJSPromiseState{}
-			pending.addWaiter(func(resolvedValue Value) {
-				resultPromise.resolve(unwrapPromiseValue(resolvedValue))
+			pending.addWaiter(func(resolvedValue Value, rejected bool) {
+				if !rejected {
+					resultPromise.resolve(unwrapPromiseValue(resolvedValue))
+					return
+				}
+				if handlerAbsent(0) {
+					resultPromise.reject(resolvedValue)
+					return
+				}
+				result, err := p.invokeCallableValue(args[0], []Value{resolvedValue}, UndefinedValue(), false)
+				if err != nil {
+					resultPromise.reject(rejectionReasonFromError(err))
+					return
+				}
+				settlePromiseFromResult(resultPromise, result)
 			})
-			return PendingPromiseValue(resultPromise), nil
+			return promiseValueFromState(resultPromise), nil
 		}), true, nil
 	}
 
@@ -1603,6 +1689,48 @@ func replaceStringWithCallback(host HostBindings, input, search string, replacer
 		return "", err
 	}
 	return input[:index] + replacement + input[index+len(search):], nil
+}
+
+func replaceStringAllWithCallback(host HostBindings, input, search string, replacer Value) (string, error) {
+	if search == "" {
+		var b strings.Builder
+		replacement, err := invokeStringReplaceCallback(host, replacer, input, search, 0, 0, nil)
+		if err != nil {
+			return "", err
+		}
+		b.Grow(len(input) + len(replacement))
+		b.WriteString(replacement)
+		for offset := 0; offset < len(input); {
+			_, size := utf8.DecodeRuneInString(input[offset:])
+			b.WriteString(input[offset : offset+size])
+			offset += size
+			replacement, err := invokeStringReplaceCallback(host, replacer, input, search, offset, offset, nil)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(replacement)
+		}
+		return b.String(), nil
+	}
+
+	var b strings.Builder
+	last := 0
+	for {
+		index := strings.Index(input[last:], search)
+		if index < 0 {
+			break
+		}
+		index += last
+		b.WriteString(input[last:index])
+		replacement, err := invokeStringReplaceCallback(host, replacer, input, search, index, index+len(search), nil)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(replacement)
+		last = index + len(search)
+	}
+	b.WriteString(input[last:])
+	return b.String(), nil
 }
 
 func replaceRegexpWithCallback(host HostBindings, compiled *regexp.Regexp, input string, replacer Value, global bool) (string, error) {

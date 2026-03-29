@@ -94,6 +94,22 @@ func resolveElementPlaceholderValue(session *Session, store *dom.Store, nodeID d
 	return script.StringValue(value), nil
 }
 
+func resolveElementLangValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".lang"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	value, ok := domAttributeValue(store, nodeID, "lang")
+	if !ok {
+		return script.StringValue(""), nil
+	}
+	return script.StringValue(value), nil
+}
+
 func resolveElementDisabledValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
 	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".disabled"
 	if session == nil || store == nil {

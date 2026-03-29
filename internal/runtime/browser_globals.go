@@ -38,11 +38,12 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"String":                script.HostFunctionReference("String"),
 		"Boolean":               script.HostFunctionReference("Boolean"),
 		"NaN":                   script.NumberValue(math.NaN()),
+		"Infinity":              script.NumberValue(math.Inf(1)),
 		"HTMLElement":           script.HostConstructorReference("HTMLElement"),
 		"HTMLButtonElement":     script.HostConstructorReference("HTMLButtonElement"),
 		"HTMLSelectElement":     script.HostConstructorReference("HTMLSelectElement"),
 		"Math":                  script.HostObjectReference("Math"),
-		"Date":                  script.HostFunctionReference("Date"),
+		"Date":                  script.HostConstructorReference("Date"),
 		"window":                windowRef,
 		"self":                  windowRef,
 		"globalThis":            windowRef,
@@ -62,6 +63,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"Intl":                  intlRef,
 		"localStorage":          localStorageRef,
 		"sessionStorage":        sessionStorageRef,
+		"fetch":                 script.HostFunctionReference("fetch"),
 		"matchMedia":            script.HostFunctionReference("matchMedia"),
 		"addEventListener":      script.HostFunctionReference("addEventListener"),
 		"removeEventListener":   script.HostFunctionReference("removeEventListener"),
@@ -127,6 +129,10 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 
 	if normalized == "document.all" {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", normalized))
+	}
+
+	if normalized == "fetch" {
+		return resolveFetchReference(session)
 	}
 
 	if session != nil {
@@ -1152,6 +1158,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementDownloadValue(session, store, nodeID)
 	case "placeholder":
 		return resolveElementPlaceholderValue(session, store, nodeID)
+	case "lang":
+		return resolveElementLangValue(session, store, nodeID)
 	case "files":
 		return resolveElementFilesValue(session, store, nodeID)
 	case "classList":
