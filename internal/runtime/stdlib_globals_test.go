@@ -977,6 +977,27 @@ func TestRunScriptSupportsSetConstructorAndMethods(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsSetConstructorIterableInputs(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		const empty = new Set();
+		const copied = new Set(new Set(["alpha", "alpha", "beta"]));
+		const params = new URLSearchParams("u=metric&h=3.2&s=4.0");
+		const fromParams = new Set(params.keys());
+		[String(empty.size), Array.from(copied).join(","), Array.from(fromParams).join(",")].join("|")
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "0|alpha,beta|u,h,s"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptSupportsArrayFromSet(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -1076,6 +1097,18 @@ func TestRunScriptSupportsDateUTC(t *testing.T) {
 	want := time.Date(2026, time.January, 21, 8, 45, 0, 0, time.UTC).UnixMilli()
 	if got := int64(result.Number); got != want {
 		t.Fatalf("runScriptOnStore() value = %d, want %d", got, want)
+	}
+}
+
+func TestRunScriptRejectsSetConstructorNullIterable(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Set(null)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want null iterable failure")
+	}
+	if !strings.Contains(err.Error(), "Set constructor cannot iterate over null") {
+		t.Fatalf("runScriptOnStore() error = %v, want null iterable failure message", err)
 	}
 }
 

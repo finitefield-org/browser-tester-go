@@ -38,6 +38,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
 - Phase 0 scaffold is present, and the module builds with skeleton tests.
 - The public facade remains thin, with the main behavior split across DOM, runtime, script, and
   mock subsystems.
+- The mock registry now covers fetch, external JS dependency loads, dialogs, clipboard,
+  navigator, location, open/close/print/scroll, matchMedia, downloads, file input, and storage.
 - `DebugView` is read-only and exists for DOM, runtime, and trace inspection rather than as an
   action surface.
 - The detailed capability map is maintained in `capability-matrix.md`, and the remaining

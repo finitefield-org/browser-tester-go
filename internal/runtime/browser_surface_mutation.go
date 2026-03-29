@@ -476,10 +476,7 @@ func browserElementToggleAttribute(session *Session, store *dom.Store, nodeID do
 	force := false
 	hasForce := false
 	if len(args) == 2 {
-		force, err = scriptBoolArg("element.toggleAttribute", args, 1)
-		if err != nil {
-			return script.UndefinedValue(), err
-		}
+		force = jsTruthyValue(args[1])
 		hasForce = true
 	}
 	ok, err := store.ToggleAttribute(nodeID, name, force, hasForce)

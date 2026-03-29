@@ -186,6 +186,24 @@ func TestSessionBootstrapsNumberParseIntSurface(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsNumberParseFloatSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const a = Number.parseFloat("3.2"); const b = parseFloat("4.5"); document.getElementById("out").textContent = [a, b].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "3.2|4.5" {
+		t.Fatalf("TextContent(#out) = %q, want 3.2|4.5", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Number.parseFloat bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNumberIsIntegerSurface(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Number.isInteger(42), Number.isInteger(1.5), Number.isInteger(Number.NaN), Number.isInteger("42")].join("|")</script></main>`
 
@@ -1433,6 +1451,24 @@ func TestSessionBootstrapsObjectKeysForEachMergeCounts(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsDeleteComputedKeysOnConstObjectBindings(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const keys = { lot: "lot", harvestDate: "harvestDate", fieldId: "fieldId", item: "item", grade: "grade" }; const payload = { [keys.lot]: "2026-0205-F12-A", [keys.harvestDate]: "", [keys.fieldId]: "", [keys.item]: "", [keys.grade]: "" }; Object.keys(payload).forEach((key) => { if (payload[key] === "" || payload[key] == null) delete payload[key]; }); document.getElementById("out").textContent = JSON.stringify(payload)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `{"lot":"2026-0205-F12-A"}` {
+		t.Fatalf("TextContent(#out) = %q, want omitted empty fields", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after const delete bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsFormulaParserWithoutClick(t *testing.T) {
 	const rawHTML = `
 		<main>
@@ -1913,6 +1949,24 @@ func TestSessionBootstrapsClickHandlerWithTimersCanUseStorageAndClassList(t *tes
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after click timer bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsFunctionOwnPropertyAssignmentOnLocalFunctions(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>function showToast(message) { showToast._timer = message; document.getElementById("out").textContent = showToast._timer; } showToast("done");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "done" {
+		t.Fatalf("TextContent(#out) = %q, want done", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after function property bootstrap", got)
 	}
 }
 
@@ -2972,7 +3026,7 @@ func TestSessionBootstrapsElementDatasetReadsWritesAndDeletes(t *testing.T) {
 }
 
 func TestSessionBootstrapsElementToggleAttribute(t *testing.T) {
-	const rawHTML = `<main><button id="mode"></button><div id="probe"></div><script>const button = document.querySelector("#mode"); const first = button.toggleAttribute("data-active"); const second = button.toggleAttribute("data-active"); const third = button.toggleAttribute("data-active", true); const fourth = button.toggleAttribute("data-active", false); host:setTextContent("#probe", expr([first, second, third, fourth, button.hasAttribute("data-active")].join("|")))</script></main>`
+	const rawHTML = `<main><button id="mode"></button><div id="probe"></div><script>const button = document.querySelector("#mode"); const first = button.toggleAttribute("data-active"); const second = button.toggleAttribute("data-active"); const third = button.toggleAttribute("data-active", "yes"); const fourth = button.toggleAttribute("data-active", 0); host:setTextContent("#probe", expr([first, second, third, fourth, button.hasAttribute("data-active")].join("|")))</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -3096,10 +3150,12 @@ func TestSessionRejectsElementGetAttributeNodeWithWrongArity(t *testing.T) {
 	}
 }
 
-func TestSessionBootstrapsTemplateLocaleAndOptionalWindowGlobals(t *testing.T) {
-	const rawHTML = `<main><div id="locale"></div><div id="stamp"></div><script>const locale = navigator.language || "en-US"; const stamp = new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(1700000000000)); if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); } host:setTextContent("#locale", expr(locale)); host:setTextContent("#stamp", expr(stamp))</script></main>`
+func TestSessionBootstrapsTemplateLocaleAndExternalWindowGlobals(t *testing.T) {
+	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
+	rawHTML := `<main><div id="locale"></div><div id="stamp"></div><div id="icons"></div><script src="` + scriptURL + `"></script><script>const locale = navigator.language || "en-US"; const stamp = new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(1700000000000)); if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); } host:setTextContent("#locale", expr(locale)); host:setTextContent("#stamp", expr(stamp))</script></main>`
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
+	session.Registry().ExternalJS().RespondSource(scriptURL, `window.lucide = { createIcons: function () { document.getElementById("icons").textContent = "loaded"; } };`)
 	if _, err := session.ensureDOM(); err != nil {
 		t.Fatalf("ensureDOM() error = %v", err)
 	}
@@ -3114,8 +3170,31 @@ func TestSessionBootstrapsTemplateLocaleAndOptionalWindowGlobals(t *testing.T) {
 	} else if got != "11/14/2023, 10:13 PM" {
 		t.Fatalf("TextContent(#stamp) = %q, want 11/14/2023, 10:13 PM", got)
 	}
+	if got, err := session.TextContent("#icons"); err != nil {
+		t.Fatalf("TextContent(#icons) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#icons) = %q, want loaded", got)
+	}
+	if got := session.Registry().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
+	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after optional browser globals bootstrap", got)
+	}
+}
+
+func TestSessionRejectsUnmockedExternalScriptSrc(t *testing.T) {
+	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
+	rawHTML := `<main><script src="` + scriptURL + `"></script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want external JS mock failure")
+	} else if !strings.Contains(err.Error(), "no external JS mock configured") {
+		t.Fatalf("ensureDOM() error = %v, want external JS mock failure text", err)
+	}
+	if got := session.DOMError(); !strings.Contains(got, "no external JS mock configured") {
+		t.Fatalf("DOMError() = %q, want external JS mock failure text", got)
 	}
 }
 
@@ -3288,6 +3367,42 @@ func TestSessionBootstrapsArrayFromSet(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsSetConstructorIterableInputs(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const empty = new Set(); const copy = new Set(new Set(["alpha", "alpha", "beta"])); const params = new URLSearchParams("u=metric&h=3.2&s=4.0"); const fromKeys = new Set(params.keys()); document.getElementById("out").textContent = [String(empty.size), Array.from(copy).join(","), Array.from(fromKeys).join(",")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0|alpha,beta|u,h,s" {
+		t.Fatalf("TextContent(#out) = %q, want 0|alpha,beta|u,h,s", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Set constructor iterable bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsArraySpreadFromSet(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [...new Set(["alpha", "alpha", "beta"])].join(",")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "alpha,beta" {
+		t.Fatalf("TextContent(#out) = %q, want alpha,beta", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after array spread from Set bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNullishTimerCleanupNoop(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>clearTimeout(null); clearInterval(undefined); document.getElementById("out").textContent = "ok"</script></main>`
 
@@ -3362,6 +3477,24 @@ func TestSessionBootstrapsTemplateURLAndSearchParamsBridge(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after URL/searchParams bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsArrayFromURLSearchParamsKeysIterator(t *testing.T) {
+	const rawHTML = `<main><div id="keys"></div><script>const params = new URLSearchParams("u=metric&h=3.2&s=4.0"); host:setTextContent("#keys", expr(Array.from(params.keys()).join(",")))</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#keys"); err != nil {
+		t.Fatalf("TextContent(#keys) error = %v", err)
+	} else if got != "u,h,s" {
+		t.Fatalf("TextContent(#keys) = %q, want u,h,s", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Array.from(URLSearchParams.keys()) bootstrap", got)
 	}
 }
 

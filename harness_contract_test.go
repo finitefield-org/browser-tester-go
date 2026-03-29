@@ -2522,6 +2522,66 @@ func TestFetchMockSnapshotsReturnCopies(t *testing.T) {
 	}
 }
 
+func TestExternalJSMockSnapshotsReturnCopies(t *testing.T) {
+	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
+	harness, err := FromHTML(`<main><div id="out"></div><script src="` + scriptURL + `"></script><script>if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); }</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	harness.Mocks().ExternalJS().RespondSource(scriptURL, `window.lucide = { createIcons: function () { document.getElementById("out").textContent = "loaded"; } };`)
+	harness.Mocks().ExternalJS().Fail("https://cdn.jsdelivr.net/npm/other.js", "blocked")
+	if err := harness.WriteHTML(harness.HTML()); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#out) = %q, want loaded", got)
+	}
+
+	if got := harness.Mocks().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
+	}
+	gotCalls := harness.Mocks().ExternalJS().Calls()
+	gotCalls[0].URL = "mutated"
+	gotCalls = append(gotCalls, ExternalJSCall{URL: "extra"})
+
+	sources := harness.Mocks().ExternalJS().Sources()
+	if len(sources) != 1 || sources[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Sources() = %#v, want one source rule", sources)
+	}
+	sources[0].URL = "mutated"
+	sources[0].Source = "mutated"
+	sources = append(sources, ExternalJSSourceRule{URL: "extra", Source: "extra"})
+
+	errors := harness.Mocks().ExternalJS().Errors()
+	if len(errors) != 1 || errors[0].URL != "https://cdn.jsdelivr.net/npm/other.js" || errors[0].Message != "blocked" {
+		t.Fatalf("ExternalJS().Errors() = %#v, want one error rule", errors)
+	}
+	errors[0].URL = "mutated"
+	errors[0].Message = "mutated"
+	errors = append(errors, ExternalJSErrorRule{URL: "extra", Message: "extra"})
+
+	freshCalls := harness.Mocks().ExternalJS().Calls()
+	if len(freshCalls) != 1 || freshCalls[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() reread = %#v, want original entry", freshCalls)
+	}
+	freshSources := harness.Mocks().ExternalJS().Sources()
+	if len(freshSources) != 1 || freshSources[0].URL != scriptURL || freshSources[0].Source != `window.lucide = { createIcons: function () { document.getElementById("out").textContent = "loaded"; } };` {
+		t.Fatalf("ExternalJS().Sources() reread = %#v, want original source rule", freshSources)
+	}
+	freshErrors := harness.Mocks().ExternalJS().Errors()
+	if len(freshErrors) != 1 || freshErrors[0].URL != "https://cdn.jsdelivr.net/npm/other.js" || freshErrors[0].Message != "blocked" {
+		t.Fatalf("ExternalJS().Errors() reread = %#v, want original error rule", freshErrors)
+	}
+
+	var nilHarness *Harness
+	if got := nilHarness.Mocks().ExternalJS(); got != nil {
+		t.Fatalf("nil Harness.Mocks().ExternalJS() = %#v, want nil", got)
+	}
+}
+
 func TestDebugViewReportsFetchCalls(t *testing.T) {
 	harness, err := FromHTML(`<main></main>`)
 	if err != nil {

@@ -120,6 +120,65 @@ func FuzzFetchFamilyResolutionModel(f *testing.F) {
 	})
 }
 
+func FuzzExternalJSFamilyResolutionModel(f *testing.F) {
+	seeds := [][]byte{
+		nil,
+		[]byte("external-js"),
+		[]byte{0, 1, 2, 3, 4, 5, 6, 7, 8},
+	}
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		const url = "https://cdn.example.test/lucide.js"
+		var family ExternalJSFamily
+
+		var wantSource string
+		var wantErr string
+		var sawSource bool
+		var sawFailure bool
+		for i, b := range data {
+			source := fmt.Sprintf("source-%02x-%d", b, i)
+			message := fmt.Sprintf("failure-%02x-%d", b, i)
+
+			if b%2 == 0 {
+				family.RespondSource(url, source)
+				wantSource = source
+				sawSource = true
+			} else {
+				family.Fail(url, message)
+				wantErr = message
+				sawFailure = true
+			}
+		}
+
+		source, err := family.Resolve(url)
+		if sawFailure {
+			if err == nil || err.Error() != wantErr {
+				t.Fatalf("Resolve() error = %v, want %q", err, wantErr)
+			}
+			if source != "" {
+				t.Fatalf("Resolve() = %q on failure, want empty source", source)
+			}
+		} else if sawSource {
+			if err != nil {
+				t.Fatalf("Resolve() error = %v, want nil", err)
+			}
+			if source != wantSource {
+				t.Fatalf("Resolve() = %q, want %q", source, wantSource)
+			}
+		} else if err == nil {
+			t.Fatalf("Resolve() error = nil for unconfigured URL, want missing rule error")
+		}
+
+		calls := family.Calls()
+		if len(calls) != 1 || calls[0].URL != url {
+			t.Fatalf("Calls() = %#v, want one resolve call for %q", calls, url)
+		}
+	})
+}
+
 func FuzzDialogFamilyQueueOrder(f *testing.F) {
 	seeds := [][]byte{
 		nil,
@@ -637,13 +696,18 @@ func seedRegistryState(r *Registry, step int, b byte) {
 	query := fmt.Sprintf("(prefers-color-scheme: %02x)", b)
 	fileName := fmt.Sprintf("file-%02x-%d.txt", b, step)
 	selector := fmt.Sprintf("#input-%02x-%d", b, step)
+	scriptURL := fmt.Sprintf("https://cdn.example.test/%02x/%d.js", b, step)
 
-	switch b % 10 {
+	switch b % 11 {
 	case 0:
 		r.Fetch().RespondText(url, 200, value)
 		r.Fetch().Fail(url, "fetch blocked")
 		_, _, _ = r.Fetch().Resolve(url)
 	case 1:
+		r.ExternalJS().RespondSource(scriptURL, value)
+		r.ExternalJS().Fail(scriptURL, "external JS blocked")
+		_, _ = r.ExternalJS().Resolve(scriptURL)
+	case 2:
 		r.Dialogs().QueueConfirm(b%2 == 0)
 		r.Dialogs().QueuePromptText(value)
 		r.Dialogs().QueuePromptCancel()
@@ -651,15 +715,15 @@ func seedRegistryState(r *Registry, step int, b byte) {
 		r.Dialogs().RecordConfirm(value)
 		r.Dialogs().RecordPrompt(value)
 		_, _, _ = r.Dialogs().TakePrompt()
-	case 2:
+	case 3:
 		r.Clipboard().SeedText(value)
 		r.Clipboard().RecordWrite(value + "-write")
-	case 3:
-		r.Navigator().SeedLanguage(value)
 	case 4:
+		r.Navigator().SeedLanguage(value)
+	case 5:
 		r.Location().SetCurrentURL(url)
 		r.Location().RecordNavigation(url + "#next")
-	case 5:
+	case 6:
 		r.Open().Fail("open blocked")
 		_ = r.Open().Invoke(url)
 		r.Close().Fail("close blocked")
@@ -668,14 +732,14 @@ func seedRegistryState(r *Registry, step int, b byte) {
 		_ = r.Print().Invoke()
 		r.Scroll().Fail("scroll blocked")
 		_ = r.Scroll().Invoke("to", int64(step), int64(b))
-	case 6:
+	case 7:
 		r.MatchMedia().RespondMatches(query, b%2 == 0)
 		r.MatchMedia().RecordCall(query)
 		r.MatchMedia().RecordListenerCall(query, "change")
 		_, _ = r.MatchMedia().Resolve(query)
-	case 7:
-		r.Downloads().Capture(fileName, []byte(value))
 	case 8:
+		r.Downloads().Capture(fileName, []byte(value))
+	case 9:
 		r.FileInput().SetFiles(selector, []string{fileName, value})
 	default:
 		r.Storage().SeedLocal(key, value)
@@ -695,6 +759,15 @@ func assertRegistrySnapshotCopies(t *testing.T, r *Registry) {
 		items[0].Message = "mutated-message"
 	})
 	assertSliceSnapshotCopy(t, "Fetch calls", r.Fetch().Calls(), r.Fetch().Calls, func(items []FetchCall) {
+		items[0].URL = "mutated-url"
+	})
+	assertSliceSnapshotCopy(t, "External JS source rules", r.ExternalJS().Sources(), r.ExternalJS().Sources, func(items []ExternalJSSourceRule) {
+		items[0].Source = "mutated-source"
+	})
+	assertSliceSnapshotCopy(t, "External JS error rules", r.ExternalJS().Errors(), r.ExternalJS().Errors, func(items []ExternalJSErrorRule) {
+		items[0].Message = "mutated-message"
+	})
+	assertSliceSnapshotCopy(t, "External JS calls", r.ExternalJS().Calls(), r.ExternalJS().Calls, func(items []ExternalJSCall) {
 		items[0].URL = "mutated-url"
 	})
 
@@ -865,6 +938,15 @@ func assertRegistryEmpty(t *testing.T, r *Registry) {
 	}
 	if got := r.Fetch().ErrorRules(); len(got) != 0 {
 		t.Fatalf("Fetch error rules after ResetAll = %#v, want empty", got)
+	}
+	if got := r.ExternalJS().Calls(); len(got) != 0 {
+		t.Fatalf("External JS calls after ResetAll = %#v, want empty", got)
+	}
+	if got := r.ExternalJS().Sources(); len(got) != 0 {
+		t.Fatalf("External JS source rules after ResetAll = %#v, want empty", got)
+	}
+	if got := r.ExternalJS().Errors(); len(got) != 0 {
+		t.Fatalf("External JS error rules after ResetAll = %#v, want empty", got)
 	}
 
 	if got := r.Dialogs().Alerts(); len(got) != 0 {

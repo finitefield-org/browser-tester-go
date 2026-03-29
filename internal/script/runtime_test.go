@@ -656,6 +656,96 @@ func TestDispatchSupportsObjectPropertyAssignmentInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsFunctionOwnPropertyAssignmentInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `function showToast(message) { showToast._timer = message; } showToast("done"); host.echo(showToast._timer)`})
+	if err != nil {
+		t.Fatalf("Dispatch(function own property assignment) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", call.method)
+	}
+	if len(call.args) != 1 {
+		t.Fatalf("host.calls[0].args len = %d, want 1", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindString || call.args[0].String != "done" {
+		t.Fatalf("host.calls[0].args[0] = %#v, want done", call.args[0])
+	}
+}
+
+func TestDispatchSupportsSetConstructorFromNativeIteratorLikeSourceInClassicJS(t *testing.T) {
+	index := 0
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"Set": BuiltinSetValue(),
+		"source": ObjectValue([]ObjectEntry{
+			{
+				Key: "next",
+				Value: NativeFunctionValue(func(args []Value) (Value, error) {
+					switch index {
+					case 0:
+						index = 1
+						return ObjectValue([]ObjectEntry{
+							{Key: "value", Value: StringValue("left")},
+							{Key: "done", Value: BoolValue(false)},
+						}), nil
+					case 1:
+						index = 2
+						return ObjectValue([]ObjectEntry{
+							{Key: "value", Value: StringValue("right")},
+							{Key: "done", Value: BoolValue(false)},
+						}), nil
+					default:
+						return ObjectValue([]ObjectEntry{
+							{Key: "done", Value: BoolValue(true)},
+						}), nil
+					}
+				}),
+			},
+		}),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `const set = new Set(source); host.echo(set.size, set.has("left"), set.has("right"))`})
+	if err != nil {
+		t.Fatalf("Dispatch(Set constructor from iterator-like source) error = %v", err)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", call.method)
+	}
+	if len(call.args) != 3 {
+		t.Fatalf("host.calls[0].args len = %d, want 3", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindNumber || call.args[0].Number != 2 {
+		t.Fatalf("host.calls[0].args[0] = %#v, want 2", call.args[0])
+	}
+	if call.args[1].Kind != ValueKindBool || !call.args[1].Bool {
+		t.Fatalf("host.calls[0].args[1] = %#v, want true", call.args[1])
+	}
+	if call.args[2].Kind != ValueKindBool || !call.args[2].Bool {
+		t.Fatalf("host.calls[0].args[2] = %#v, want true", call.args[2])
+	}
+}
+
 func TestDispatchSupportsArrayPropertyAssignmentInClassicJS(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{
@@ -849,6 +939,18 @@ func TestDispatchSupportsDeleteExpressionsOnObjectBindingsInClassicJS(t *testing
 	}
 	if host.calls[0].args[2].Kind != ValueKindUndefined {
 		t.Fatalf("host.calls[0].args[2] = %#v, want undefined", host.calls[0].args[2])
+	}
+}
+
+func TestDispatchSupportsDeleteExpressionsOnConstObjectBindingsInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `const key = "remove"; const payload = { keep: "value", remove: "gone" }; delete payload[key]; [payload.remove, payload.keep].join("|")`})
+	if err != nil {
+		t.Fatalf("Dispatch(delete expressions on const object bindings) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "|value" {
+		t.Fatalf("Dispatch(delete expressions on const object bindings) value = %#v, want \"|value\"", result.Value)
 	}
 }
 

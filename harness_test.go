@@ -362,6 +362,9 @@ func TestHarnessBuilderBuildsWithDefaults(t *testing.T) {
 	if harness.Mocks().Fetch() == nil {
 		t.Fatalf("Mocks().Fetch() = nil")
 	}
+	if harness.Mocks().ExternalJS() == nil {
+		t.Fatalf("Mocks().ExternalJS() = nil")
+	}
 	if got := harness.Mocks().MatchMedia().Rules(); len(got) != 0 {
 		t.Fatalf("Mocks().MatchMedia().Rules() = %#v, want empty", got)
 	}
@@ -451,6 +454,9 @@ func TestHarnessBuilderCopiesConfiguration(t *testing.T) {
 	}
 	if got := harness.Mocks().Dialogs(); got == nil {
 		t.Fatalf("Mocks().Dialogs() = nil")
+	}
+	if got := harness.Mocks().ExternalJS(); got == nil {
+		t.Fatalf("Mocks().ExternalJS() = nil")
 	}
 	if got := harness.Mocks().MatchMedia(); got == nil {
 		t.Fatalf("Mocks().MatchMedia() = nil")

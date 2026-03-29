@@ -398,10 +398,7 @@ func resolveElementClassListPropertyValue(session *Session, store *dom.Store, no
 			}
 			enabled := classList.Contains(token)
 			if len(args) > 1 {
-				force, err := scriptBoolArg(surface+".toggle", args, 1)
-				if err != nil {
-					return script.UndefinedValue(), err
-				}
+				force := jsTruthyValue(args[1])
 				if force {
 					if err := classList.Add(token); err != nil {
 						return script.UndefinedValue(), err

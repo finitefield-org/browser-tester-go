@@ -182,15 +182,6 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return script.HostConstructorReference("HTMLButtonElement"), nil
 	case "HTMLSelectElement":
 		return script.HostConstructorReference("HTMLSelectElement"), nil
-	case "lucide":
-		return script.ObjectValue([]script.ObjectEntry{
-			{
-				Key: "createIcons",
-				Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-					return script.UndefinedValue(), nil
-				}),
-			},
-		}), nil
 	case "URL":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserURLConstructor(session, args)
@@ -1231,6 +1222,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 				return script.UndefinedValue(), fmt.Errorf("element.getBoundingClientRect accepts no arguments")
 			}
 			return resolveElementBoundingClientRectValue(session, store, nodeID)
+		}), nil
+	case "scrollIntoView":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return script.UndefinedValue(), nil
 		}), nil
 	case "setAttribute":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {

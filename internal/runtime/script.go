@@ -50,15 +50,18 @@ func (s *Session) executeInlineScripts(store *dom.Store) (err error) {
 		if store.Node(node.ID) == nil {
 			continue
 		}
-		source := store.TextContentForNode(node.ID)
-		if strings.TrimSpace(source) == "" {
-			continue
-		}
 		outerHTML, err := store.OuterHTMLForNode(node.ID)
 		if err != nil {
 			return err
 		}
-		if _, err := s.runInlineScriptOnStore(store, outerHTML, source); err != nil {
+		source, external, err := s.resolveScriptSource(store, node.ID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(source) == "" {
+			continue
+		}
+		if _, err := s.runScriptOnStoreWithCurrentScript(store, outerHTML, source, !external); err != nil {
 			return err
 		}
 		if err := s.drainMicrotasks(store); err != nil {
@@ -94,12 +97,18 @@ func isClassicInlineScriptType(typeAttr string) bool {
 }
 
 func (s *Session) runInlineScriptOnStore(store *dom.Store, currentScript string, source string) (script.Value, error) {
+	return s.runScriptOnStoreWithCurrentScript(store, currentScript, source, true)
+}
+
+func (s *Session) runScriptOnStoreWithCurrentScript(store *dom.Store, currentScript string, source string, recordLastInline bool) (script.Value, error) {
 	if s == nil {
 		return script.UndefinedValue(), fmt.Errorf("session is unavailable")
 	}
 	prev := s.currentScriptHTML
 	s.currentScriptHTML = currentScript
-	s.lastInlineScriptHTML = currentScript
+	if recordLastInline {
+		s.lastInlineScriptHTML = currentScript
+	}
 	defer func() {
 		s.currentScriptHTML = prev
 	}()

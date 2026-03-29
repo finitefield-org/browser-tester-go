@@ -108,14 +108,16 @@ func TestSessionInlineScriptsCanToggleElementAttribute(t *testing.T) {
 	}
 }
 
-func TestSessionInlineScriptsRejectElementToggleAttributeForceType(t *testing.T) {
+func TestSessionInlineScriptsCanCoerceElementToggleAttributeForceType(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
-	err := s.WriteHTML(`<main id="root"><button id="btn"></button><script>document.querySelector("#btn").toggleAttribute("data-active", "yes")</script></main>`)
-	if err == nil {
-		t.Fatalf("WriteHTML() error = nil, want toggleAttribute boolean validation failure")
+	if err := s.WriteHTML(`<main id="root"><button id="btn"></button><div id="probe"></div><script>const btn = document.querySelector("#btn"); const yes = btn.toggleAttribute("data-active", "yes"); const zero = btn.toggleAttribute("data-active", 0); document.querySelector("#probe").textContent = [String(yes), String(zero), String(btn.hasAttribute("data-active"))].join("|")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "toggleAttribute") || !strings.Contains(err.Error(), "boolean") {
-		t.Fatalf("WriteHTML() error = %q, want toggleAttribute boolean validation error", err)
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `true|false|false`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
 	}
 }
 

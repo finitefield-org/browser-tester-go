@@ -718,6 +718,24 @@ func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Val
 		cloned := value
 		cloned.Promise = &next
 		return cloned, true
+	case ValueKindFunction:
+		if value.Function == nil || len(value.Function.objectProps) == 0 {
+			return value, false
+		}
+		updated := make([]ObjectEntry, len(value.Function.objectProps))
+		changed := false
+		for i, entry := range value.Function.objectProps {
+			next, ok := replaceObjectReferencesInValue(entry.Value, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+		}
+		if !changed {
+			return value, false
+		}
+		value.Function.objectProps = updated
+		return value, true
 	default:
 		return value, false
 	}
@@ -870,6 +888,24 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 		cloned := value
 		cloned.Promise = &next
 		return cloned, true
+	case ValueKindFunction:
+		if value.Function == nil || len(value.Function.objectProps) == 0 {
+			return value, false
+		}
+		updated := make([]ObjectEntry, len(value.Function.objectProps))
+		changed := false
+		for i, entry := range value.Function.objectProps {
+			next, ok := replaceArrayReferencesInValue(entry.Value, oldPtr, replacement)
+			if ok {
+				changed = true
+			}
+			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+		}
+		if !changed {
+			return value, false
+		}
+		value.Function.objectProps = updated
+		return value, true
 	default:
 		return value, false
 	}

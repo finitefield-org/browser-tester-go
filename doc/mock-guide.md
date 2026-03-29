@@ -4,16 +4,20 @@ Mocks are part of the intended core surface for the Go workspace. They are not a
 detail, and they are not a loose bag of `Set*` helpers.
 
 `Harness.Mocks()` should return a typed `MockRegistryView` with family objects. Use it when a test
-needs deterministic network, dialogs, clipboard, location, open/close/print/scroll, matchMedia,
-download, file-input, or storage behavior.
+needs deterministic network, external JS dependency, dialogs, clipboard, location,
+open/close/print/scroll, matchMedia, download, file-input, or storage behavior.
 
 The `Fetch` family also backs browser-global `fetch()` calls in raw HTML / inline scripts, so the
 same response and error rules apply whether the request comes from `Harness.Fetch()` or script
 code.
 
+The `ExternalJS` family backs `<script src>` loads and external module `src` dependencies. Use it
+to seed exact source text for CDN-style libraries without touching the network.
+
 ## Current Mock Families
 
 - `Fetch`
+- `ExternalJS`
 - `Dialogs`
 - `Clipboard`
 - `Navigator`
@@ -65,6 +69,7 @@ Each family should support the following where it makes sense:
 Examples:
 
 - `Fetch`: response rules, error rules, request call capture
+- `ExternalJS`: seeded source text rules, load call capture, failure injection, and reset
 - `Dialogs`: queued confirm/prompt answers, alert capture, and message capture
 - `Clipboard`: seeded read state and write capture
 - `Navigator`: seeded `language` state for `navigator.language` reads, plus reset semantics
@@ -105,19 +110,27 @@ import (
 )
 
 func main() error {
-	h, err := browsertester.FromHTML("<input id='upload' type='file'>")
+	h, err := browsertester.FromHTML("<main><input id='upload' type='file'><div id='icons'></div></main>")
 	if err != nil {
 		return err
 	}
 
 	mocks := h.Mocks()
 	mocks.Fetch().RespondText("https://app.local/api/message", 200, "ok")
+	mocks.ExternalJS().RespondSource(
+		"https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js",
+		`window.lucide = { createIcons: function () { document.getElementById("icons").textContent = "loaded"; } };`,
+	)
 	mocks.Dialogs().QueueConfirm(true)
 	mocks.Clipboard().SeedText("copied text")
 	mocks.Navigator().SeedLanguage("fr-FR")
 	mocks.Storage().SeedLocal("theme", "dark")
 	mocks.MatchMedia().RespondMatches("(prefers-reduced-motion: reduce)", true)
 	mocks.MatchMedia().RecordListenerCall("(prefers-reduced-motion: reduce)", "change")
+
+	if err := h.WriteHTML(`<main><input id="upload" type="file"><div id="icons"></div><script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"></script><script>if (window.lucide && typeof window.lucide.createIcons === "function") { window.lucide.createIcons(); }</script></main>`); err != nil {
+		return err
+	}
 
 	resp, err := h.Fetch("https://app.local/api/message")
 	if err != nil {
@@ -130,6 +143,9 @@ func main() error {
 	}
 	if _, err := h.ReadClipboard(); err != nil {
 		return err
+	}
+	if got, err := h.TextContent("#icons"); err != nil || got != "loaded" {
+		return fmt.Errorf("expected external JS to load, got (%q, %v)", got, err)
 	}
 	if got, ok := mocks.Navigator().SeededLanguage(); !ok || got != "fr-FR" {
 		return fmt.Errorf("expected seeded navigator language, got (%q, %v)", got, ok)
@@ -189,6 +205,7 @@ func main() error {
 Other failure cases the workspace should keep covered:
 
 - a fetch call with no matching fetch rule
+- an external JS load with no matching source rule
 - a confirm or prompt call with an empty queue
 - a clipboard read with no seed
 - an unseeded `matchMedia(...)` query

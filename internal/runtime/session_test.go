@@ -2126,7 +2126,7 @@ func TestSessionClickKeepsStateChangesBeforeListenerError(t *testing.T) {
 
 func TestSessionClickCanToggleFavoriteCurrentStateThroughBoundedClassicJS(t *testing.T) {
 	s := NewSession(SessionConfig{
-		HTML: `<main><button id="favorite-current-button" type="button">Add favorite</button><div id="status">off</div><script>const state = { favoritesOnly: false, favorites: [] }; const button = document.querySelector("#favorite-current-button"); button.addEventListener("click", () => { state.favoritesOnly = !state.favoritesOnly; if (state.favoritesOnly) { state.favorites.unshift({ category: "spray", fromUnit: "L_ha", toUnit: "gal_acre", gallonType: "us" }); } else { state.favorites = state.favorites.slice(0, 0); } button.classList.toggle("active", state.favoritesOnly); host.setTextContent("#status", state.favoritesOnly ? "on" : "off"); });</script></main>`,
+		HTML: `<main><button id="favorite-current-button" type="button">Add favorite</button><div id="status">off</div><script>const state = { favoritesOnly: false, favorites: [] }; const button = document.querySelector("#favorite-current-button"); button.addEventListener("click", () => { state.favoritesOnly = !state.favoritesOnly; if (state.favoritesOnly) { state.favorites.unshift({ category: "spray", fromUnit: "L_ha", toUnit: "gal_acre", gallonType: "us" }); } else { state.favorites = state.favorites.slice(0, 0); } button.classList.toggle("active", state.favoritesOnly ? "yes" : ""); host.setTextContent("#status", state.favoritesOnly ? "on" : "off"); });</script></main>`,
 	})
 
 	if err := s.Click("#favorite-current-button"); err != nil {
@@ -2155,6 +2155,25 @@ func TestSessionClickCanToggleFavoriteCurrentStateThroughBoundedClassicJS(t *tes
 		t.Fatalf("ClassList(#favorite-current-button) after second click error = %v", err)
 	} else if got.Contains("active") {
 		t.Fatalf("ClassList(#favorite-current-button) after second click = %#v, want no active class", got)
+	}
+}
+
+func TestSessionClickCanCallElementScrollIntoView(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="go" type="button">Go</button><div id="panel"></div><div id="status">idle</div><script>document.querySelector("#go").addEventListener("click", () => { document.querySelector("#panel").scrollIntoView({ block: "start" }); document.getElementById("status").textContent = "done"; });</script></main>`,
+	})
+
+	if err := s.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "done" {
+		t.Fatalf("TextContent(#status) = %q, want done", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after scrollIntoView click", got)
 	}
 }
 

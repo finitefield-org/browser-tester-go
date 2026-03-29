@@ -100,7 +100,7 @@ Choose this layer when the question is:
 Owns:
 
 - family structs for fetch, dialogs, clipboard, location, open, close, print, scroll, matchMedia,
-  downloads, file input, and storage
+  external JS, downloads, file input, and storage
 - capture logs
 - failure injection
 - reset behavior

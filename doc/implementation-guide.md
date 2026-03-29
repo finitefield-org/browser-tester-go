@@ -49,6 +49,7 @@ internal/
     bindings.go
   mocks/
     fetch.go
+    externaljs.go
     dialogs.go
     clipboard.go
     location.go
@@ -188,8 +189,8 @@ Exit criteria:
   animation-frame callbacks, bounded history entries/state/scroll restoration, bounded cookie state,
   bounded `window.name` state, bounded web-storage state (`localStorage` / `sessionStorage`),
   bounded location read helpers, and scheduler.
-- Implement typed mock families for fetch, dialogs, clipboard, location, open, close, print, scroll,
-  matchMedia, downloads, file input, and storage.
+- Implement typed mock families for fetch, external JS, dialogs, clipboard, location, open, close,
+  print, scroll, matchMedia, downloads, file input, and storage.
 - Add public mock actions on `Harness` as thin wrappers.
 
 Exit criteria:

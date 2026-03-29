@@ -93,6 +93,10 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNumberConstructor(args)
 		}), true, nil
+	case path == "parseFloat":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserParseFloat(args)
+		}), true, nil
 	case path == "parseInt":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserParseInt(args)
@@ -301,6 +305,10 @@ func resolveNumberReference(path string) (script.Value, error) {
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserParseInt(args)
 		}), nil
+	case "parseFloat":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserParseFloat(args)
+		}), nil
 	case "isInteger":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserIsInteger(args)
@@ -383,6 +391,23 @@ func browserParseInt(args []script.Value) (script.Value, error) {
 		parsed.Neg(parsed)
 	}
 	number, _ := new(big.Float).SetInt(parsed).Float64()
+	return script.NumberValue(number), nil
+}
+
+func browserParseFloat(args []script.Value) (script.Value, error) {
+	if len(args) == 0 {
+		return script.NumberValue(math.NaN()), nil
+	}
+
+	source := strings.TrimSpace(script.ToJSString(args[0]))
+	if source == "" {
+		return script.NumberValue(math.NaN()), nil
+	}
+
+	number, err := strconv.ParseFloat(source, 64)
+	if err != nil {
+		return script.NumberValue(math.NaN()), nil
+	}
 	return script.NumberValue(number), nil
 }
 
@@ -1004,6 +1029,18 @@ func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (
 			}
 			break
 		}
+		if iterElements, ok, err := browserArrayFromIteratorValues(session, store, source, func(host *inlineScriptHost) (script.Value, bool) {
+			nextValue, ok := objectProperty(source, "next")
+			if !ok {
+				return script.Value{}, false
+			}
+			return nextValue, true
+		}); err != nil {
+			return script.UndefinedValue(), err
+		} else if ok {
+			elements = iterElements
+			break
+		}
 		lengthValue, ok := objectProperty(source, "length")
 		if !ok {
 			return script.UndefinedValue(), fmt.Errorf("Array.from expects array-like object with length")
@@ -1026,24 +1063,37 @@ func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (
 	case script.ValueKindHostReference:
 		host := &inlineScriptHost{session: session, store: store}
 		lengthValue, err := host.ResolveHostReference(browserJoinHostReferencePath(source.HostReferencePath, "length"))
-		if err != nil {
-			return script.UndefinedValue(), fmt.Errorf("Array.from expects array-like host object with length")
-		}
-		length, err := browserInt64Value("Array.from", lengthValue)
-		if err != nil {
-			return script.UndefinedValue(), err
-		}
-		if length < 0 {
-			return script.UndefinedValue(), fmt.Errorf("Array.from length must be non-negative")
-		}
-		elements = make([]script.Value, 0, int(length))
-		for i := int64(0); i < length; i++ {
-			value, err := host.ResolveHostReference(browserJoinHostReferencePath(source.HostReferencePath, strconv.FormatInt(i, 10)))
+		if err == nil {
+			length, err := browserInt64Value("Array.from", lengthValue)
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
-			elements = append(elements, value)
+			if length < 0 {
+				return script.UndefinedValue(), fmt.Errorf("Array.from length must be non-negative")
+			}
+			elements = make([]script.Value, 0, int(length))
+			for i := int64(0); i < length; i++ {
+				value, err := host.ResolveHostReference(browserJoinHostReferencePath(source.HostReferencePath, strconv.FormatInt(i, 10)))
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				elements = append(elements, value)
+			}
+			break
 		}
+		if iterElements, ok, err := browserArrayFromIteratorValues(session, store, source, func(host *inlineScriptHost) (script.Value, bool) {
+			nextValue, err := host.ResolveHostReference(browserJoinHostReferencePath(source.HostReferencePath, "next"))
+			if err != nil {
+				return script.Value{}, false
+			}
+			return nextValue, true
+		}); err != nil {
+			return script.UndefinedValue(), err
+		} else if ok {
+			elements = iterElements
+			break
+		}
+		return script.UndefinedValue(), fmt.Errorf("Array.from expects array-like host object with length")
 	default:
 		return script.UndefinedValue(), fmt.Errorf("Array.from expects array, string, or array-like object")
 	}
@@ -1073,6 +1123,47 @@ func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (
 	}
 
 	return script.ArrayValue(elements), nil
+}
+
+func browserArrayFromIteratorValues(
+	session *Session,
+	store *dom.Store,
+	source script.Value,
+	resolveNext func(*inlineScriptHost) (script.Value, bool),
+) ([]script.Value, bool, error) {
+	host := &inlineScriptHost{session: session, store: store}
+	nextValue, ok := resolveNext(host)
+	if !ok {
+		return nil, false, nil
+	}
+	if nextValue.Kind != script.ValueKindFunction && nextValue.Kind != script.ValueKindHostReference {
+		return nil, false, nil
+	}
+
+	values := make([]script.Value, 0)
+	for {
+		result, err := script.InvokeCallableValue(host, nextValue, nil, source, true)
+		if err != nil {
+			return nil, false, err
+		}
+		if result.Kind != script.ValueKindObject {
+			return nil, false, fmt.Errorf("Array.from iterator must return an object in this bounded classic-JS slice")
+		}
+		doneValue, ok := objectProperty(result, "done")
+		if !ok || doneValue.Kind != script.ValueKindBool {
+			return nil, false, fmt.Errorf("Array.from iterator result must include a boolean `done` property in this bounded classic-JS slice")
+		}
+		if doneValue.Bool {
+			break
+		}
+		value, ok := objectProperty(result, "value")
+		if !ok {
+			value = script.UndefinedValue()
+		}
+		values = append(values, value)
+	}
+
+	return values, true, nil
 }
 
 func resolveUint8ArrayReference(session *Session, store *dom.Store, path string) (script.Value, error) {

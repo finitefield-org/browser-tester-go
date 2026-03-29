@@ -430,6 +430,7 @@ type classicJSArrowFunction struct {
 	generatorMethod    string
 	generatorFunction  *classicJSGeneratorFunction
 	generatorState     *classicJSGeneratorState
+	objectProps        []ObjectEntry
 }
 
 type classicJSGeneratorFunction struct {
@@ -811,6 +812,12 @@ func (f *classicJSArrowFunction) cloneDetached(mapping map[*classicJSEnvironment
 		hasSuperTarget:     f.hasSuperTarget,
 		generatorMethod:    f.generatorMethod,
 	}
+	if len(f.objectProps) != 0 {
+		cloned.objectProps = make([]ObjectEntry, len(f.objectProps))
+		for i, entry := range f.objectProps {
+			cloned.objectProps[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetached(entry.Value, mapping)}
+		}
+	}
 	if f.env != nil {
 		if clonedEnv, ok := mapping[f.env]; ok {
 			cloned.env = clonedEnv
@@ -825,6 +832,38 @@ func (f *classicJSArrowFunction) cloneDetached(mapping map[*classicJSEnvironment
 		cloned.generatorState = f.generatorState.cloneDetached(mapping)
 	}
 	return cloned
+}
+
+func classicJSFunctionOwnProperty(value Value, name string) (Value, bool) {
+	if value.Kind != ValueKindFunction || value.Function == nil {
+		return UndefinedValue(), false
+	}
+	return lookupObjectProperty(value.Function.objectProps, name)
+}
+
+func classicJSFunctionSetOwnProperty(value Value, name string, next Value) bool {
+	if value.Kind != ValueKindFunction || value.Function == nil {
+		return false
+	}
+	index := findObjectPropertyIndex(value.Function.objectProps, name)
+	if index >= 0 {
+		value.Function.objectProps[index].Value = next
+		return true
+	}
+	value.Function.objectProps = replaceObjectProperty(value.Function.objectProps, name, next)
+	return true
+}
+
+func classicJSFunctionDeleteOwnProperty(value Value, name string) bool {
+	if value.Kind != ValueKindFunction || value.Function == nil {
+		return false
+	}
+	updated := deleteObjectProperty(value.Function.objectProps, name)
+	if len(updated) == len(value.Function.objectProps) {
+		return false
+	}
+	value.Function.objectProps = updated
+	return true
 }
 
 func (f *classicJSGeneratorFunction) cloneDetached(mapping map[*classicJSEnvironment]*classicJSEnvironment) *classicJSGeneratorFunction {
@@ -1425,7 +1464,7 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 		if current.kind != jsValueScalar {
 			return jsValue{}, NewError(ErrorKindUnsupported, "assignment only works on scalar object or array bindings in this bounded classic-JS slice")
 		}
-		if current.value.Kind != ValueKindObject && current.value.Kind != ValueKindArray && current.value.Kind != ValueKindHostReference {
+		if current.value.Kind != ValueKindObject && current.value.Kind != ValueKindArray && current.value.Kind != ValueKindHostReference && current.value.Kind != ValueKindFunction {
 			return jsValue{}, NewError(ErrorKindUnsupported, "assignment only works on object, array, or host surface values in this bounded classic-JS slice")
 		}
 
@@ -1687,7 +1726,7 @@ func resolveJSValuePropertyChain(p *classicJSStatementParser, value Value, steps
 			}
 			return resolved.value, nil
 		}
-		if resolved.kind != jsValueScalar || (resolved.value.Kind != ValueKindObject && resolved.value.Kind != ValueKindArray) {
+		if resolved.kind != jsValueScalar || (resolved.value.Kind != ValueKindObject && resolved.value.Kind != ValueKindArray && resolved.value.Kind != ValueKindHostReference && resolved.value.Kind != ValueKindFunction) {
 			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object or array values in this bounded classic-JS slice")
 		}
 		return resolveJSValuePropertyChain(p, resolved.value, steps[1:], privateFieldPrefix)
@@ -1715,7 +1754,7 @@ func resolveJSValuePropertyChain(p *classicJSStatementParser, value Value, steps
 		if len(steps) == 1 {
 			return child, nil
 		}
-		if child.Kind != ValueKindObject && child.Kind != ValueKindArray {
+		if child.Kind != ValueKindObject && child.Kind != ValueKindArray && child.Kind != ValueKindHostReference && child.Kind != ValueKindFunction {
 			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object or array values in this bounded classic-JS slice")
 		}
 		return resolveJSValuePropertyChain(p, child, steps[1:], privateFieldPrefix)
@@ -1727,10 +1766,25 @@ func resolveJSValuePropertyChain(p *classicJSStatementParser, value Value, steps
 		if len(steps) == 1 {
 			return resolved, nil
 		}
-		if resolved.Kind != ValueKindObject && resolved.Kind != ValueKindArray && resolved.Kind != ValueKindHostReference {
+		if resolved.Kind != ValueKindObject && resolved.Kind != ValueKindArray && resolved.Kind != ValueKindHostReference && resolved.Kind != ValueKindFunction {
 			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object, array, or host surface values in this bounded classic-JS slice")
 		}
 		return resolveJSValuePropertyChain(p, resolved, steps[1:], privateFieldPrefix)
+	case ValueKindFunction:
+		resolved, err := p.resolveMemberAccess(scalarJSValue(value), key)
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		if len(steps) == 1 {
+			if resolved.kind != jsValueScalar {
+				return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object values in this bounded classic-JS slice")
+			}
+			return resolved.value, nil
+		}
+		if resolved.kind != jsValueScalar || (resolved.value.Kind != ValueKindObject && resolved.value.Kind != ValueKindArray && resolved.value.Kind != ValueKindHostReference && resolved.value.Kind != ValueKindFunction) {
+			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object or array values in this bounded classic-JS slice")
+		}
+		return resolveJSValuePropertyChain(p, resolved.value, steps[1:], privateFieldPrefix)
 	default:
 		return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object, array, or host surface values in this bounded classic-JS slice")
 	}
@@ -3627,6 +3681,13 @@ func (p *classicJSStatementParser) collectClassicJSArrayLikeValues(value Value, 
 		}
 		return values, nil
 	case ValueKindObject:
+		if value.SetState != nil {
+			values := make([]Value, len(value.SetState.entries))
+			for i, entry := range value.SetState.entries {
+				values[i] = cloneValueDetached(entry, nil)
+			}
+			return values, nil
+		}
 		nextValue, err := p.resolveMemberAccess(scalarJSValue(value), "next")
 		if err != nil {
 			return nil, NewError(ErrorKindUnsupported, fmt.Sprintf("%s only works on string, array, or iterator-like object values in this bounded classic-JS slice", context))
@@ -9168,13 +9229,15 @@ func (p *classicJSStatementParser) parseDeleteExpression() (jsValue, error) {
 	if err != nil {
 		return jsValue{}, err
 	}
-	if baseValue.value.Kind == ValueKindHostReference {
+	switch baseValue.value.Kind {
+	case ValueKindObject:
+		p.replaceObjectBindings(baseValue.value, scalarJSValue(updated))
+	case ValueKindArray:
+		p.replaceArrayBindings(baseValue.value, scalarJSValue(updated))
+	case ValueKindFunction:
+		// Function own properties are updated in place by deleteJSValuePropertyChain.
+	case ValueKindHostReference:
 		return scalarJSValue(BoolValue(deleted)), nil
-	}
-	if p.env != nil {
-		if err := p.env.assign(baseName, scalarJSValue(updated)); err != nil {
-			return jsValue{}, err
-		}
 	}
 	return scalarJSValue(BoolValue(deleted)), nil
 }
@@ -9845,9 +9908,14 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			}
 			return scalarJSValue(resolved), nil
 		}
-		if value.value.Kind == ValueKindFunction && name == "prototype" {
-			if resolved, ok := classicJSConstructibleFunctionPrototypeValue(value.value); ok {
+		if value.value.Kind == ValueKindFunction && value.value.Function != nil {
+			if resolved, ok := classicJSFunctionOwnProperty(value.value, name); ok {
 				return scalarJSValue(resolved), nil
+			}
+			if name == "prototype" {
+				if resolved, ok := classicJSConstructibleFunctionPrototypeValue(value.value); ok {
+					return scalarJSValue(resolved), nil
+				}
 			}
 		}
 		if value.value.Kind == ValueKindSymbol {
@@ -10051,9 +10119,14 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 			}
 			return scalarJSValue(resolved), nil
 		}
-		if value.value.Kind == ValueKindFunction && keyString == "prototype" {
-			if resolved, ok := classicJSConstructibleFunctionPrototypeValue(value.value); ok {
+		if value.value.Kind == ValueKindFunction && value.value.Function != nil {
+			if resolved, ok := classicJSFunctionOwnProperty(value.value, keyString); ok {
 				return scalarJSValue(resolved), nil
+			}
+			if keyString == "prototype" {
+				if resolved, ok := classicJSConstructibleFunctionPrototypeValue(value.value); ok {
+					return scalarJSValue(resolved), nil
+				}
 			}
 		}
 		if value.value.Kind == ValueKindSymbol {
@@ -10697,11 +10770,33 @@ func deleteJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 		if err != nil {
 			return UndefinedValue(), false, err
 		}
-		if resolved.Kind != ValueKindObject && resolved.Kind != ValueKindArray && resolved.Kind != ValueKindHostReference {
+		if resolved.Kind != ValueKindObject && resolved.Kind != ValueKindArray && resolved.Kind != ValueKindHostReference && resolved.Kind != ValueKindFunction {
 			return UndefinedValue(), false, NewError(ErrorKindUnsupported, "delete only works on object or array values in this bounded classic-JS slice")
 		}
 		return deleteJSValuePropertyChain(p, resolved, steps[1:], privateFieldPrefix)
-	case ValueKindFunction, ValueKindNumber, ValueKindBool, ValueKindBigInt:
+	case ValueKindFunction:
+		key, err := deleteJSPropertyKey(steps[0], privateFieldPrefix)
+		if err != nil {
+			return UndefinedValue(), false, err
+		}
+		if len(steps) == 1 {
+			classicJSFunctionDeleteOwnProperty(value, key)
+			return value, true, nil
+		}
+		child, ok := classicJSFunctionOwnProperty(value, key)
+		if !ok {
+			return value, true, nil
+		}
+		updatedChild, deleted, err := deleteJSValuePropertyChain(p, child, steps[1:], privateFieldPrefix)
+		if err != nil {
+			return UndefinedValue(), false, err
+		}
+		index := findObjectPropertyIndex(value.Function.objectProps, key)
+		if index >= 0 {
+			value.Function.objectProps[index].Value = updatedChild
+		}
+		return value, deleted, nil
+	case ValueKindNumber, ValueKindBool, ValueKindBigInt:
 		return value, true, nil
 	default:
 		return UndefinedValue(), false, NewError(ErrorKindUnsupported, "delete only works on object or array values in this bounded classic-JS slice")
@@ -10931,6 +11026,31 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 			return UndefinedValue(), NewError(ErrorKindRuntime, "assignment target disappeared during property chain update")
 		}
 		value.Object[index].Value = updatedChild
+		return value, nil
+	case ValueKindFunction:
+		if value.Function == nil {
+			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on object, array, or host surface values in this bounded classic-JS slice")
+		}
+		if len(steps) == 1 {
+			value.Function.objectProps = replaceObjectProperty(value.Function.objectProps, key, rhs)
+			return value, nil
+		}
+		child, ok := classicJSFunctionOwnProperty(value, key)
+		if !ok {
+			return UndefinedValue(), NewError(ErrorKindUnsupported, "assignment only works on existing object properties in this bounded classic-JS slice")
+		}
+		if child.Kind == ValueKindFunction && child.Function != nil && child.Function.objectAccessor {
+			return UndefinedValue(), NewError(ErrorKindRuntime, "assignment cannot write to getter-only property in this bounded classic-JS slice")
+		}
+		updatedChild, err := assignJSValuePropertyChain(p, child, steps[1:], rhs, privateFieldPrefix)
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		index := findObjectPropertyIndex(value.Function.objectProps, key)
+		if index < 0 {
+			return UndefinedValue(), NewError(ErrorKindRuntime, "assignment target disappeared during property chain update")
+		}
+		value.Function.objectProps[index].Value = updatedChild
 		return value, nil
 	case ValueKindArray:
 		if len(steps) == 1 {

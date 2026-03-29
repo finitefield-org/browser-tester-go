@@ -23,6 +23,20 @@ type FetchErrorRule struct {
 	Message string
 }
 
+type ExternalJSCall struct {
+	URL string
+}
+
+type ExternalJSSourceRule struct {
+	URL    string
+	Source string
+}
+
+type ExternalJSErrorRule struct {
+	URL     string
+	Message string
+}
+
 type OpenCall struct {
 	URL string
 }
@@ -103,6 +117,13 @@ func (v MockRegistryView) Fetch() *FetchMocks {
 		return nil
 	}
 	return &FetchMocks{family: v.registry.Fetch()}
+}
+
+func (v MockRegistryView) ExternalJS() *ExternalJSMocks {
+	if v.registry == nil {
+		return nil
+	}
+	return &ExternalJSMocks{family: v.registry.ExternalJS()}
 }
 
 func (v MockRegistryView) Dialogs() *DialogMocks {
@@ -258,6 +279,73 @@ func (m *FetchMocks) Errors() []FetchErrorRule {
 }
 
 func (m *FetchMocks) Reset() {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.Reset()
+}
+
+type ExternalJSMocks struct {
+	family *imocks.ExternalJSFamily
+}
+
+func (m *ExternalJSMocks) RespondSource(url string, source string) {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.RespondSource(url, source)
+}
+
+func (m *ExternalJSMocks) Fail(url string, message string) {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.Fail(url, message)
+}
+
+func (m *ExternalJSMocks) Calls() []ExternalJSCall {
+	if m == nil || m.family == nil {
+		return nil
+	}
+	calls := m.family.Calls()
+	out := make([]ExternalJSCall, len(calls))
+	for i := range calls {
+		out[i] = ExternalJSCall{URL: calls[i].URL}
+	}
+	return out
+}
+
+func (m *ExternalJSMocks) Sources() []ExternalJSSourceRule {
+	if m == nil || m.family == nil {
+		return nil
+	}
+	rules := m.family.Sources()
+	out := make([]ExternalJSSourceRule, len(rules))
+	for i := range rules {
+		out[i] = ExternalJSSourceRule{
+			URL:    rules[i].URL,
+			Source: rules[i].Source,
+		}
+	}
+	return out
+}
+
+func (m *ExternalJSMocks) Errors() []ExternalJSErrorRule {
+	if m == nil || m.family == nil {
+		return nil
+	}
+	rules := m.family.Errors()
+	out := make([]ExternalJSErrorRule, len(rules))
+	for i := range rules {
+		out[i] = ExternalJSErrorRule{
+			URL:     rules[i].URL,
+			Message: rules[i].Message,
+		}
+	}
+	return out
+}
+
+func (m *ExternalJSMocks) Reset() {
 	if m == nil || m.family == nil {
 		return
 	}

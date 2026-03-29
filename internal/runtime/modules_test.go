@@ -127,6 +127,54 @@ func TestLoadModuleBindingsSupportsImportAttributes(t *testing.T) {
 	}
 }
 
+func TestLoadModuleBindingsSupportsExternalModuleScripts(t *testing.T) {
+	const moduleURL = "https://cdn.jsdelivr.net/npm/icons@1.0.0/dist/icons.js"
+	session := NewSession(SessionConfig{
+		HTML: `<main><div id="seed">seed</div><div id="out"></div><script type="module" id="icons" src="` + moduleURL + `"></script><script type="module" id="consumer">import { default as seeded, createIcons } from "icons"; createIcons(); export const viaImport = seeded; export default seeded;</script></main>`,
+	})
+	session.Registry().ExternalJS().RespondSource(moduleURL, `export const value = host?.["textContent"]("#seed"); export function createIcons() { host?.["setTextContent"]("#out", "loaded"); } export default value;`)
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	icons, ok := session.moduleBindings["icons"]
+	if !ok {
+		t.Fatalf("moduleBindings[\"icons\"] is missing")
+	}
+	if icons.Kind != script.ValueKindObject {
+		t.Fatalf("moduleBindings[\"icons\"].Kind = %q, want object", icons.Kind)
+	}
+	if got, ok := moduleObjectProperty(icons, "default"); !ok || got.Kind != script.ValueKindString || got.String != "seed" {
+		t.Fatalf("moduleBindings[\"icons\"].default = %#v, want string seed", got)
+	}
+	if got, ok := moduleObjectProperty(icons, "createIcons"); !ok || got.Kind != script.ValueKindFunction {
+		t.Fatalf("moduleBindings[\"icons\"].createIcons = %#v, want function", got)
+	}
+
+	consumer, ok := session.moduleBindings["consumer"]
+	if !ok {
+		t.Fatalf("moduleBindings[\"consumer\"] is missing")
+	}
+	if consumer.Kind != script.ValueKindObject {
+		t.Fatalf("moduleBindings[\"consumer\"].Kind = %q, want object", consumer.Kind)
+	}
+	if got, ok := moduleObjectProperty(consumer, "viaImport"); !ok || got.Kind != script.ValueKindString || got.String != "seed" {
+		t.Fatalf("moduleBindings[\"consumer\"].viaImport = %#v, want string seed", got)
+	}
+	if got, ok := moduleObjectProperty(consumer, "default"); !ok || got.Kind != script.ValueKindString || got.String != "seed" {
+		t.Fatalf("moduleBindings[\"consumer\"].default = %#v, want string seed", got)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#out) = %q, want loaded", got)
+	}
+	if got := session.Registry().ExternalJS().Calls(); len(got) != 1 || got[0].URL != moduleURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded module URL", got)
+	}
+}
+
 func TestLoadModuleBindingsSupportsDefaultAndNamespaceImports(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<main><div id="seed">seed</div><script type="module" id="math">export const value = host?.["textContent"]("#seed"); export default value;</script><script type="module" id="consumer">import seeded, * as ns from "math" with { type: "json" }; export const viaDefault = seeded; export const viaNamespace = ns.value; export default seeded;</script></main>`,

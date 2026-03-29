@@ -8,6 +8,7 @@ import (
 
 type Registry struct {
 	fetch      FetchFamily
+	externalJS ExternalJSFamily
 	dialogs    DialogFamily
 	clipboard  ClipboardFamily
 	navigator  NavigatorFamily
@@ -31,6 +32,13 @@ func (r *Registry) Fetch() *FetchFamily {
 		return nil
 	}
 	return &r.fetch
+}
+
+func (r *Registry) ExternalJS() *ExternalJSFamily {
+	if r == nil {
+		return nil
+	}
+	return &r.externalJS
 }
 
 func (r *Registry) Dialogs() *DialogFamily {
@@ -122,6 +130,7 @@ func (r *Registry) ResetAll() {
 		return
 	}
 	r.fetch.Reset()
+	r.externalJS.Reset()
 	r.dialogs.Reset()
 	r.clipboard.Reset()
 	r.navigator.Reset()

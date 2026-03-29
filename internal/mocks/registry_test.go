@@ -52,6 +52,53 @@ func TestFetchFamilyUsesLastWriteWinsForDuplicateRules(t *testing.T) {
 	}
 }
 
+func TestExternalJSFamilyResolvesAndCapturesCalls(t *testing.T) {
+	var f ExternalJSFamily
+
+	f.RespondSource("https://cdn.example.test/lucide.js", `window.lucide = { createIcons: function () {} };`)
+	f.Fail("https://cdn.example.test/lucide.js", "blocked")
+	if _, err := f.Resolve("https://cdn.example.test/lucide.js"); err == nil {
+		t.Fatalf("Resolve() error = nil, want failure rule precedence")
+	}
+
+	f.Reset()
+	f.RespondSource("https://cdn.example.test/lucide.js", `window.lucide = { createIcons: function () {} };`)
+	source, err := f.Resolve("https://cdn.example.test/lucide.js")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if source != `window.lucide = { createIcons: function () {} };` {
+		t.Fatalf("Resolve() = %q, want script source", source)
+	}
+
+	calls := f.Calls()
+	if len(calls) != 1 || calls[0].URL != "https://cdn.example.test/lucide.js" {
+		t.Fatalf("Calls() = %#v, want one call", calls)
+	}
+}
+
+func TestExternalJSFamilyUsesLastWriteWinsForDuplicateRules(t *testing.T) {
+	var f ExternalJSFamily
+
+	f.RespondSource("https://cdn.example.test/lucide.js", "first")
+	f.RespondSource("https://cdn.example.test/lucide.js", "second")
+
+	source, err := f.Resolve("https://cdn.example.test/lucide.js")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if source != "second" {
+		t.Fatalf("Resolve() = %q, want second", source)
+	}
+
+	f.Reset()
+	f.Fail("https://cdn.example.test/lucide.js", "first failure")
+	f.Fail("https://cdn.example.test/lucide.js", "second failure")
+	if _, err := f.Resolve("https://cdn.example.test/lucide.js"); err == nil || err.Error() != "second failure" {
+		t.Fatalf("Resolve() error = %v, want second failure", err)
+	}
+}
+
 func TestDialogFamilyQueuesAndCapturesMessages(t *testing.T) {
 	var f DialogFamily
 

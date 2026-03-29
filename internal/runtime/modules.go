@@ -38,14 +38,10 @@ func (s *Session) loadModuleBindings(store *dom.Store) error {
 		if _, exists := moduleSources[idValue]; exists {
 			return fmt.Errorf("duplicate module id %q in this bounded classic-JS slice", idValue)
 		}
-		srcValue, ok, err := store.GetAttribute(node.ID, "src")
+		source, _, err := s.resolveScriptSource(store, node.ID)
 		if err != nil {
 			return err
 		}
-		if ok && strings.TrimSpace(srcValue) != "" {
-			return fmt.Errorf("external module scripts are not supported in this bounded classic-JS slice")
-		}
-		source := store.TextContentForNode(node.ID)
 		moduleSources[idValue] = source
 	}
 

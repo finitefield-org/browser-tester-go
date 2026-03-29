@@ -273,13 +273,69 @@ func (s *classicJSSetState) seed(args []Value) error {
 	if source.Kind == ValueKindNull {
 		return NewError(ErrorKindRuntime, "Set constructor cannot iterate over null in this bounded classic-JS slice")
 	}
-	if source.Kind != ValueKindArray {
-		return NewError(ErrorKindUnsupported, "Set constructor requires an array of values in this bounded classic-JS slice")
+	values, err := classicJSSetConstructorValues(source)
+	if err != nil {
+		return err
 	}
-	for _, entry := range source.Array {
+	for _, entry := range values {
 		s.add(entry)
 	}
 	return nil
+}
+
+func classicJSSetConstructorValues(source Value) ([]Value, error) {
+	switch source.Kind {
+	case ValueKindArray:
+		return append([]Value(nil), source.Array...), nil
+	case ValueKindString:
+		values := make([]Value, 0, len(source.String))
+		for _, r := range source.String {
+			values = append(values, StringValue(string(r)))
+		}
+		return values, nil
+	case ValueKindObject:
+		if source.SetState != nil {
+			values := make([]Value, len(source.SetState.entries))
+			copy(values, source.SetState.entries)
+			return values, nil
+		}
+		if source.MapState != nil {
+			values := make([]Value, 0, len(source.MapState.entries))
+			for _, entry := range source.MapState.entries {
+				values = append(values, ArrayValue([]Value{entry.key, entry.value}))
+			}
+			return values, nil
+		}
+		nextValue, ok := lookupObjectProperty(source.Object, "next")
+		if !ok || nextValue.Kind != ValueKindFunction || nextValue.NativeFunction == nil {
+			return nil, NewError(ErrorKindUnsupported, "Set constructor requires a string, array, set, map, or iterator-like object with a native next() function in this bounded classic-JS slice")
+		}
+		values := make([]Value, 0, len(source.Object))
+		for {
+			result, err := nextValue.NativeFunction(nil)
+			if err != nil {
+				return nil, err
+			}
+			if result.Kind != ValueKindObject {
+				return nil, NewError(ErrorKindUnsupported, "Set constructor iterator must return an object in this bounded classic-JS slice")
+			}
+			doneValue, ok := lookupObjectProperty(result.Object, "done")
+			if !ok || doneValue.Kind != ValueKindBool {
+				return nil, NewError(ErrorKindUnsupported, "Set constructor iterator result must include a boolean `done` property in this bounded classic-JS slice")
+			}
+			if doneValue.Bool {
+				break
+			}
+			itemValue, ok := lookupObjectProperty(result.Object, "value")
+			if !ok {
+				itemValue = UndefinedValue()
+			}
+			values = append(values, itemValue)
+		}
+		return values, nil
+	default:
+		return nil, NewError(ErrorKindRuntime, "Set constructor requires a string, array, set, map, or iterator-like object with a native next() function in this bounded classic-JS slice")
+	}
 }
 
 func (s *classicJSSetState) findIndex(value Value) int {
