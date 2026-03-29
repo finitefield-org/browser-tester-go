@@ -641,8 +641,14 @@ func TestSessionAssertionsSupportModalPseudoClass(t *testing.T) {
 	if err := s.AssertExists("video:modal"); err != nil {
 		t.Fatalf("AssertExists(video:modal) error = %v", err)
 	}
+	if err := s.AssertExists("video:fullscreen"); err != nil {
+		t.Fatalf("AssertExists(video:fullscreen) error = %v", err)
+	}
 	if err := s.AssertExists("#other:modal"); err == nil {
 		t.Fatalf("AssertExists(#other:modal) error = nil, want no match")
+	}
+	if err := s.AssertExists("#other:fullscreen"); err == nil {
+		t.Fatalf("AssertExists(#other:fullscreen) error = nil, want no match")
 	}
 }
 
@@ -708,11 +714,14 @@ func TestSessionAssertionsSupportHeadingLevelPseudoClass(t *testing.T) {
 
 func TestSessionAssertionsSupportMediaPseudoClasses(t *testing.T) {
 	cfg := DefaultSessionConfig()
-	cfg.HTML = `<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`
+	cfg.HTML = `<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="pip" picture-in-picture></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`
 	s := NewSession(cfg)
 
 	if err := s.AssertExists("audio:playing"); err != nil {
 		t.Fatalf("AssertExists(audio:playing) error = %v", err)
+	}
+	if err := s.AssertExists("video:picture-in-picture"); err != nil {
+		t.Fatalf("AssertExists(video:picture-in-picture) error = %v", err)
 	}
 	if err := s.AssertExists("video:paused"); err != nil {
 		t.Fatalf("AssertExists(video:paused) error = %v", err)
@@ -731,6 +740,12 @@ func TestSessionAssertionsSupportMediaPseudoClasses(t *testing.T) {
 	}
 	if err := s.AssertExists("video:volume-locked"); err != nil {
 		t.Fatalf("AssertExists(video:volume-locked) error = %v", err)
+	}
+	if err := s.AssertExists("#pip:picture-in-picture"); err != nil {
+		t.Fatalf("AssertExists(#pip:picture-in-picture) error = %v", err)
+	}
+	if err := s.AssertExists("#paused:picture-in-picture"); err == nil {
+		t.Fatalf("AssertExists(#paused:picture-in-picture) error = nil, want no match")
 	}
 	if err := s.AssertExists("#other:paused"); err == nil {
 		t.Fatalf("AssertExists(#other:paused) error = nil, want no match")

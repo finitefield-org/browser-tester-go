@@ -1893,7 +1893,7 @@ func TestDispatchSupportsBlockBodiedForLoopsInClassicJS(t *testing.T) {
 	}
 	runtime := NewRuntime(host)
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `for (let keepGoing = true; keepGoing; keepGoing &&= false) { host.setTextContent("#out", "ran") }`})
+	_, err := runtime.Dispatch(DispatchRequest{Source: `for (let keepGoing = ` + "`" + `go${` + "`" + `now;later` + "`" + `}` + "`" + `; keepGoing; keepGoing &&= false) { host.setTextContent("#out", keepGoing) }`})
 	if err != nil {
 		t.Fatalf("Dispatch(for loop) error = %v", err)
 	}
@@ -1903,8 +1903,8 @@ func TestDispatchSupportsBlockBodiedForLoopsInClassicJS(t *testing.T) {
 	if host.calls[0].method != "setTextContent" {
 		t.Fatalf("host.calls[0].method = %q, want setTextContent", host.calls[0].method)
 	}
-	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "ran" {
-		t.Fatalf("host.calls[0].args[1] = %#v, want ran", host.calls[0].args[1])
+	if host.calls[0].args[1].Kind != ValueKindString || host.calls[0].args[1].String != "gonow;later" {
+		t.Fatalf("host.calls[0].args[1] = %#v, want gonow;later", host.calls[0].args[1])
 	}
 }
 
@@ -1926,13 +1926,13 @@ func TestDispatchSupportsSingleStatementLoopBodiesInClassicJS(t *testing.T) {
 		},
 		{
 			name:   "for",
-			source: `let out = ""; for (let i = 0; i < 2; i++) out += i; out`,
-			want:   StringValue("01"),
+			source: `let out = ""; for (let i = 0; i < 2; i++) out += ` + "`" + `x${` + "`" + `y;z` + "`" + `}` + "`" + `; out`,
+			want:   StringValue("xy;zxy;z"),
 		},
 		{
 			name:   "for of",
-			source: `let out = ""; for (let value of [1, 2]) out += value; out`,
-			want:   StringValue("12"),
+			source: `let out = ""; for (let value of [` + "`" + `prefix${` + "`" + `b of c` + "`" + `}` + "`" + `]) out += value; out`,
+			want:   StringValue("prefixb of c"),
 		},
 		{
 			name:   "for in",
@@ -4061,6 +4061,30 @@ func TestDispatchSupportsLogicalOrAndAndOnNonScalarValuesInClassicJS(t *testing.
 	}
 }
 
+func TestDispatchSupportsLogicalAndShortCircuitBeforeAdditionInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `false && ({ kind: "box" } + 1)`})
+	if err != nil {
+		t.Fatalf("Dispatch(logical and short-circuit before addition) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindBool || result.Value.Bool {
+		t.Fatalf("Dispatch(logical and short-circuit before addition) value = %#v, want false", result.Value)
+	}
+}
+
+func TestDispatchSupportsLogicalOrShortCircuitBeforeAdditionInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `true || ({ kind: "box" } + 1)`})
+	if err != nil {
+		t.Fatalf("Dispatch(logical or short-circuit before addition) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindBool || !result.Value.Bool {
+		t.Fatalf("Dispatch(logical or short-circuit before addition) value = %#v, want true", result.Value)
+	}
+}
+
 func TestDispatchSupportsSwitchDiscriminantsOnNonScalarValuesInClassicJS(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{
@@ -4343,6 +4367,80 @@ func TestDispatchSupportsTemplateLiteralInterpolation(t *testing.T) {
 	}
 	if host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "hello world!" {
 		t.Fatalf("host calls[0].args[0] = %#v, want hello world!", host.calls[0].args[0])
+	}
+}
+
+func TestDispatchSupportsNestedTemplateLiteralInterpolation(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: "host.echo(`${true ? ` / ${1}` : \"\"}`)"})
+	if err != nil {
+		t.Fatalf("Dispatch(nested template literal interpolation) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != " / 1" {
+		t.Fatalf("Dispatch(nested template literal interpolation) value = %#v, want string ` / 1`", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != " / 1" {
+		t.Fatalf("host.calls[0].args = %#v, want string ` / 1`", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsNestedTemplateLiteralScannerBoundaries(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": StringValue("ok"),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	source := `class Box { label = ` + "`" + `outer${` + "`" + `inner` + "`" + `}` + "`" + `; read() { return this.label } }` +
+		`; const pick = (value = ` + "`" + `default${` + "`" + `value` + "`" + `}` + "`" + `) => value;` +
+		` const obj = { value: "done" }; let status = "";` +
+		` switch (` + "`" + `state${` + "`" + `1` + "`" + `}` + "`" + `) {` +
+		` case ` + "`" + `state${` + "`" + `1` + "`" + `}` + "`" + `:` +
+		` status = ` + "`" + `hit${` + "`" + `!` + "`" + `}` + "`" + `; break;` +
+		` default: status = "miss"; }` +
+		` host.echo(` + "`" + `call${` + "`" + `arg` + "`" + `}` + "`" + `, new Box().read(), pick(), obj[` + "`" + `val${` + "`" + `ue` + "`" + `}` + "`" + `], status)`
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: source})
+	if err != nil {
+		t.Fatalf("Dispatch(nested template literal scanner boundaries) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "ok" {
+		t.Fatalf("Dispatch(nested template literal scanner boundaries) value = %#v, want string ok", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host call method = %q, want echo", call.method)
+	}
+	if len(call.args) != 5 {
+		t.Fatalf("host call args len = %d, want 5", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindString || call.args[0].String != "callarg" {
+		t.Fatalf("host call arg[0] = %#v, want string callarg", call.args[0])
+	}
+	if call.args[1].Kind != ValueKindString || call.args[1].String != "outerinner" {
+		t.Fatalf("host call arg[1] = %#v, want string outerinner", call.args[1])
+	}
+	if call.args[2].Kind != ValueKindString || call.args[2].String != "defaultvalue" {
+		t.Fatalf("host call arg[2] = %#v, want string defaultvalue", call.args[2])
+	}
+	if call.args[3].Kind != ValueKindString || call.args[3].String != "done" {
+		t.Fatalf("host call arg[3] = %#v, want string done", call.args[3])
+	}
+	if call.args[4].Kind != ValueKindString || call.args[4].String != "hit!" {
+		t.Fatalf("host call arg[4] = %#v, want string hit!", call.args[4])
 	}
 }
 
@@ -5153,7 +5251,7 @@ func TestDispatchSupportsArrowFunctions(t *testing.T) {
 	}
 	runtime := NewRuntime(host)
 
-	result, err := runtime.Dispatch(DispatchRequest{Source: `let identity = x => x; let collect = (...items) => items; host.echo(identity("fine"), collect(1, 2, 3))`})
+	result, err := runtime.Dispatch(DispatchRequest{Source: `let identity = x => x; let render = () => ` + "`" + `arrow${` + "`" + `body;value` + "`" + `}` + "`" + `; let collect = (...items) => items; host.echo(identity("fine"), collect(1, 2, 3), render())`})
 	if err != nil {
 		t.Fatalf("Dispatch(arrow functions) error = %v", err)
 	}
@@ -5167,8 +5265,8 @@ func TestDispatchSupportsArrowFunctions(t *testing.T) {
 	if call.method != "echo" {
 		t.Fatalf("host call method = %q, want echo", call.method)
 	}
-	if len(call.args) != 2 {
-		t.Fatalf("host call args len = %d, want 2", len(call.args))
+	if len(call.args) != 3 {
+		t.Fatalf("host call args len = %d, want 3", len(call.args))
 	}
 	if call.args[0].Kind != ValueKindString || call.args[0].String != "fine" {
 		t.Fatalf("host call arg[0] = %#v, want string fine", call.args[0])
@@ -5187,6 +5285,9 @@ func TestDispatchSupportsArrowFunctions(t *testing.T) {
 	}
 	if call.args[1].Array[2].Kind != ValueKindNumber || call.args[1].Array[2].Number != 3 {
 		t.Fatalf("host call arg[1].Array[2] = %#v, want number 3", call.args[1].Array[2])
+	}
+	if call.args[2].Kind != ValueKindString || call.args[2].String != "arrowbody;value" {
+		t.Fatalf("host call arg[2] = %#v, want string arrowbody;value", call.args[2])
 	}
 }
 
@@ -9563,7 +9664,7 @@ func TestClassicJSStatementParserPreservesRegexLiteralAfterWhitespace(t *testing
 	})
 
 	t.Run("array-destructuring", func(t *testing.T) {
-		parser := &classicJSStatementParser{source: `[value = /^server\/?[^/]+$/.test(path)] = rhs`}
+		parser := &classicJSStatementParser{source: `[value = ` + "`" + `arr${` + "`" + `ay` + "`" + `}` + "`" + `] = rhs`}
 		elements, _, ok, err := parser.tryParseArrayDestructuringAssignmentTarget()
 		if err != nil {
 			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() error = %v", err)
@@ -9571,7 +9672,7 @@ func TestClassicJSStatementParserPreservesRegexLiteralAfterWhitespace(t *testing
 		if !ok {
 			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() ok = false, want true")
 		}
-		want := []string{`value = /^server\/?[^/]+$/.test(path)`}
+		want := []string{`value = ` + "`" + `arr${` + "`" + `ay` + "`" + `}` + "`" + ``}
 		if len(elements) != len(want) {
 			t.Fatalf("tryParseArrayDestructuringAssignmentTarget() len = %d, want %d; got %#v", len(elements), len(want), elements)
 		}

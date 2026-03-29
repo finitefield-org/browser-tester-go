@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +73,10 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNumberConstructor(args)
 		}), true, nil
+	case path == "parseInt":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserParseInt(args)
+		}), true, nil
 	case strings.HasPrefix(path, "Number."):
 		value, err := resolveNumberReference(strings.TrimPrefix(path, "Number."))
 		return value, true, err
@@ -130,6 +135,10 @@ func resolveObjectReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectPrototypeHasOwnPropertyCall(args)
 		}), nil
+	case "hasOwn":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectHasOwn(args)
+		}), nil
 	case "assign":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectAssign(session, store, args)
@@ -145,6 +154,10 @@ func resolveObjectReference(session *Session, store *dom.Store, path string) (sc
 	case "getOwnPropertySymbols":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectGetOwnPropertySymbols(args)
+		}), nil
+	case "getOwnPropertyNames":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectGetOwnPropertyNames(args)
 		}), nil
 	case "keys":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -163,36 +176,70 @@ func browserObjectPrototypeHasOwnPropertyCall(args []script.Value) (script.Value
 		return script.UndefinedValue(), fmt.Errorf("Object.prototype.hasOwnProperty.call expects 2 arguments")
 	}
 
-	key := script.ToJSString(args[1])
-	switch args[0].Kind {
+	key := browserPropertyKeyString(args[1])
+	if args[0].Kind == script.ValueKindNull || args[0].Kind == script.ValueKindUndefined {
+		return script.UndefinedValue(), fmt.Errorf("Object.prototype.hasOwnProperty.call requires an object receiver")
+	}
+	return script.BoolValue(browserObjectHasOwnValue(args[0], key)), nil
+}
+
+func browserObjectHasOwn(args []script.Value) (script.Value, error) {
+	if len(args) != 2 {
+		return script.UndefinedValue(), fmt.Errorf("Object.hasOwn expects 2 arguments")
+	}
+	if args[0].Kind == script.ValueKindNull || args[0].Kind == script.ValueKindUndefined {
+		return script.UndefinedValue(), fmt.Errorf("Object.hasOwn requires an object receiver")
+	}
+	return script.BoolValue(browserObjectHasOwnValue(args[0], browserPropertyKeyString(args[1]))), nil
+}
+
+func browserObjectHasOwnValue(value script.Value, key string) bool {
+	switch value.Kind {
 	case script.ValueKindObject:
-		for i := len(args[0].Object) - 1; i >= 0; i-- {
-			if args[0].Object[i].Key == key {
-				return script.BoolValue(true), nil
-			}
-		}
-		return script.BoolValue(false), nil
+		return browserObjectHasOwnKey(value.Object, key)
 	case script.ValueKindArray:
 		if key == "length" {
-			return script.BoolValue(true), nil
+			return true
 		}
 		if index, ok := browserArrayIndexFromString(key); ok {
-			return script.BoolValue(index >= 0 && index < len(args[0].Array)), nil
+			return index >= 0 && index < len(value.Array)
 		}
-		return script.BoolValue(false), nil
+		return false
 	case script.ValueKindString:
 		if key == "length" {
-			return script.BoolValue(true), nil
+			return true
 		}
 		if index, ok := browserArrayIndexFromString(key); ok {
-			return script.BoolValue(index >= 0 && index < len([]rune(args[0].String))), nil
+			return index >= 0 && index < len([]rune(value.String))
 		}
-		return script.BoolValue(false), nil
-	case script.ValueKindNull, script.ValueKindUndefined:
-		return script.UndefinedValue(), fmt.Errorf("Object.prototype.hasOwnProperty.call requires an object receiver")
+		return false
+	case script.ValueKindFunction:
+		return key == "prototype" && script.IsConstructibleFunctionValue(value)
 	default:
-		return script.BoolValue(false), nil
+		return false
 	}
+}
+
+func browserObjectHasOwnKey(entries []script.ObjectEntry, key string) bool {
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if script.IsInternalObjectKey(entry.Key) {
+			continue
+		}
+		if script.IsSymbolObjectKey(key) {
+			if entry.Key == key {
+				return true
+			}
+			continue
+		}
+		if script.IsSymbolObjectKey(entry.Key) {
+			continue
+		}
+		if entry.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func browserArrayIndexFromString(key string) (int, bool) {
@@ -230,6 +277,14 @@ func resolveJSONReference(path string) (script.Value, error) {
 
 func resolveNumberReference(path string) (script.Value, error) {
 	switch strings.TrimPrefix(path, ".") {
+	case "parseInt":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserParseInt(args)
+		}), nil
+	case "isInteger":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserIsInteger(args)
+		}), nil
 	case "isFinite":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if len(args) != 1 {
@@ -244,6 +299,102 @@ func resolveNumberReference(path string) (script.Value, error) {
 		return script.NumberValue(math.NaN()), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Number."+path))
+}
+
+func browserParseInt(args []script.Value) (script.Value, error) {
+	if len(args) == 0 {
+		return script.NumberValue(math.NaN()), nil
+	}
+
+	source := strings.TrimSpace(script.ToJSString(args[0]))
+	radix := 0
+	if len(args) > 1 && args[1].Kind != script.ValueKindUndefined && args[1].Kind != script.ValueKindNull {
+		number, err := coerceNumber(args[1])
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		if !math.IsNaN(number) && !math.IsInf(number, 0) {
+			radix = int(math.Trunc(number))
+		}
+	}
+
+	sign := 1
+	if strings.HasPrefix(source, "+") {
+		source = source[1:]
+	} else if strings.HasPrefix(source, "-") {
+		sign = -1
+		source = source[1:]
+	}
+
+	if radix == 0 {
+		if len(source) >= 2 && source[0] == '0' && (source[1] == 'x' || source[1] == 'X') {
+			radix = 16
+			source = source[2:]
+		} else {
+			radix = 10
+		}
+	}
+
+	if radix < 2 || radix > 36 {
+		return script.NumberValue(math.NaN()), nil
+	}
+	if radix == 16 && len(source) >= 2 && source[0] == '0' && (source[1] == 'x' || source[1] == 'X') {
+		source = source[2:]
+	}
+
+	digits := browserParseIntDigits(source, radix)
+	if digits == "" {
+		return script.NumberValue(math.NaN()), nil
+	}
+
+	parsed := new(big.Int)
+	if _, ok := parsed.SetString(digits, radix); !ok {
+		return script.NumberValue(math.NaN()), nil
+	}
+	if sign < 0 {
+		parsed.Neg(parsed)
+	}
+	number, _ := new(big.Float).SetInt(parsed).Float64()
+	return script.NumberValue(number), nil
+}
+
+func browserIsInteger(args []script.Value) (script.Value, error) {
+	if len(args) == 0 {
+		return script.BoolValue(false), nil
+	}
+	if args[0].Kind != script.ValueKindNumber {
+		return script.BoolValue(false), nil
+	}
+	value := args[0].Number
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return script.BoolValue(false), nil
+	}
+	return script.BoolValue(math.Trunc(value) == value), nil
+}
+
+func browserParseIntDigits(source string, radix int) string {
+	end := 0
+	for end < len(source) {
+		digit := browserParseIntDigitValue(source[end])
+		if digit < 0 || digit >= radix {
+			break
+		}
+		end++
+	}
+	return source[:end]
+}
+
+func browserParseIntDigitValue(ch byte) int {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return int(ch - '0')
+	case ch >= 'a' && ch <= 'z':
+		return int(ch-'a') + 10
+	case ch >= 'A' && ch <= 'Z':
+		return int(ch-'A') + 10
+	default:
+		return -1
+	}
 }
 
 func resolveMathReference(session *Session, path string) (script.Value, error) {
@@ -419,6 +570,17 @@ func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (
 			elements = append(elements, script.StringValue(string(ch)))
 		}
 	case script.ValueKindObject:
+		if setEntries, ok := script.SetEntries(source); ok {
+			elements = append([]script.Value(nil), setEntries...)
+			break
+		}
+		if mapEntries, ok := script.MapEntries(source); ok {
+			elements = make([]script.Value, 0, len(mapEntries))
+			for _, entry := range mapEntries {
+				elements = append(elements, script.ArrayValue([]script.Value{entry.Key, entry.Value}))
+			}
+			break
+		}
 		lengthValue, ok := objectProperty(source, "length")
 		if !ok {
 			return script.UndefinedValue(), fmt.Errorf("Array.from expects array-like object with length")
@@ -763,6 +925,59 @@ func browserObjectGetOwnPropertySymbols(args []script.Value) (script.Value, erro
 		symbols = append(symbols, symbol)
 	}
 	return script.ArrayValue(symbols), nil
+}
+
+func browserObjectGetOwnPropertyNames(args []script.Value) (script.Value, error) {
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("Object.getOwnPropertyNames expects 1 argument")
+	}
+	source := args[0]
+	_, ok, err := browserObjectAssignSourceValue(source)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	if !ok {
+		return script.UndefinedValue(), fmt.Errorf("Cannot convert undefined or null to object")
+	}
+	names := make([]script.Value, 0)
+	seen := make(map[string]struct{})
+	appendName := func(name string) {
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, script.StringValue(name))
+	}
+	switch source.Kind {
+	case script.ValueKindArray:
+		for i := range source.Array {
+			appendName(strconv.Itoa(i))
+		}
+		appendName("length")
+		for _, key := range uniqueObjectKeys(source.Object) {
+			appendName(key)
+		}
+	case script.ValueKindString:
+		for i := range []rune(source.String) {
+			appendName(strconv.Itoa(i))
+		}
+		appendName("length")
+		for _, key := range uniqueObjectKeys(source.Object) {
+			appendName(key)
+		}
+	case script.ValueKindFunction:
+		for _, key := range uniqueObjectKeys(source.Object) {
+			appendName(key)
+		}
+		if script.IsConstructibleFunctionValue(source) {
+			appendName("prototype")
+		}
+	default:
+		for _, key := range uniqueObjectKeys(source.Object) {
+			appendName(key)
+		}
+	}
+	return script.ArrayValue(names), nil
 }
 
 func browserJSONParse(args []script.Value) (script.Value, error) {

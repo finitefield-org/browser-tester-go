@@ -335,6 +335,16 @@ func MapEntries(value Value) ([]MapEntry, bool) {
 	return out, true
 }
 
+func SetEntries(value Value) ([]Value, bool) {
+	if value.Kind != ValueKindObject || value.SetState == nil {
+		return nil, false
+	}
+	entries := value.SetState.entries
+	out := make([]Value, len(entries))
+	copy(out, entries)
+	return out, true
+}
+
 func classicJSObjectSizeValue(value Value) (Value, bool) {
 	if value.Kind != ValueKindObject {
 		return UndefinedValue(), false
@@ -424,6 +434,25 @@ func classicJSMapVirtualProperty(value Value, name string) (Value, bool, error) 
 			}
 			return BoolValue(value.MapState.delete(key)), nil
 		}), true, nil
+	case "forEach":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), fmt.Errorf("Map.forEach expects a callback")
+			}
+			callback := args[0]
+			thisArg, hasReceiver := callbackReceiver(args)
+			entries := value.MapState.entryList()
+			for _, entry := range entries {
+				if _, err := InvokeCallableValue(CurrentInvokeHost(), callback, []Value{
+					entry.value,
+					entry.key,
+					value,
+				}, thisArg, hasReceiver); err != nil {
+					return UndefinedValue(), err
+				}
+			}
+			return UndefinedValue(), nil
+		}), true, nil
 	default:
 		return UndefinedValue(), false, nil
 	}
@@ -431,7 +460,7 @@ func classicJSMapVirtualProperty(value Value, name string) (Value, bool, error) 
 
 func classicJSMapHasVirtualProperty(name string) bool {
 	switch name {
-	case "constructor", "size", "get", "set", "has", "delete":
+	case "constructor", "size", "get", "set", "has", "delete", "forEach":
 		return true
 	default:
 		return false

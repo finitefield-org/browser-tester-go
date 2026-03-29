@@ -6,78 +6,22 @@ upkeep.
 
 ## P0 - Keep The Current Surface Stable
 
-- [ ] Keep `go test ./...` and the release checklist green before merging any new slice.
-- [ ] Keep unsupported behavior explicit. If a slice is incomplete, return a typed unsupported error
+- [x] Keep `go test ./...` and the release checklist green before merging any new slice.
+- [x] Keep unsupported behavior explicit. If a slice is incomplete, return a typed unsupported error
   instead of silently falling back.
-- [ ] Keep the public facade thin. Do not add new `Harness` setters when a debug view or mock family
+- [x] Keep the public facade thin. Do not add new `Harness` setters when a debug view or mock family
   is a better fit.
-- [ ] Keep public API changes synchronized with `README.md`, `go/doc/capability-matrix.md`,
+- [x] Keep public API changes synchronized with `README.md`, `go/doc/capability-matrix.md`,
   `go/doc/subsystem-map.md`, and `go/doc/mock-guide.md`.
 
 ## P1 - Hardening
 
-- [ ] Add or refresh internal subsystem tests for any change under `internal/dom`,
+- [x] Add or refresh internal subsystem tests for any change under `internal/dom`,
   `internal/runtime`, `internal/script`, or `internal/mocks`.
-- [ ] Add or refresh public contract tests for any new or changed facade behavior.
-- [ ] Add regression tests for every bug fix that changes observable behavior.
-- [ ] Keep fuzz and property coverage current for parser, selector, scheduler, location/history,
+- [x] Add or refresh public contract tests for any new or changed facade behavior.
+- [x] Add regression tests for every bug fix that changes observable behavior.
+- [x] Keep fuzz and property coverage current for parser, selector, scheduler, location/history,
   cookie/window.name, and mock-registry boundaries.
-
-## Rust Test Migration Backlog
-
-The Rust test sources under `browser-tester/tests` still need Go equivalents. The HTML fixtures
-under `tests/fixtures/` and the proptest seed file under `tests/proptest-regressions/` are support
-artifacts, so they are not listed as port tasks.
-
-### Suite Wiring
-
-- [x] `tests/integration_suite.rs`
-- [x] `tests/integration_cases/mod.rs`
-
-### Integration Regression Cases
-
-- [x] `tests/integration_cases/css_escape_global.rs`
-- [x] `tests/integration_cases/debug_parse.rs`
-- [x] `tests/integration_cases/issue_134_137_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_138_141_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_151_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_153_154_156_157_159_160_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_155_158_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_165_166_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_167_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_168_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_170_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_171_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_173_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_174_175_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_181_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_183_184_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_185_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_190_191_192_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_193_194_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_199_finitefield_site_regression.rs`
-- [x] `tests/integration_cases/issue_202_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_203_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_211_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_212_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/issue_212_finitefield_site_runtime_regressions.rs`
-- [x] `tests/integration_cases/issue_213_array_indexof_regression.rs`
-- [x] `tests/integration_cases/issue_214_array_map_outer_let_regression.rs`
-- [x] `tests/integration_cases/issue_215_nested_helper_const_leak_regression.rs`
-- [x] `tests/integration_cases/issue_217_return_slot_regression.rs`
-- [x] `tests/integration_cases/issue_218_bulk_callback_const_binding_regression.rs`
-- [x] `tests/integration_cases/issue_219_finitefield_site_regressions.rs`
-- [x] `tests/integration_cases/open_issue_regressions.rs`
-- [x] `tests/integration_cases/regression_parser_fixes.rs`
-- [x] `tests/integration_cases/regression_real_world_html.rs`
-- [x] `tests/integration_cases/regression_runtime_state_fixes.rs`
-- [x] `tests/integration_cases/typed_array_from_map_fn.rs`
-
-### Adjacent Test Coverage
-
-- [x] `tests/contract_harness_core.rs`
-- [x] `tests/parser_property_fuzz_test.rs`
-- [x] `tests/runtime_property_fuzz_test.rs`
 
 ## P2 - Script Syntax Backlog
 
@@ -174,11 +118,13 @@ artifacts, so they are not listed as port tasks.
   inputs and textareas.
 - [x] `:active` / `:hover` also include labeled controls via bounded label lookup.
 - [x] `:default` keeps initial checked/selected snapshots for checkable controls and options.
-- [ ] Add new selector slices only when a user-visible gap appears and the HTML standard calls for
+- [x] Add new selector slices only when a user-visible gap appears and the HTML standard calls for
   it.
-- [ ] Add additional live collection slices only when a concrete gap justifies the cost.
-- [ ] Extend beyond the current bounded pseudo-class slice only when a specific scenario requires
+- [x] Add additional live collection slices only when a concrete gap justifies the cost.
+- [x] Extend beyond the current bounded pseudo-class slice only when a specific scenario requires
   it.
+- [x] Add bounded `:fullscreen` support when a fullscreen-flagged element is already present in the
+  bounded DOM slice.
 
 ## P2 - DOM Surface Backlog
 
@@ -210,20 +156,33 @@ failing test proves the surface is user-visible.
 
 ## P2 - Reflection, Mutation, And Serialization
 
-- [ ] Fill any missing bounded reflection helpers or tree-mutation slices only when tests expose a
+- [x] Fill any missing bounded reflection helpers or tree-mutation slices only when tests expose a
   gap.
 - [x] Keep `textarea` reset-default synchronization covered by tests.
 - [x] Keep `WriteHTML()` rollback behavior covered by tests.
 - [x] Verify live collections remain coherent after mutation.
+- [x] Expose bounded attribute-name reflection through `GetAttributeNames()` / `element.getAttributeNames()`.
+- [x] Expose bounded attribute-node reflection through `getAttributeNode()` / `element.getAttributeNode()`.
+- [x] Expose bounded attribute-node reflection through `GetAttributeNode()` / `Harness.GetAttributeNode()`.
+- [x] Expose bounded attribute-count reflection through `HasAttributes()` / `Harness.HasAttributes()` /
+  `element.hasAttributes()`.
+- [x] Expose bounded attribute-toggle reflection through `ToggleAttribute()` / `Harness.ToggleAttribute()` /
+  `element.toggleAttribute()`.
+- [x] Expose bounded tree-navigation containment through `Contains()` / `Harness.Contains()`.
+- [x] Expose bounded tree-navigation document-position comparison through `CompareDocumentPosition()` /
+  `Harness.CompareDocumentPosition()`.
+- [x] Expose bounded tree-navigation connection checks through `IsConnected()` / `Harness.IsConnected()`.
+- [x] Expose bounded tree-navigation child-count checks through `HasChildNodes()` /
+  `Harness.HasChildNodes()` / `element.hasChildNodes()`.
 
 ## P3 - Mock Families And Debug Surfaces
 
-- [ ] Add new mock families only through the runtime registry and expose them through the typed
+- [x] Add new mock families only through the runtime registry and expose them through the typed
   facade.
-- [ ] Document seed state, capture behavior, failure injection, reset semantics, and a minimal
+- [x] Document seed state, capture behavior, failure injection, reset semantics, and a minimal
   example for every new mock family.
-- [ ] Add new debug snapshots only when they explain a real regression or user-visible gap.
-- [ ] Avoid growing `Harness` into a bag of `set_*` methods.
+- [x] Add new debug snapshots only when they explain a real regression or user-visible gap.
+- [x] Avoid growing `Harness` into a bag of `set_*` methods.
 
 ## Explicit Non-Goals
 

@@ -1222,6 +1222,48 @@ func evalClassicJSProgramWithAllowAwaitAndYield(source string, host HostBindings
 	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, allowYield, false, resumeState, UndefinedValue(), false, privateClass, nil)
 }
 
+func scanTemplateLiteralSource(text string, index int) (int, error) {
+	if index >= len(text) || text[index] != '`' {
+		return index, NewError(ErrorKindParse, "unexpected end of script source")
+	}
+
+	index++
+	for index < len(text) {
+		switch text[index] {
+		case '\\':
+			index++
+			if index >= len(text) {
+				return index, NewError(ErrorKindParse, "unterminated escape sequence in template literal")
+			}
+			index++
+		case '`':
+			return index + 1, nil
+		case '$':
+			if index+1 < len(text) && text[index+1] == '{' {
+				next, err := scanTemplateInterpolationSource(text, index+2)
+				if err != nil {
+					return index, err
+				}
+				index = next
+				continue
+			}
+			index++
+		default:
+			index++
+		}
+	}
+
+	return index, NewError(ErrorKindParse, "unterminated template literal")
+}
+
+func scanTemplateInterpolationSource(text string, index int) (int, error) {
+	parser := &classicJSStatementParser{source: text, pos: index}
+	if _, err := parser.consumeTemplateInterpolationSource(); err != nil {
+		return index, err
+	}
+	return parser.pos, nil
+}
+
 func splitScriptStatements(source string) ([]string, error) {
 	text := strings.TrimSpace(source)
 	if text == "" {
@@ -1438,9 +1480,14 @@ func splitScriptStatements(source string) ([]string, error) {
 			canStartRegex = false
 			lastWasDot = false
 		case '`':
-			quote = ch
+			next, err := scanTemplateLiteralSource(text, i)
+			if err != nil {
+				return nil, err
+			}
+			i = next - 1
 			canStartRegex = false
 			lastWasDot = false
+			continue
 		case '/':
 			if i+1 < len(text) {
 				switch text[i+1] {

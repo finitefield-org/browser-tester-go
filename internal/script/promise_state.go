@@ -3,7 +3,12 @@ package script
 type classicJSPromiseState struct {
 	resolved bool
 	value    Value
-	waiters  []func(Value)
+	waiters  []classicJSPromiseWaiter
+}
+
+type classicJSPromiseWaiter struct {
+	host   HostBindings
+	waiter func(Value)
 }
 
 type classicJSAwaitSignal struct {
@@ -32,11 +37,13 @@ func (s *classicJSPromiseState) resolve(value Value) {
 	}
 	s.resolved = true
 	s.value = value
-	waiters := append([]func(Value){}, s.waiters...)
+	waiters := append([]classicJSPromiseWaiter(nil), s.waiters...)
 	s.waiters = nil
-	for _, waiter := range waiters {
-		if waiter != nil {
-			waiter(value)
+	for _, item := range waiters {
+		if item.waiter != nil {
+			restoreHost := setCurrentInvokeHost(item.host)
+			item.waiter(value)
+			restoreHost()
 		}
 	}
 }
@@ -49,7 +56,10 @@ func (s *classicJSPromiseState) addWaiter(waiter func(Value)) {
 		waiter(s.value)
 		return
 	}
-	s.waiters = append(s.waiters, waiter)
+	s.waiters = append(s.waiters, classicJSPromiseWaiter{
+		host:   CurrentInvokeHost(),
+		waiter: waiter,
+	})
 }
 
 func classicJSAwaitSignalDetails(err error) (*classicJSPromiseState, classicJSResumeState, bool) {

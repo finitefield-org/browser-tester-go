@@ -87,7 +87,7 @@ runtime slices.
   `firstElementChild`, `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
   `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node
   `nodeValue` / `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` /
-  `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
+  `after()` / `append()` / `prepend()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation), `location`, `history`, `navigator`, `URL` /
   `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
@@ -99,13 +99,19 @@ runtime slices.
   stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Map` / `Number` / `String`
   / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
   `Array.isArray()`,
-  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.floor()` / `Math.min()` / `Math.max()` /
+  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
+  `Number.parseInt()` / global `parseInt()` / `Number.isInteger()` / `Number.isFinite()` / `Number.NaN` / global `NaN`, `Math.abs()` / `Math.floor()` / `Math.min()` / `Math.max()` /
   `Math.round()` / `Math.random()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
-  `String.prototype.charCodeAt()` / `String.prototype.indexOf()` / `String.prototype.replace()` /
-  `String.prototype.split()`, `String.prototype.startsWith()` / `String.prototype.endsWith()`,
-  `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
-  `Array.prototype.every()` / `Array.prototype.fill()` / `Array.prototype.reverse()` /
+  `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
+  `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
+  `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
+  `String.prototype.trimEnd()` / `String.prototype.padStart()` / `String.prototype.padEnd()` /
+  `String.prototype.repeat()` / `String.prototype.toLowerCase()` / `String.prototype.toUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare()` /
+  `String.prototype.startsWith()` / `String.prototype.endsWith()`,
+  `Array.prototype.at()` / `Array.prototype.includes()` / `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
+  `Array.prototype.findLast()` / `Array.prototype.findLastIndex()` /
+  `Array.prototype.every()` / `Array.prototype.fill()` / `Array.prototype.copyWithin()` /
+  `Array.prototype.reduce()` / `Array.prototype.reduceRight()` / `Array.prototype.reverse()` /
   `Array.prototype.sort()` / `flatMap()` / `splice()` / `unshift()`,
   `Number.prototype.toPrecision()` /
   `toExponential()` / `Date.prototype.toLocaleDateString()`, and the bounded array/string/number/date prototype helpers used by
@@ -294,6 +300,8 @@ runtime slices.
   the builder.
 - `DebugView.NavigatorOnLine()` exposes the effective `navigator.onLine` state and whether it was
   explicitly seeded on the builder.
+- `DebugView.NavigatorLanguage()` exposes the seeded `navigator.language` locale read and whether
+  it was explicitly configured through the navigator mock family.
 - `DebugView` also exposes the configured failure seed readouts `OpenFailure`, `CloseFailure`,
   `PrintFailure`, and `ScrollFailure` when those builder fields are set.
 - `DebugView.NodeCount()` exposes the current DOM node count as a read-only inspection integer after
@@ -417,10 +425,19 @@ runtime slices.
   - `AssertValue`
   - `AssertChecked`
   - `AssertExists`
+- tree-navigation helper:
+  - `Contains`
+  - `CompareDocumentPosition`
+  - `IsConnected`
+  - `HasChildNodes`
 - attribute reflection helpers:
   - `GetAttribute`
+  - `GetAttributeNames`
+  - `GetAttributeNode`
   - `HasAttribute`
+  - `HasAttributes`
   - `SetAttribute`
+  - `ToggleAttribute`
   - `RemoveAttribute`
 - live class/dataset views:
   - `ClassList`
@@ -431,16 +448,20 @@ runtime slices.
   - `OuterHTML`
   - `SetInnerHTML`
   - `ReplaceChildren`
+  - `Before`
+  - `After`
   - `CloneNode`
   - `SetTextContent`
   - `SetOuterHTML`
   - `InsertAdjacentHTML`
+  - `ReplaceWith`
   - `RemoveNode`
   - `WriteHTML`
 - typed mock families for:
   - `Fetch`
   - `Dialogs`
   - `Clipboard`
+  - `Navigator` (including seeded `navigator.language` reads)
   - `Location`
   - `Open`
   - `Close`
@@ -448,7 +469,7 @@ runtime slices.
   - `Scroll`
   - `MatchMedia` (including listener capture injection through the mock registry)
   - `Downloads`
-  - `FileInput`
+  - `FileInput` (including seeded file contents for `input.files[0].text()` reads and empty-string clears via `value = ""`)
   - `Storage` (including change capture through `Events()`)
 
 ## Current Scope
@@ -470,7 +491,8 @@ runtime slices.
   `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
   `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
   empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
-  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
+  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:picture-in-picture`,
+  `:fullscreen`, `:modal`, `:popover-open`,
   `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
   `:focus-within`, `:target`, `:target-within`, `:is()` /
   `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
@@ -491,7 +513,7 @@ runtime slices.
   `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
   element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
   `NodeList` with bounded `forEach()` / `entries()` / `keys()` / `values()` parity, a minimal live `HTMLCollection` covers `children`, `document.images`,
-  `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
+  `document.embeds`, `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
   `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
   `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
   `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
@@ -508,33 +530,36 @@ runtime slices.
   `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation, and bounded element reflection reads and writes
   on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`,
-  `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
+  `attributes`, `getAttributeNode()`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
   plus direct element text mutations through call-result property chains such as
   `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
   activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,
   `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
   `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`, `remove()`,
   `element.getBoundingClientRect()`, and `element.click()`, plus element and document node mutation helpers
-  such as `replaceChildren()`, `before()`, `after()`, `replaceWith()`, and `remove()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
+  such as `append()`, `prepend()`, `replaceChildren()`, `before()`, `after()`, `replaceWith()`, and `remove()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
   `document` / `element` `addEventListener`, `details.open`, `element.classList`, `element.dataset`,
   `input.select()`, `select.value`, `select.selectedIndex`, `document.execCommand("copy")`,
-  `document.createElement()`, `setAttribute()`, `click()`, `appendChild()` / `removeChild()`,
-  browser-global locale reads like `navigator.language`,
+  `document.createElement()`, `setAttribute()`, `toggleAttribute()`, `click()`, `appendChild()` / `removeChild()`,
+  browser-global locale reads like `navigator.language` (which can be seeded through
+  `Harness.Mocks().Navigator().SeedLanguage("fr-FR")`),
   browser-global connectivity reads like `navigator.onLine` (which can be seeded through
   `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap tests), the live `URL` /
   `URLSearchParams` query-state bridge, `window.scrollX` / `window.scrollY` read helpers, and
   `window.confirm()` / `window.prompt()` driven dialog flows through the typed dialog mock family.
-- Bounded attribute reflection helpers are available through `GetAttribute` / `HasAttribute` /
-  `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
+- Bounded attribute reflection helpers are available through `GetAttribute` / `GetAttributeNames` /
+  `GetAttributeNode` / `HasAttribute` / `HasAttributes` / `SetAttribute` / `ToggleAttribute` /
+  `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.
 - Internal bounded `classList` / `dataset` helpers still live in `internal/dom` and remain the
   source of truth for the live views.
 - The public tree-mutation slice (`InnerHTML`, `TextContent`, `OuterHTML`, `SetInnerHTML`,
-  `ReplaceChildren`, `CloneNode`, `SetTextContent`, `SetOuterHTML`, `InsertAdjacentHTML`,
-  `RemoveNode`, `WriteHTML`) now delegates into `internal/dom`; on `textarea`, content mutations
-  that change its contents keep the reset default value in sync, `CloneNode()` duplicates the
-  selected node and inserts the clone after the source, and `WriteHTML()` provides the bounded
-  document-write-style replay slice with rollback of DOM and session state on failure.
+  `ReplaceChildren`, `Before`, `After`, `CloneNode`, `SetTextContent`, `SetOuterHTML`,
+  `InsertAdjacentHTML`, `ReplaceWith`, `RemoveNode`, `WriteHTML`) now delegates into `internal/dom`;
+  on `textarea`, content mutations that change its contents keep the reset default value in sync,
+  `CloneNode()` duplicates the selected node and inserts the clone after the source, and
+  `WriteHTML()` provides the bounded document-write-style replay slice with rollback of DOM and
+  session state on failure.
 - Bounded web-storage helpers for inline scripts are available through `host:localStorageGetItem()`
   / `host:localStorageSetItem()` / `host:localStorageRemoveItem()` / `host:localStorageClear()` /
   `host:localStorageLength()` / `host:localStorageKey()` and `host:sessionStorageGetItem()` /
@@ -562,6 +587,6 @@ runtime slices.
 
 ## Issues
 
-- Start new issue drafts from [`issues/issue-template.md`](issues/issue-template.md).
+- Start new issue drafts from [`doc/issue-template.md`](doc/issue-template.md).
 - When you fill it out, keep the owning subsystem, test layer, reproduction steps, reproduction
   code, original failed command, and acceptance criteria explicit.

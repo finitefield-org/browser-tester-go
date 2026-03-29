@@ -942,6 +942,13 @@ func (v DebugView) NavigatorOnLine() (bool, bool) {
 	return v.session.NavigatorOnLine()
 }
 
+func (v DebugView) NavigatorLanguage() (string, bool) {
+	if v.session == nil {
+		return "", false
+	}
+	return v.session.NavigatorLanguage()
+}
+
 func (v DebugView) OpenFailure() string {
 	if v.session == nil {
 		return ""

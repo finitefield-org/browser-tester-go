@@ -10,7 +10,7 @@ import (
 
 func TestSessionInlineScriptsCanReadElementReflectionSurfaces(t *testing.T) {
 	session := NewSession(SessionConfig{
-		HTML: `<main><div id="box" class="alpha beta" style="color: green; background: transparent" data-x="1">Hello <strong>world</strong></div><div id="probe"></div><script>const box = document.querySelector("#box"); const firstAttr = box.attributes.item(0); const styleAttr = box.attributes.namedItem("style"); host:setTextContent("#probe", expr(box.className + "|" + box.innerText + "|" + box.outerText + "|" + box.style.cssText + "|" + box.style.length + "|" + box.style.item(0) + "|" + box.style.getPropertyValue("background") + "|" + box.attributes.length + "|" + firstAttr.name + "=" + firstAttr.value + "|" + styleAttr.value + "|" + box.attributes.namedItem("data-x").value))</script></main>`,
+		HTML: `<main><div id="box" class="alpha beta" style="color: green; background: transparent" data-x="1">Hello <strong>world</strong></div><div id="probe"></div><script>const box = document.querySelector("#box"); const firstAttr = box.attributes.item(0); const styleAttr = box.attributes.namedItem("style"); const dataAttr = box.getAttributeNode("data-x"); host:setTextContent("#probe", expr(box.className + "|" + box.innerText + "|" + box.outerText + "|" + box.style.cssText + "|" + box.style.length + "|" + box.style.item(0) + "|" + box.style.getPropertyValue("background") + "|" + box.attributes.length + "|" + firstAttr.name + "=" + firstAttr.value + "|" + styleAttr.value + "|" + dataAttr.name + "=" + dataAttr.value + "|" + String(box.getAttributeNode("missing") === null) + "|" + box.attributes.namedItem("data-x").value))</script></main>`,
 	})
 
 	store, err := session.ensureDOM()
@@ -23,7 +23,7 @@ func TestSessionInlineScriptsCanReadElementReflectionSurfaces(t *testing.T) {
 
 	if got, err := session.TextContent("#probe"); err != nil {
 		t.Fatalf("TextContent(#probe) after element reflection bridge error = %v", err)
-	} else if want := "alpha beta|Hello world|Hello world|color: green; background: transparent|2|color|transparent|4|id=box|color: green; background: transparent|1"; got != want {
+	} else if want := "alpha beta|Hello world|Hello world|color: green; background: transparent|2|color|transparent|4|id=box|color: green; background: transparent|data-x=1|true|1"; got != want {
 		t.Fatalf("TextContent(#probe) after element reflection bridge = %q, want %q", got, want)
 	}
 }

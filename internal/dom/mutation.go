@@ -53,6 +53,81 @@ func (s *Store) ReplaceChildren(nodeID NodeID, markup string) error {
 	return s.SetInnerHTML(nodeID, markup)
 }
 
+func (s *Store) Before(nodeID NodeID, markup string) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	if node.Parent == 0 {
+		return nil
+	}
+
+	fragmentIDs, err := s.parseFragmentNodes(markup)
+	if err != nil {
+		return err
+	}
+	if err := s.InsertNodeListBefore(nodeID, fragmentIDs); err != nil {
+		for _, childID := range fragmentIDs {
+			s.deleteSubtree(childID)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) After(nodeID NodeID, markup string) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	if node.Parent == 0 {
+		return nil
+	}
+
+	fragmentIDs, err := s.parseFragmentNodes(markup)
+	if err != nil {
+		return err
+	}
+	if err := s.InsertNodeListAfter(nodeID, fragmentIDs); err != nil {
+		for _, childID := range fragmentIDs {
+			s.deleteSubtree(childID)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ReplaceWith(nodeID NodeID, markup string) error {
+	if s == nil {
+		return fmt.Errorf("dom store is nil")
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return fmt.Errorf("invalid node id: %d", nodeID)
+	}
+	if node.Parent == 0 {
+		return nil
+	}
+
+	fragmentIDs, err := s.parseFragmentNodes(markup)
+	if err != nil {
+		return err
+	}
+	if err := s.ReplaceNodeWithChildren(nodeID, fragmentIDs); err != nil {
+		for _, childID := range fragmentIDs {
+			s.deleteSubtree(childID)
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Store) ReplaceChildrenWithNodeIDs(nodeID NodeID, childIDs []NodeID) error {
 	if s == nil {
 		return fmt.Errorf("dom store is nil")

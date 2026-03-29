@@ -448,6 +448,82 @@ func TestHTMLCollectionTracksDocumentImages(t *testing.T) {
 	}
 }
 
+func TestHTMLCollectionTracksDocumentEmbeds(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<embed id="first" src="/a"><div><embed name="second" src="/b"></div><p>text</p>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	embeds, err := store.Embeds()
+	if err != nil {
+		t.Fatalf("Embeds(document) error = %v", err)
+	}
+
+	if got, want := embeds.Length(), 2; got != want {
+		t.Fatalf("Embeds(document).Length() = %d, want %d", got, want)
+	}
+
+	firstID, ok := embeds.Item(0)
+	if !ok || firstID == 0 {
+		t.Fatalf("Embeds(document).Item(0) = (%d, %v), want first embed", firstID, ok)
+	}
+	firstNode := store.Node(firstID)
+	if firstNode == nil {
+		t.Fatalf("Embeds(document).Item(0) node = nil")
+	}
+	if got, want := firstNode.TagName, "embed"; got != want {
+		t.Fatalf("Embeds(document).Item(0) tag = %q, want %q", got, want)
+	}
+
+	secondID, ok := embeds.Item(1)
+	if !ok || secondID == 0 {
+		t.Fatalf("Embeds(document).Item(1) = (%d, %v), want second embed", secondID, ok)
+	}
+	secondNode := store.Node(secondID)
+	if secondNode == nil {
+		t.Fatalf("Embeds(document).Item(1) node = nil")
+	}
+	if got, want := secondNode.TagName, "embed"; got != want {
+		t.Fatalf("Embeds(document).Item(1) tag = %q, want %q", got, want)
+	}
+
+	if got, ok := embeds.NamedItem("first"); !ok || got != firstID {
+		t.Fatalf("Embeds(document).NamedItem(first) = (%d, %v), want (%d, true)", got, ok, firstID)
+	}
+	if got, ok := embeds.NamedItem("second"); !ok || got != secondID {
+		t.Fatalf("Embeds(document).NamedItem(second) = (%d, %v), want (%d, true)", got, ok, secondID)
+	}
+	if got, ok := embeds.NamedItem("ignored"); ok || got != 0 {
+		t.Fatalf("Embeds(document).NamedItem(ignored) = (%d, %v), want (0, false)", got, ok)
+	}
+
+	embedsIDs := embeds.IDs()
+	if len(embedsIDs) != 2 {
+		t.Fatalf("Embeds(document).IDs() len = %d, want 2", len(embedsIDs))
+	}
+	embedsIDs[0] = 999
+	if got, ok := embeds.Item(0); !ok || got != firstID {
+		t.Fatalf("Embeds(document) mutated via IDs() = (%d, %v), want (%d, true)", got, ok, firstID)
+	}
+
+	embedID := store.newNode(Node{
+		Kind:    NodeKindElement,
+		TagName: "embed",
+		Attrs: []Attribute{
+			{Name: "name", Value: "third", HasValue: true},
+			{Name: "src", Value: "/c", HasValue: true},
+		},
+	})
+	store.appendChild(store.DocumentID(), embedID)
+
+	if got, want := embeds.Length(), 3; got != want {
+		t.Fatalf("Embeds(document).Length() after mutation = %d, want %d", got, want)
+	}
+	if got, ok := embeds.NamedItem("third"); !ok || got != embedID {
+		t.Fatalf("Embeds(document).NamedItem(third) = (%d, %v), want (%d, true)", got, ok, embedID)
+	}
+}
+
 func TestHTMLCollectionTracksDocumentForms(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<form id="first"></form><div><form name="second"></form></div><p>text</p>`); err != nil {
@@ -1284,6 +1360,9 @@ func TestStoreChildrenRejectsUnsupportedNodes(t *testing.T) {
 	}
 	if _, err := nilStore.Images(); err == nil {
 		t.Fatalf("nil Images() error = nil, want dom store error")
+	}
+	if _, err := nilStore.Embeds(); err == nil {
+		t.Fatalf("nil Embeds() error = nil, want dom store error")
 	}
 	if _, err := nilStore.Forms(); err == nil {
 		t.Fatalf("nil Forms() error = nil, want dom store error")

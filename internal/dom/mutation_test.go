@@ -141,6 +141,42 @@ func TestIsConnectedTracksConnectionState(t *testing.T) {
 	}
 }
 
+func TestHasChildNodesReportsChildrenPresence(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child"></span></div><p id="sibling"></p></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	docID := store.DocumentID()
+	wrapID := mustSelectSingle(t, store, "#wrap")
+	targetID := mustSelectSingle(t, store, "#target")
+	childID := mustSelectSingle(t, store, "#child")
+	siblingID := mustSelectSingle(t, store, "#sibling")
+	orphanID, err := store.CreateElement("em")
+	if err != nil {
+		t.Fatalf("CreateElement(em) error = %v", err)
+	}
+
+	if !store.HasChildNodes(docID) {
+		t.Fatalf("HasChildNodes(document) = false, want true")
+	}
+	if !store.HasChildNodes(wrapID) {
+		t.Fatalf("HasChildNodes(#wrap) = false, want true")
+	}
+	if !store.HasChildNodes(targetID) {
+		t.Fatalf("HasChildNodes(#target) = false, want true")
+	}
+	if store.HasChildNodes(childID) {
+		t.Fatalf("HasChildNodes(#child) = true, want false")
+	}
+	if store.HasChildNodes(siblingID) {
+		t.Fatalf("HasChildNodes(#sibling) = true, want false")
+	}
+	if store.HasChildNodes(orphanID) {
+		t.Fatalf("HasChildNodes(orphan) = true, want false")
+	}
+}
+
 func TestRootNodeIDReturnsTreeRoot(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<section id="wrap"><div id="target"><span id="child">x</span></div></section>`); err != nil {
@@ -870,6 +906,31 @@ func TestCreateTextNodeReplaceChildAndInsertAdjacentNodeHelpers(t *testing.T) {
 	}
 }
 
+func TestBeforeAfterAndReplaceWithMarkup(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<section id="root"><span id="a">A</span><span id="b">B</span><span id="c">C</span></section>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	aID := mustSelectSingle(t, store, "#a")
+	bID := mustSelectSingle(t, store, "#b")
+	cID := mustSelectSingle(t, store, "#c")
+
+	if err := store.Before(bID, `<i id="before">x</i>`); err != nil {
+		t.Fatalf("Before(#b) error = %v", err)
+	}
+	if err := store.After(aID, `<i id="after">y</i>`); err != nil {
+		t.Fatalf("After(#a) error = %v", err)
+	}
+	if err := store.ReplaceWith(cID, `<strong id="replace">z</strong>`); err != nil {
+		t.Fatalf("ReplaceWith(#c) error = %v", err)
+	}
+
+	if got, want := store.DumpDOM(), `<section id="root"><span id="a">A</span><i id="after">y</i><i id="before">x</i><span id="b">B</span><strong id="replace">z</strong></section>`; got != want {
+		t.Fatalf("DumpDOM() after before/after/replaceWith = %q, want %q", got, want)
+	}
+}
+
 func TestInsertNodeListBeforeAfterAndReplaceNodeWithChildren(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<section id="root"><span id="a">A</span><span id="b">B</span><span id="c">C</span></section>`); err != nil {
@@ -929,6 +990,15 @@ func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	}
 	if err := nilStore.InsertAdjacentHTML(1, "beforeend", "<p>x</p>"); err == nil {
 		t.Fatalf("nil InsertAdjacentHTML() error = nil, want dom store error")
+	}
+	if err := nilStore.Before(1, "<p>x</p>"); err == nil {
+		t.Fatalf("nil Before() error = nil, want dom store error")
+	}
+	if err := nilStore.After(1, "<p>x</p>"); err == nil {
+		t.Fatalf("nil After() error = nil, want dom store error")
+	}
+	if err := nilStore.ReplaceWith(1, "<p>x</p>"); err == nil {
+		t.Fatalf("nil ReplaceWith() error = nil, want dom store error")
 	}
 	if _, err := nilStore.CreateTextNode("x"); err == nil {
 		t.Fatalf("nil CreateTextNode() error = nil, want dom store error")
@@ -990,6 +1060,15 @@ func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	if err := store.InsertAdjacentHTML(999, "beforeend", "<p>x</p>"); err == nil {
 		t.Fatalf("InsertAdjacentHTML(invalid) error = nil, want invalid node error")
 	}
+	if err := store.Before(999, "<p>x</p>"); err == nil {
+		t.Fatalf("Before(invalid) error = nil, want invalid node error")
+	}
+	if err := store.After(999, "<p>x</p>"); err == nil {
+		t.Fatalf("After(invalid) error = nil, want invalid node error")
+	}
+	if err := store.ReplaceWith(999, "<p>x</p>"); err == nil {
+		t.Fatalf("ReplaceWith(invalid) error = nil, want invalid node error")
+	}
 	if err := store.RemoveNode(999); err == nil {
 		t.Fatalf("RemoveNode(invalid) error = nil, want invalid node error")
 	}
@@ -1040,6 +1119,24 @@ func TestMutationHelpersRejectInvalidInputs(t *testing.T) {
 	}
 	if got, want := store.NodeCount(), beforeCount; got != want {
 		t.Fatalf("NodeCount() after invalid InsertAdjacentText = %d, want %d", got, want)
+	}
+	if err := store.Before(targetID, "x"); err == nil {
+		t.Fatalf("Before(document child text) error = nil, want document-parent error")
+	}
+	if got, want := store.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid Before = %d, want %d", got, want)
+	}
+	if err := store.After(targetID, "x"); err == nil {
+		t.Fatalf("After(document child text) error = nil, want document-parent error")
+	}
+	if got, want := store.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid After = %d, want %d", got, want)
+	}
+	if err := store.ReplaceWith(targetID, "x"); err == nil {
+		t.Fatalf("ReplaceWith(document child text) error = nil, want document-parent error")
+	}
+	if got, want := store.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid ReplaceWith = %d, want %d", got, want)
 	}
 	if err := store.InsertNodeListBefore(targetID, []NodeID{targetID}); err == nil {
 		t.Fatalf("InsertNodeListBefore(self) error = nil, want self-insertion error")

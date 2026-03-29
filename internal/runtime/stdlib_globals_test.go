@@ -145,18 +145,127 @@ func TestRunScriptSupportsObjectKeysSortAndReverse(t *testing.T) {
 	}
 }
 
-func TestRunScriptSupportsObjectPrototypeHasOwnPropertyCall(t *testing.T) {
+func TestRunScriptSupportsNumberParseInt(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
-	result, err := session.runScriptOnStore(dom.NewStore(), `const object = { alpha: 1 }; const array = [1, 2]; [Object.prototype.hasOwnProperty.call(object, "alpha"), Object.prototype.hasOwnProperty.call(object, "beta"), Object.prototype.hasOwnProperty.call(array, "0"), Object.prototype.hasOwnProperty.call(array, "length"), Object.prototype.hasOwnProperty.call(array, "2")].join("|")`)
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Number.parseInt("42", 10),
+		parseInt("0x10"),
+		Number.parseInt("  -0x10", 16)
+	].join("|")`)
 	if err != nil {
 		t.Fatalf("runScriptOnStore() error = %v", err)
 	}
 	if result.Kind != script.ValueKindString {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
-	if got, want := result.String, "true|false|true|true|false"; got != want {
+	if got, want := result.String, "42|16|-16"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsNumberIsInteger(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Number.isInteger(42),
+		Number.isInteger(1.5),
+		Number.isInteger(Number.NaN),
+		Number.isInteger("42")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|false|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsObjectPrototypeHasOwnPropertyCall(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const sym = Symbol("token"); const object = { alpha: 1, [sym]: 2 }; const array = [1, 2]; const fn = function Base() {}; [Object.prototype.hasOwnProperty.call(object, "alpha"), Object.prototype.hasOwnProperty.call(object, "beta"), Object.prototype.hasOwnProperty.call(array, "0"), Object.prototype.hasOwnProperty.call(array, "length"), Object.prototype.hasOwnProperty.call(array, "2"), Object.prototype.hasOwnProperty.call(object, sym), Object.prototype.hasOwnProperty.call(object, Symbol("token")), Object.prototype.hasOwnProperty.call(fn, "prototype")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|true|true|false|true|false|true"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsObjectHasOwn(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const sym = Symbol("token"); const object = { alpha: 1, [sym]: 2 }; const array = [1, 2]; const text = "go"; const fn = function Base() {}; [Object.hasOwn(object, "alpha"), Object.hasOwn(object, "beta"), Object.hasOwn(array, "0"), Object.hasOwn(array, "length"), Object.hasOwn(array, "2"), Object.hasOwn(text, "0"), Object.hasOwn(text, "length"), Object.hasOwn(object, sym), Object.hasOwn(object, Symbol("token")), Object.hasOwn(fn, "prototype")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|true|true|false|true|true|true|false|true"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsObjectGetOwnPropertyNames(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const sym = Symbol("token"); const object = { alpha: 1, [sym]: 2 }; const array = [1, 2]; const text = "go"; const fn = function Base() {}; [Object.getOwnPropertyNames(object).join(","), Object.getOwnPropertyNames(array).join(","), Object.getOwnPropertyNames(text).join(","), Object.getOwnPropertyNames(fn).join(",")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "alpha|0,1,length|0,1,length|prototype"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsObjectHasOwnOnNullishReceiver(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	if _, err := session.runScriptOnStore(dom.NewStore(), `Object.hasOwn(null, "alpha")`); err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want runtime error")
+	} else if !strings.Contains(err.Error(), "Object.hasOwn requires an object receiver") {
+		t.Fatalf("runScriptOnStore() error = %v, want nullish receiver error", err)
+	}
+}
+
+func TestRunScriptRejectsObjectHasOwnWrongArity(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	if _, err := session.runScriptOnStore(dom.NewStore(), `Object.hasOwn({ alpha: 1 })`); err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want runtime error")
+	} else if !strings.Contains(err.Error(), "Object.hasOwn expects 2 arguments") {
+		t.Fatalf("runScriptOnStore() error = %v, want arity error", err)
+	}
+}
+
+func TestRunScriptRejectsObjectGetOwnPropertyNamesOnNullishReceiver(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	if _, err := session.runScriptOnStore(dom.NewStore(), `Object.getOwnPropertyNames(null)`); err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want runtime error")
+	} else if !strings.Contains(err.Error(), "Cannot convert undefined or null to object") {
+		t.Fatalf("runScriptOnStore() error = %v, want nullish conversion error", err)
+	}
+}
+
+func TestRunScriptRejectsObjectGetOwnPropertyNamesWrongArity(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	if _, err := session.runScriptOnStore(dom.NewStore(), `Object.getOwnPropertyNames()`); err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want runtime error")
+	} else if !strings.Contains(err.Error(), "Object.getOwnPropertyNames expects 1 argument") {
+		t.Fatalf("runScriptOnStore() error = %v, want arity error", err)
 	}
 }
 
@@ -621,6 +730,23 @@ func TestRunScriptSupportsSetConstructorAndMethods(t *testing.T) {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
 	if got, want := result.String, "2|false|true"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsArrayFromSet(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		Array.from(new Set(["alpha", "alpha", "beta"])).join(",")
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "alpha,beta"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
 	}
 }

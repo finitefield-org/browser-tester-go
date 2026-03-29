@@ -11,6 +11,8 @@ Owns:
 - `Error` and its classification helpers
 - `DebugView`
 - `MockRegistryView`
+- read-only inspection helpers on `DebugView` such as `NavigatorOnLine()` and
+  `NavigatorLanguage()`
 - public live view and snapshot helper types such as `ClassListView`, `DatasetView`, `OptionLabel`,
   `OptionValue`, and `OptgroupLabel`
 - public tree-mutation helpers such as `TextContent`, `SetTextContent`, `ReplaceChildren`, and

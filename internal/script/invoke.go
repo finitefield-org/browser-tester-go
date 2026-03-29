@@ -1,8 +1,26 @@
 package script
 
+var currentInvokeHost HostBindings
+
+// CurrentInvokeHost returns the host bindings currently active for callback invocation.
+func CurrentInvokeHost() HostBindings {
+	return currentInvokeHost
+}
+
+func setCurrentInvokeHost(host HostBindings) func() {
+	prev := currentInvokeHost
+	currentInvokeHost = host
+	return func() {
+		currentInvokeHost = prev
+	}
+}
+
 // InvokeCallableValue invokes a bounded callable value with an optional receiver.
 // The host is used for host-reference resolution during the call.
 func InvokeCallableValue(host HostBindings, callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
+	restoreHost := setCurrentInvokeHost(host)
+	defer restoreHost()
+
 	parser := &classicJSStatementParser{
 		host:      host,
 		env:       newClassicJSEnvironment(),

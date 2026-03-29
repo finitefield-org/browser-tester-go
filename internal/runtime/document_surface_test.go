@@ -14,6 +14,8 @@ func TestDocumentPropertyBridgeDuringAndAfterBootstrap(t *testing.T) {
 <div id="after-ready"></div>
 <div id="title"></div>
 <div id="url"></div>
+<div id="embeds"></div>
+<embed id="embed" src="/asset">
 <div id="base-uri"></div>
 <div id="document-uri"></div>
 <div id="default-view"></div>
@@ -24,7 +26,7 @@ func TestDocumentPropertyBridgeDuringAndAfterBootstrap(t *testing.T) {
 <div id="dir"></div>
 <div id="active"></div>
 <input id="field" type="text" value="seed">
-<script>host:setTextContent("#during-ready", expr(document.readyState)); host:setTextContent("#title", expr(document.title)); host:setTextContent("#url", expr(document.URL)); host:setTextContent("#base-uri", expr(document.baseURI)); host:setTextContent("#document-uri", expr(document.documentURI)); host:setTextContent("#default-view", expr(document.defaultView.location.href)); host:setTextContent("#doctype", expr(document.doctype === null ? "null" : "non-null")); host:setTextContent("#compat-mode", expr(document.compatMode)); host:setTextContent("#content-type", expr(document.contentType)); host:setTextContent("#design-mode", expr(document.designMode)); host:setTextContent("#dir", expr(document.dir))</script>
+<script>host:setTextContent("#during-ready", expr(document.readyState)); host:setTextContent("#title", expr(document.title)); host:setTextContent("#url", expr(document.URL)); host:setTextContent("#embeds", expr(document.embeds.length)); host:setTextContent("#base-uri", expr(document.baseURI)); host:setTextContent("#document-uri", expr(document.documentURI)); host:setTextContent("#default-view", expr(document.defaultView.location.href)); host:setTextContent("#doctype", expr(document.doctype === null ? "null" : "non-null")); host:setTextContent("#compat-mode", expr(document.compatMode)); host:setTextContent("#content-type", expr(document.contentType)); host:setTextContent("#design-mode", expr(document.designMode)); host:setTextContent("#dir", expr(document.dir))</script>
 </main></body></html>`,
 	})
 
@@ -51,6 +53,9 @@ func TestDocumentPropertyBridgeDuringAndAfterBootstrap(t *testing.T) {
 	}
 	if got, want := textContent("#url"), "https://example.test/app?mode=docs#ready"; got != want {
 		t.Fatalf("TextContent(#url) = %q, want %q", got, want)
+	}
+	if got, want := textContent("#embeds"), "1"; got != want {
+		t.Fatalf("TextContent(#embeds) = %q, want %q", got, want)
 	}
 	if got, want := textContent("#base-uri"), "https://example.test/app?mode=docs#ready"; got != want {
 		t.Fatalf("TextContent(#base-uri) = %q, want %q", got, want)

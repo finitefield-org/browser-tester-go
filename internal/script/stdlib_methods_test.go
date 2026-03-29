@@ -73,6 +73,69 @@ func TestDispatchSupportsStringEndsWith(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsStringSearchMethodsWithUnicode(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["あいう".indexOf("い"), "あいう".indexOf("い", 2), "あいう".indexOf("", 5), "あいう".lastIndexOf("い"), "あいう".lastIndexOf("い", 2), "あいう".startsWith("あ"), "あいう".startsWith("い", 1), "あいう".endsWith("う"), "あいう".endsWith("い", 2), "あいう".includes("い", 1), "あいう".includes("い", 2)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.search methods unicode) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.search methods unicode) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|-1|3|1|1|true|true|true|true|true|false" {
+		t.Fatalf("Dispatch(String.search methods unicode) value = %q, want %q", result.Value.String, "1|-1|3|1|1|true|true|true|true|true|false")
+	}
+}
+
+func TestDispatchRejectsInvalidStringIncludesArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".includes()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.includes()) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "String.includes expects 1 argument") {
+		t.Fatalf("Dispatch(String.includes()) error = %q, want arity error", got)
+	}
+}
+
+func TestDispatchSupportsStringSearch(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["abc".search(), "abc".search("b"), "abc".search(/b/), "あいう".search("い"), "あいう".search(/い/)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.search) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.search) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "-1|1|1|1|1" {
+		t.Fatalf("Dispatch(String.search) value = %q, want %q", result.Value.String, "-1|1|1|1|1")
+	}
+}
+
+func TestDispatchSupportsStringCharAt(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["あいう".charAt(-1), "あいう".charAt(1), "あいう".charAt(3)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.charAt) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.charAt) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "|い|" {
+		t.Fatalf("Dispatch(String.charAt) value = %q, want %q", result.Value.String, "|い|")
+	}
+}
+
 func TestDispatchSupportsStringSplit(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -90,11 +153,95 @@ func TestDispatchSupportsStringSplit(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsStringTrimStartEnd(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["  Go  ".trimStart(), "  Go  ".trimEnd()].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.trimStart/trimEnd) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.trimStart/trimEnd) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "Go  |  Go" {
+		t.Fatalf("Dispatch(String.trimStart/trimEnd) value = %q, want %q", result.Value.String, "Go  |  Go")
+	}
+}
+
+func TestDispatchSupportsStringCaseConversion(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["Go".toLowerCase(), "go".toUpperCase()].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.toLowerCase/toUpperCase) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.toLowerCase/toUpperCase) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "go|GO" {
+		t.Fatalf("Dispatch(String.toLowerCase/toUpperCase) value = %q, want %q", result.Value.String, "go|GO")
+	}
+}
+
+func TestDispatchSupportsStringConcat(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["go".concat(), "go".concat("!", 1, null, undefined), "あ".concat("い", "う")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.concat) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.concat) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "go|go!1nullundefined|あいう" {
+		t.Fatalf("Dispatch(String.concat) value = %q, want %q", result.Value.String, "go|go!1nullundefined|あいう")
+	}
+}
+
+func TestDispatchSupportsStringLocaleCompare(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["b".localeCompare("a"), "a".localeCompare("a"), "a".localeCompare("b")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.localeCompare) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.localeCompare) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|0|-1" {
+		t.Fatalf("Dispatch(String.localeCompare) value = %q, want %q", result.Value.String, "1|0|-1")
+	}
+}
+
+func TestDispatchRejectsInvalidStringLocaleCompareLocales(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"a".localeCompare("b", "en")`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.localeCompare locales) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.localeCompare locales) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(String.localeCompare locales) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+}
+
 func TestDispatchSupportsStringReplaceCallbackReplacer(t *testing.T) {
 	runtime := NewRuntime(nil)
 
 	result, err := runtime.Dispatch(DispatchRequest{
-		Source: `["A1B2".replace(/([A-Z])([0-9])/g, (match, letter, digit, offset, input) => letter.toLowerCase() + digit + ":" + offset), "g".replace("g", (match, offset, input) => match + ":" + offset + ":" + input)].join("|")`,
+		Source: `["A1B2".replace(/([A-Z])([0-9])/g, (match, letter, digit, offset, input) => letter.toLowerCase() + digit + ":" + offset), "g".replace("g", (match, offset, input) => match + ":" + offset + ":" + input), "あ1い2".replace(/([0-9])/g, (match, digit, offset, input) => digit + ":" + offset)].join("|")`,
 	})
 	if err != nil {
 		t.Fatalf("Dispatch(String.replace callback) error = %v", err)
@@ -102,8 +249,237 @@ func TestDispatchSupportsStringReplaceCallbackReplacer(t *testing.T) {
 	if result.Value.Kind != ValueKindString {
 		t.Fatalf("Dispatch(String.replace callback) kind = %q, want %q", result.Value.Kind, ValueKindString)
 	}
-	if result.Value.String != "a1:0b2:2|g:0:g" {
-		t.Fatalf("Dispatch(String.replace callback) value = %q, want %q", result.Value.String, "a1:0b2:2|g:0:g")
+	if result.Value.String != "a1:0b2:2|g:0:g|あ1:1い2:3" {
+		t.Fatalf("Dispatch(String.replace callback) value = %q, want %q", result.Value.String, "a1:0b2:2|g:0:g|あ1:1い2:3")
+	}
+}
+
+func TestDispatchSupportsStringReplaceAll(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["gooo".replaceAll("oo", "b"), "gooo".replaceAll(/o/g, "a")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.replaceAll) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.replaceAll) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "gbo|gaaa" {
+		t.Fatalf("Dispatch(String.replaceAll) value = %q, want %q", result.Value.String, "gbo|gaaa")
+	}
+}
+
+func TestDispatchRejectsInvalidStringReplaceAllRegexFlags(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"gooo".replaceAll(/o/, "a")`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.replaceAll(/o/)) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.replaceAll(/o/)) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.replaceAll(/o/)) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidStringReplaceAllCallbackReplacer(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"gooo".replaceAll("oo", (match) => match)`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.replaceAll callback) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.replaceAll callback) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindUnsupported {
+		t.Fatalf("Dispatch(String.replaceAll callback) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+	}
+}
+
+func TestDispatchSupportsStringMatchAll(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["A1B2".matchAll(/([A-Z])([0-9])/g).map(match => match.join(":")).join("|"), "gooo".matchAll("oo").map(match => match[0]).join(",")].join("~")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.matchAll) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.matchAll) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "A1:A:1|B2:B:2~oo" {
+		t.Fatalf("Dispatch(String.matchAll) value = %q, want %q", result.Value.String, "A1:A:1|B2:B:2~oo")
+	}
+}
+
+func TestDispatchRejectsInvalidStringMatchAllRegexFlags(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"gooo".matchAll(/o/)`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.matchAll(/o/)) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.matchAll(/o/)) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.matchAll(/o/)) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchSupportsArrayAndStringAt(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[ [1, 2, 3].at(0), [1, 2, 3].at(-1), [1, 2, 3].at(3) === undefined, "アイウ".at(1) ].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array/String.at) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array/String.at) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|3|true|イ" {
+		t.Fatalf("Dispatch(Array/String.at) value = %q, want %q", result.Value.String, "1|3|true|イ")
+	}
+}
+
+func TestDispatchSupportsStringCodePointAt(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["あいう".codePointAt(-1) === undefined, "あいう".codePointAt(1), "あいう".codePointAt(3) === undefined].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.codePointAt) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.codePointAt) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|12356|true" {
+		t.Fatalf("Dispatch(String.codePointAt) value = %q, want %q", result.Value.String, "true|12356|true")
+	}
+}
+
+func TestDispatchRejectsInvalidStringCharAtArgument(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".charAt({})`})
+	if err == nil {
+		t.Fatalf("Dispatch(\"go\".charAt({})) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(\"go\".charAt({})) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(\"go\".charAt({})) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidArrayAtArgument(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[].at({})`})
+	if err == nil {
+		t.Fatalf("Dispatch([].at({})) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch([].at({})) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch([].at({})) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidStringAtArgument(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".at({})`})
+	if err == nil {
+		t.Fatalf("Dispatch(\"go\".at({})) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(\"go\".at({})) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(\"go\".at({})) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidStringCodePointAtArgument(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".codePointAt({})`})
+	if err == nil {
+		t.Fatalf("Dispatch(\"go\".codePointAt({})) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(\"go\".codePointAt({})) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(\"go\".codePointAt({})) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchSupportsArrayFindLastAndFindLastIndex(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[[1, 2, 3, 2].findLast(v => v === 2), [1, 2, 3, 2].findLastIndex(v => v === 2), [1, 2, 3].findLastIndex(v => v === 4)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.findLast/findLastIndex) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.findLast/findLastIndex) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "2|3|-1" {
+		t.Fatalf("Dispatch(Array.findLast/findLastIndex) value = %q, want %q", result.Value.String, "2|3|-1")
+	}
+}
+
+func TestDispatchRejectsInvalidArrayFindLastArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[].findLast()`})
+	if err == nil {
+		t.Fatalf("Dispatch([].findLast()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch([].findLast()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch([].findLast()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidArrayFindLastIndexArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[].findLastIndex()`})
+	if err == nil {
+		t.Fatalf("Dispatch([].findLastIndex()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch([].findLastIndex()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch([].findLastIndex()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
 	}
 }
 
@@ -158,6 +534,105 @@ func TestDispatchSupportsStringPadStart(t *testing.T) {
 	}
 }
 
+func TestDispatchRejectsInvalidStringPadStartArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".padStart()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.padStart()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.padStart()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.padStart()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchSupportsStringPadEnd(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["7".padEnd(3, "0"), "7".padEnd(2, "0"), "7".padEnd(5, "abc")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.padEnd) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.padEnd) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "700|70|7abca" {
+		t.Fatalf("Dispatch(String.padEnd) value = %q, want %q", result.Value.String, "700|70|7abca")
+	}
+}
+
+func TestDispatchSupportsStringPadUnicodeFill(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["go".padStart(3, "あ"), "go".padEnd(3, "あ")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.padStart/padEnd unicode fill) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.padStart/padEnd unicode fill) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "あgo|goあ" {
+		t.Fatalf("Dispatch(String.padStart/padEnd unicode fill) value = %q, want %q", result.Value.String, "あgo|goあ")
+	}
+}
+
+func TestDispatchSupportsStringRepeat(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["go".repeat(3), "go".repeat(2.9), "go".repeat("2"), "あ".repeat(3)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.repeat) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.repeat) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "gogogo|gogo|gogo|あああ" {
+		t.Fatalf("Dispatch(String.repeat) value = %q, want %q", result.Value.String, "gogogo|gogo|gogo|あああ")
+	}
+}
+
+func TestDispatchRejectsInvalidStringPadEndArity(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".padEnd()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.padEnd()) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.padEnd()) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.padEnd()) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidStringRepeatCount(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".repeat(-1)`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.repeat(-1)) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.repeat(-1)) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.repeat(-1)) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
 func TestDispatchSupportsStringSliceWithUnicodeRunes(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -172,6 +647,23 @@ func TestDispatchSupportsStringSliceWithUnicodeRunes(t *testing.T) {
 	}
 	if result.Value.String != "アイ" {
 		t.Fatalf("Dispatch(String.slice) value = %q, want %q", result.Value.String, "アイ")
+	}
+}
+
+func TestDispatchSupportsStringSubstringWithUnicodeRunes(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["アイウ".substring(0, 2), "アイウ".substring(2, 0), "アイウ".substring(-1, 2), "アイウ".substring(1)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.substring) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.substring) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "アイ|アイ|アイ|イウ" {
+		t.Fatalf("Dispatch(String.substring) value = %q, want %q", result.Value.String, "アイ|アイ|アイ|イウ")
 	}
 }
 
@@ -303,6 +795,57 @@ func TestDispatchSupportsArrayFill(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsArrayCopyWithin(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const values = [1, 2, 3, 4, 5]; values.copyWithin(0, 3); const mixed = ["a", "b", "c", "d", "e"]; mixed.copyWithin(-2, 1, 3); [values.join(","), mixed.join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.copyWithin) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.copyWithin) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "4,5,3,4,5|a,b,c,b,c" {
+		t.Fatalf("Dispatch(Array.copyWithin) value = %q, want %q", result.Value.String, "4,5,3,4,5|a,b,c,b,c")
+	}
+}
+
+func TestDispatchSupportsArrayIncludes(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[1, 2, NaN].includes(NaN) + "|" + [1, 2, 3].includes(2, -2) + "|" + [1, 2, 3].includes(1, 1)`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.includes) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.includes) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|true|false" {
+		t.Fatalf("Dispatch(Array.includes) value = %q, want %q", result.Value.String, "true|true|false")
+	}
+}
+
+func TestDispatchSupportsArrayReduceAndReduceRight(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[[1, 2, 3, 4].reduce((acc, value) => acc + value), [1, 2, 3, 4].reduce((acc, value) => acc + value, 10), ["a", "b", "c"].reduceRight((acc, value) => acc + value)].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.reduce/reduceRight) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.reduce/reduceRight) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "10|20|cba" {
+		t.Fatalf("Dispatch(Array.reduce/reduceRight) value = %q, want %q", result.Value.String, "10|20|cba")
+	}
+}
+
 func TestDispatchRejectsInvalidArrayFillArity(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -312,6 +855,30 @@ func TestDispatchRejectsInvalidArrayFillArity(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "Array.fill expects a value") {
 		t.Fatalf("Dispatch(Array.fill()) error = %q, want value error", got)
+	}
+}
+
+func TestDispatchRejectsInvalidArrayReduceOnEmptyArray(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[].reduce((acc, value) => acc + value)`})
+	if err == nil {
+		t.Fatalf("Dispatch([].reduce()) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Array.reduce requires at least one value") {
+		t.Fatalf("Dispatch([].reduce()) error = %q, want empty-array error", got)
+	}
+}
+
+func TestDispatchRejectsInvalidArrayReduceRightOnEmptyArray(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `[].reduceRight((acc, value) => acc + value)`})
+	if err == nil {
+		t.Fatalf("Dispatch([].reduceRight()) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Array.reduceRight requires at least one value") {
+		t.Fatalf("Dispatch([].reduceRight()) error = %q, want empty-array error", got)
 	}
 }
 
@@ -329,6 +896,23 @@ func TestDispatchSupportsArraySortWithComparator(t *testing.T) {
 	}
 	if result.Value.String != "1,2,3|1,2,3" {
 		t.Fatalf("Dispatch(Array.sort) value = %q, want %q", result.Value.String, "1,2,3|1,2,3")
+	}
+}
+
+func TestDispatchSupportsArraySortComparatorWithObjectSubtraction(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const rows = [{ start: { index: 2 }, end: { index: 4 } }, { start: { index: 1 }, end: { index: 3 } }]; rows.sort((left, right) => left.start - right.start || left.end - right.end); rows.length`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.sort object subtraction) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber {
+		t.Fatalf("Dispatch(Array.sort object subtraction) kind = %q, want %q", result.Value.Kind, ValueKindNumber)
+	}
+	if result.Value.Number != 2 {
+		t.Fatalf("Dispatch(Array.sort object subtraction) value = %v, want 2", result.Value.Number)
 	}
 }
 
@@ -453,6 +1037,26 @@ func TestDispatchSupportsBrowserDateToLocaleDateString(t *testing.T) {
 	}
 	if result.Value.String != "2/3/2024" {
 		t.Fatalf("Dispatch(Date.toLocaleDateString) value = %q, want %q", result.Value.String, "2/3/2024")
+	}
+}
+
+func TestDispatchSupportsBrowserDateGetFullYear(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2026, time.March, 29, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.getFullYear()`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.getFullYear) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber {
+		t.Fatalf("Dispatch(Date.getFullYear) kind = %q, want %q", result.Value.Kind, ValueKindNumber)
+	}
+	if result.Value.Number != 2026 {
+		t.Fatalf("Dispatch(Date.getFullYear) value = %v, want %v", result.Value.Number, 2026)
 	}
 }
 

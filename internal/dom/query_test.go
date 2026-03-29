@@ -946,11 +946,12 @@ func TestQueryHelpersSupportHeadingLevelPseudoClass(t *testing.T) {
 
 func TestQueryHelpersSupportMediaPseudoClasses(t *testing.T) {
 	store := NewStore()
-	if err := store.BootstrapHTML(`<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`); err != nil {
+	if err := store.BootstrapHTML(`<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="pip" picture-in-picture></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`); err != nil {
 		t.Fatalf("BootstrapHTML() error = %v", err)
 	}
 
 	songID := mustSelectSingle(t, store, "#song")
+	pipID := mustSelectSingle(t, store, "#pip")
 	pausedID := mustSelectSingle(t, store, "#paused")
 	seekingID := mustSelectSingle(t, store, "#seeking")
 	mutedID := mustSelectSingle(t, store, "#muted")
@@ -963,6 +964,9 @@ func TestQueryHelpersSupportMediaPseudoClasses(t *testing.T) {
 	}
 	if !ok || gotID != songID {
 		t.Fatalf("QuerySelector(audio:playing) = (%d, %v), want (%d, true)", gotID, ok, songID)
+	}
+	if gotID, ok, err := store.QuerySelector("video:picture-in-picture"); err != nil || !ok || gotID != pipID {
+		t.Fatalf("QuerySelector(video:picture-in-picture) = (%d, %v, %v), want (%d, true, nil)", gotID, ok, err, pipID)
 	}
 
 	nodes, err := store.QuerySelectorAll("video:buffering")
@@ -993,6 +997,12 @@ func TestQueryHelpersSupportMediaPseudoClasses(t *testing.T) {
 	}
 	if matched, err := store.Matches(stalledID, ":volume-locked"); err != nil || !matched {
 		t.Fatalf("Matches(#stalled, :volume-locked) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(pipID, ":picture-in-picture"); err != nil || !matched {
+		t.Fatalf("Matches(#pip, :picture-in-picture) = (%v, %v), want (true, nil)", matched, err)
+	}
+	if matched, err := store.Matches(mutedID, ":picture-in-picture"); err != nil || matched {
+		t.Fatalf("Matches(#muted, :picture-in-picture) = (%v, %v), want (false, nil)", matched, err)
 	}
 }
 
@@ -1664,6 +1674,13 @@ func TestQueryHelpersSupportModalPseudoClass(t *testing.T) {
 	if !ok || gotID != playerID {
 		t.Fatalf("QuerySelector(video:modal) = (%d, %v), want (%d, true)", gotID, ok, playerID)
 	}
+	gotID, ok, err = store.QuerySelector("video:fullscreen")
+	if err != nil {
+		t.Fatalf("QuerySelector(video:fullscreen) error = %v", err)
+	}
+	if !ok || gotID != playerID {
+		t.Fatalf("QuerySelector(video:fullscreen) = (%d, %v), want (%d, true)", gotID, ok, playerID)
+	}
 
 	matched, err := store.Matches(dialogID, "dialog:modal")
 	if err != nil {
@@ -1679,12 +1696,26 @@ func TestQueryHelpersSupportModalPseudoClass(t *testing.T) {
 	if !matched {
 		t.Fatalf("Matches(video:modal) = false, want true")
 	}
+	matched, err = store.Matches(playerID, "video:fullscreen")
+	if err != nil {
+		t.Fatalf("Matches(video:fullscreen) error = %v", err)
+	}
+	if !matched {
+		t.Fatalf("Matches(video:fullscreen) = false, want true")
+	}
 	matched, err = store.Matches(mustSelectSingle(t, store, "#other"), "#other:modal")
 	if err != nil {
 		t.Fatalf("Matches(#other:modal) error = %v", err)
 	}
 	if matched {
 		t.Fatalf("Matches(#other:modal) = true, want false")
+	}
+	matched, err = store.Matches(mustSelectSingle(t, store, "#other"), "#other:fullscreen")
+	if err != nil {
+		t.Fatalf("Matches(#other:fullscreen) error = %v", err)
+	}
+	if matched {
+		t.Fatalf("Matches(#other:fullscreen) = true, want false")
 	}
 }
 

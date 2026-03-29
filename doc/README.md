@@ -108,14 +108,15 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `nextSibling`,
   `previousSibling`, `nextElementSibling`, `previousElementSibling`, `childElementCount`,
   `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node `nodeValue` / `data` reads and writes,
-  `wholeText` reads, `splitText()` mutation, `before()` / `after()` / `replaceWith()` / `remove()`
-  node mutation helpers, and `normalize()` mutation,
+  `wholeText` reads, `splitText()` mutation, `before()` / `after()` / `append()` / `prepend()` /
+  `replaceWith()` / `remove()` node mutation helpers, and `normalize()` mutation,
   bounded element reflection reads and writes for `className`, `innerText`, `outerText`, `style`,
-  `attributes`, and `classList`, and `dataset` reads, writes, and deletes through the same surface,
+  `attributes`, `getAttributeNode()`, and `classList`, plus `GetAttributeNames()` through the same attribute-reflection
+  slice, and `dataset` reads, writes, and deletes through the same surface,
   plus bounded standard DOM
   surfaces such as `window` / `document` / `element` `addEventListener`, `details.open`,
   `element.classList`, `element.dataset`, `input.select()`, `select.value`, `select.selectedIndex`,
-  `document.execCommand("copy")`, `document.createElement()`, `setAttribute()`, `appendChild()` /
+  `document.execCommand("copy")`, `document.createElement()`, `setAttribute()` / `toggleAttribute()`, `appendChild()` /
   `removeChild()` / `remove()`, browser-global locale reads like `navigator.language`, browser-global
   connectivity reads like `navigator.onLine`
   (which can be seeded through `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap
@@ -127,16 +128,28 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   bounded `matchMedia` state through `MatchMedia()`. The same bridge also exposes a bounded
   browser stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Number` / `String` /
   `Boolean` / `Math` / `Date`, including template-facing helpers such as `Array.from()` /
-  `Array.isArray()`, `Object.assign()` / `Object.keys()` / `Object.prototype.hasOwnProperty.call()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
-  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.indexOf()` /
-  `String.prototype.startsWith()` / `String.prototype.endsWith()`, `Array.prototype.findIndex()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
+  `Array.isArray()`, `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
+  `Number.parseInt()` / global `parseInt()` / `Number.isInteger()` / `Number.isFinite()` / `Number.NaN`, `Math.abs()` / `Math.min()` / `Math.max()` /
+  `Math.random()`, `Date.now()`, `Intl.DateTimeFormat()`, `String.prototype.charAt()` /
+  `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replaceAll()` / `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` / `String.prototype.startsWith()` / `String.prototype.endsWith()` / `String.prototype.trim()` /
+  `String.prototype.trimStart()` / `String.prototype.trimEnd()` / `String.prototype.padStart()` /
+  `String.prototype.padEnd()` / `String.prototype.repeat()` / `String.prototype.toLowerCase()` /
+  `String.prototype.toUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare()`,
+  `Array.prototype.at()` / `Array.prototype.includes()` / `Array.prototype.findIndex()` /
+  `Array.prototype.findLast()` / `Array.prototype.findLastIndex()` / `Array.prototype.every()` /
+  `Array.prototype.fill()` / `Array.prototype.copyWithin()` / `Array.prototype.reduce()` /
+  `Array.prototype.reduceRight()` / `Array.prototype.reverse()` / `Array.prototype.sort()` /
+  `flatMap()` / `splice()` / `unshift()`, `Number.prototype.toPrecision()` /
   `toExponential()`, the bounded array/string/number/date prototype helpers used by
   template-driven bootstrap, and the live `URL` / `URLSearchParams` query-state bridge
   (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
   `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for query-string handling,
   plus `Object.entries()` / `Object.values()` for plain-object enumeration, and bounded promise-style
-  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`. The `MatchMedia` mock family also exposes
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`. The `Navigator`
+  mock family seeds locale reads like `navigator.language`. The `FileInput`
+  mock family also supports seeded file contents via `SeedFileText(selector, fileName, text)`,
+  exposes those contents through `input.files[0].text()`, and accepts empty-string `value`
+  clears on file inputs. The `MatchMedia` mock family also exposes
   listener capture injection through the registry for tests, and the `Storage` mock family exposes
   deterministic change capture through `Events()` with ordered `seed` / `set` / `remove` / `clear`
   operations.
@@ -144,6 +157,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `PrintFailure`, and `ScrollFailure` as read-only inspection data.
 - `DebugView.NavigatorOnLine()` exposes the effective `navigator.onLine` state and whether it was
   explicitly seeded on the builder.
+- `DebugView.NavigatorLanguage()` exposes the seeded `navigator.language` locale read and whether
+  it was explicitly configured through the navigator mock family.
 - `DebugView.SelectCount()` exposes the current select element count as read-only inspection data.
 - `DebugView.TemplateCount()` exposes the current template element count as read-only inspection
   data.
@@ -239,7 +254,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
   `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
   empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
-  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
+  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:picture-in-picture`,
+  `:fullscreen`, `:modal`, `:popover-open`,
   `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
   `:focus-within`, `:target`, `:target-within`, `:is()` /
   `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
@@ -260,7 +276,7 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
   element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
   `NodeList` with bounded `forEach()` / `entries()` / `keys()` / `values()` parity, a minimal live `HTMLCollection` covers `children`, `document.images`,
-  `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
+  `document.embeds`, `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
   `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
   `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
   `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
@@ -276,17 +292,21 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   `data` reads and writes, `wholeText` reads, `splitText()` mutation, `before()` / `after()` /
   `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation.
-- Bounded attribute reflection helpers are available for `GetAttribute` / `HasAttribute` /
-  `SetAttribute` / `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
+- Bounded attribute reflection helpers are available for `GetAttribute` / `GetAttributeNames` /
+  `GetAttributeNode` / `HasAttribute` / `HasAttributes` / `SetAttribute` / `ToggleAttribute` /
+  `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
   DOM slice through the facade.
+- The public facade also exposes selector-based `Contains()`, `CompareDocumentPosition()`,
+  `IsConnected()`, and `HasChildNodes()` helpers against the same bounded tree-navigation slice.
 - Internal bounded `classList` / `dataset` helpers still live in `internal/dom` and remain the
   source of truth for the live views.
 - The public tree-mutation slice (`InnerHTML`, `TextContent`, `OuterHTML`, `SetInnerHTML`,
-  `ReplaceChildren`, `CloneNode`, `SetTextContent`, `SetOuterHTML`, `InsertAdjacentHTML`,
-  `RemoveNode`, `WriteHTML`) is wired through the facade; on `textarea`, content mutations that
-  change its contents keep the reset default value in sync, `CloneNode()` duplicates the selected
-  node and inserts the clone after the source, and `WriteHTML()` covers the bounded
-  document-write-style replay slice with rollback of DOM and session state on failure.
+  `ReplaceChildren`, `Before`, `After`, `CloneNode`, `SetTextContent`, `SetOuterHTML`,
+  `InsertAdjacentHTML`, `ReplaceWith`, `RemoveNode`, `WriteHTML`) is wired through the facade;
+  on `textarea`, content mutations that change its contents keep the reset default value in sync,
+  `CloneNode()` duplicates the selected node and inserts the clone after the source, and
+  `WriteHTML()` covers the bounded document-write-style replay slice with rollback of DOM and
+  session state on failure.
 - Bounded web-storage helpers for inline scripts are available through `host:localStorageGetItem()`
   / `host:localStorageSetItem()` / `host:localStorageRemoveItem()` / `host:localStorageClear()` /
   `host:localStorageLength()` / `host:localStorageKey()` and `host:sessionStorageGetItem()` /

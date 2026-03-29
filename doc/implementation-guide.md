@@ -225,7 +225,8 @@ Exit criteria:
   `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
   `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
   empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
-  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`, `:popover-open`,
+  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`,
+  `:picture-in-picture`, `:fullscreen`, `:modal`, `:popover-open`,
   `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
   `:focus-within`, `:target`, `:target-within`, `:is()` /
   `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative

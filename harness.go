@@ -304,11 +304,88 @@ func (h *Harness) GetAttribute(selector, name string) (string, bool, error) {
 	return value, ok, nil
 }
 
+func (h *Harness) GetAttributeNames(selector string) ([]string, error) {
+	if h == nil || h.session == nil {
+		return nil, NewError(ErrorKindDOM, "get attribute names is unavailable")
+	}
+	names, err := h.session.GetAttributeNames(selector)
+	if err != nil {
+		return nil, NewError(ErrorKindDOM, err.Error())
+	}
+	return names, nil
+}
+
 func (h *Harness) HasAttribute(selector, name string) (bool, error) {
 	if h == nil || h.session == nil {
 		return false, NewError(ErrorKindDOM, "has attribute is unavailable")
 	}
 	ok, err := h.session.HasAttribute(selector, name)
+	if err != nil {
+		return false, NewError(ErrorKindDOM, err.Error())
+	}
+	return ok, nil
+}
+
+func (h *Harness) HasAttributes(selector string) (bool, error) {
+	if h == nil || h.session == nil {
+		return false, NewError(ErrorKindDOM, "has attributes is unavailable")
+	}
+	ok, err := h.session.HasAttributes(selector)
+	if err != nil {
+		return false, NewError(ErrorKindDOM, err.Error())
+	}
+	return ok, nil
+}
+
+func (h *Harness) Contains(selector, other string) (bool, error) {
+	if h == nil || h.session == nil {
+		return false, NewError(ErrorKindDOM, "contains is unavailable")
+	}
+	ok, err := h.session.Contains(selector, other)
+	if err != nil {
+		return false, NewError(ErrorKindDOM, err.Error())
+	}
+	return ok, nil
+}
+
+func (h *Harness) CompareDocumentPosition(selector, other string) (uint16, error) {
+	if h == nil || h.session == nil {
+		return 0, NewError(ErrorKindDOM, "compare document position is unavailable")
+	}
+	position, err := h.session.CompareDocumentPosition(selector, other)
+	if err != nil {
+		return 0, NewError(ErrorKindDOM, err.Error())
+	}
+	return position, nil
+}
+
+func (h *Harness) IsConnected(selector string) (bool, error) {
+	if h == nil || h.session == nil {
+		return false, NewError(ErrorKindDOM, "is connected is unavailable")
+	}
+	ok, err := h.session.IsConnected(selector)
+	if err != nil {
+		return false, NewError(ErrorKindDOM, err.Error())
+	}
+	return ok, nil
+}
+
+func (h *Harness) HasChildNodes(selector string) (bool, error) {
+	if h == nil || h.session == nil {
+		return false, NewError(ErrorKindDOM, "has child nodes is unavailable")
+	}
+	ok, err := h.session.HasChildNodes(selector)
+	if err != nil {
+		return false, NewError(ErrorKindDOM, err.Error())
+	}
+	return ok, nil
+}
+
+func (h *Harness) ToggleAttribute(selector, name string) (bool, error) {
+	if h == nil || h.session == nil {
+		return false, NewError(ErrorKindDOM, "toggle attribute is unavailable")
+	}
+	ok, err := h.session.ToggleAttribute(selector, name)
 	if err != nil {
 		return false, NewError(ErrorKindDOM, err.Error())
 	}

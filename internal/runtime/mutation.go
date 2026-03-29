@@ -74,6 +74,51 @@ func (s *Session) ReplaceChildren(selector, markup string) error {
 	return nil
 }
 
+func (s *Session) Before(selector, markup string) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return err
+	}
+	if err := store.Before(nodeID, markup); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Session) After(selector, markup string) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return err
+	}
+	if err := store.After(nodeID, markup); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Session) ReplaceWith(selector, markup string) error {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return err
+	}
+	if err := store.ReplaceWith(nodeID, markup); err != nil {
+		return err
+	}
+	if store.FocusedNodeID() == 0 {
+		s.focusedSelector = ""
+	}
+	return nil
+}
+
 func (s *Session) SetTextContent(selector, text string) error {
 	if s == nil {
 		return fmt.Errorf("session is unavailable")

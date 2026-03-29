@@ -104,6 +104,12 @@ func TestDebugViewReportsBuilderFailures(t *testing.T) {
 	if got := nilHarness.Debug().ScrollFailure(); got != "" {
 		t.Fatalf("nil Debug().ScrollFailure() = %q, want empty", got)
 	}
+	if got, ok := nilHarness.Debug().NavigatorOnLine(); ok || !got {
+		t.Fatalf("nil Debug().NavigatorOnLine() = (%v, %v), want (true, false)", got, ok)
+	}
+	if got, ok := nilHarness.Debug().NavigatorLanguage(); ok || got != "" {
+		t.Fatalf("nil Debug().NavigatorLanguage() = (%q, %v), want (empty, false)", got, ok)
+	}
 	if got := nilHarness.Debug().OptionLabels(); got != nil {
 		t.Fatalf("nil Debug().OptionLabels() = %#v, want nil", got)
 	}
@@ -2337,6 +2343,38 @@ func TestLocationMockNavigationsReturnCopies(t *testing.T) {
 	}
 }
 
+func TestNavigatorMockLanguageSeedReturnsCopies(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	harness.Mocks().Navigator().SeedLanguage("fr-FR")
+	if got, ok := harness.Mocks().Navigator().SeededLanguage(); !ok || got != "fr-FR" {
+		t.Fatalf("Navigator().SeededLanguage() = (%q, %v), want seeded language", got, ok)
+	}
+
+	const rawHTML = `<main><div id="locale"></div><script>host:setTextContent("#locale", expr(navigator.language))</script></main>`
+	if err := harness.WriteHTML(rawHTML); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+	if got, err := harness.TextContent("#locale"); err != nil {
+		t.Fatalf("TextContent(#locale) error = %v", err)
+	} else if got != "fr-FR" {
+		t.Fatalf("TextContent(#locale) = %q, want fr-FR", got)
+	}
+
+	fresh := harness.Mocks().Navigator()
+	if got, ok := fresh.SeededLanguage(); !ok || got != "fr-FR" {
+		t.Fatalf("Navigator().SeededLanguage() reread = (%q, %v), want seeded language", got, ok)
+	}
+
+	var nilHarness *Harness
+	if got := nilHarness.Mocks().Navigator(); got != nil {
+		t.Fatalf("nil Harness.Mocks().Navigator() = %#v, want nil", got)
+	}
+}
+
 func TestFetchMockSnapshotsReturnCopies(t *testing.T) {
 	harness, err := FromHTML(`<main></main>`)
 	if err != nil {
@@ -2853,6 +2891,22 @@ func TestClipboardDownloadAndFileInputSnapshotsReturnCopies(t *testing.T) {
 	}
 	if got := nilHarness.Mocks().FileInput(); got != nil {
 		t.Fatalf("nil Harness.Mocks().FileInput() = %#v, want nil", got)
+	}
+}
+
+func TestSetFilesCanExposeSeededFileTextThroughChangeListener(t *testing.T) {
+	harness, err := FromHTML(`<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { const file = document.getElementById("upload").files[0]; file.text().then((text) => { document.getElementById("out").textContent = text; }); });</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	harness.Mocks().FileInput().SeedFileText("#upload", "sample.json", `{"message":"ok"}`)
+	if err := harness.SetFiles("#upload", []string{"sample.json"}); err != nil {
+		t.Fatalf("SetFiles() error = %v", err)
+	}
+
+	if err := harness.AssertText("#out", `{"message":"ok"}`); err != nil {
+		t.Fatalf("AssertText(#out) error = %v", err)
 	}
 }
 
@@ -4093,8 +4147,14 @@ func TestInteractionSliceSupportsModalPseudoClass(t *testing.T) {
 	if err := harness.AssertExists("video:modal"); err != nil {
 		t.Fatalf("AssertExists(video:modal) error = %v", err)
 	}
+	if err := harness.AssertExists("video:fullscreen"); err != nil {
+		t.Fatalf("AssertExists(video:fullscreen) error = %v", err)
+	}
 	if err := harness.AssertExists("#other:modal"); err == nil {
 		t.Fatalf("AssertExists(#other:modal) error = nil, want no match")
+	}
+	if err := harness.AssertExists("#other:fullscreen"); err == nil {
+		t.Fatalf("AssertExists(#other:fullscreen) error = nil, want no match")
 	}
 }
 
@@ -4300,13 +4360,16 @@ func TestInteractionSliceSupportsHeadingLevelPseudoClass(t *testing.T) {
 }
 
 func TestInteractionSliceSupportsMediaPseudoClasses(t *testing.T) {
-	harness, err := FromHTML(`<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`)
+	harness, err := FromHTML(`<main id="root"><audio id="song" src="song.mp3"></audio><video id="film"></video><video id="pip" picture-in-picture></video><video id="paused" paused></video><video id="seeking" seeking></video><video id="muted" muted></video><video id="buffering" networkstate="loading" readystate="2"></video><video id="stalled" networkstate="loading" readystate="1" stalled volume-locked></video><div id="other" paused muted></div></main>`)
 	if err != nil {
 		t.Fatalf("FromHTML() error = %v", err)
 	}
 
 	if err := harness.AssertExists("audio:playing"); err != nil {
 		t.Fatalf("AssertExists(audio:playing) error = %v", err)
+	}
+	if err := harness.AssertExists("video:picture-in-picture"); err != nil {
+		t.Fatalf("AssertExists(video:picture-in-picture) error = %v", err)
 	}
 	if err := harness.AssertExists("video:paused"); err != nil {
 		t.Fatalf("AssertExists(video:paused) error = %v", err)
@@ -4325,6 +4388,12 @@ func TestInteractionSliceSupportsMediaPseudoClasses(t *testing.T) {
 	}
 	if err := harness.AssertExists("video:volume-locked"); err != nil {
 		t.Fatalf("AssertExists(video:volume-locked) error = %v", err)
+	}
+	if err := harness.AssertExists("#pip:picture-in-picture"); err != nil {
+		t.Fatalf("AssertExists(#pip:picture-in-picture) error = %v", err)
+	}
+	if err := harness.AssertExists("#paused:picture-in-picture"); err == nil {
+		t.Fatalf("AssertExists(#paused:picture-in-picture) error = nil, want no match")
 	}
 	if err := harness.AssertExists("#other:paused"); err == nil {
 		t.Fatalf("AssertExists(#other:paused) error = nil, want no match")
@@ -4392,8 +4461,26 @@ func TestAttributeReflectionContracts(t *testing.T) {
 	if got, ok, err := harness.GetAttribute(" #root ", "DATA-X"); err != nil || !ok || got != "1" {
 		t.Fatalf("GetAttribute(DATA-X) = (%q, %v, %v), want (\"1\", true, nil)", got, ok, err)
 	}
+	if got, err := harness.GetAttributeNames(" #root "); err != nil || strings.Join(got, "|") != "id|data-x|class" {
+		t.Fatalf("GetAttributeNames(#root) = (%v, %v), want ([id data-x class], nil)", got, err)
+	}
+	if got, ok, err := harness.GetAttributeNode(" #root ", "DATA-X"); err != nil || !ok || got.Name != "data-x" || got.Value != "1" {
+		t.Fatalf("GetAttributeNode(DATA-X) = (%#v, %v, %v), want ({Name:data-x Value:1}, true, nil)", got, ok, err)
+	}
+	if ok, err := harness.HasAttributes("#root"); err != nil || !ok {
+		t.Fatalf("HasAttributes(#root) = (%v, %v), want (true, nil)", ok, err)
+	}
 	if ok, err := harness.HasAttribute("#root", "data-x"); err != nil || !ok {
 		t.Fatalf("HasAttribute(data-x) = (%v, %v), want (true, nil)", ok, err)
+	}
+	if got, err := harness.ToggleAttribute("#root", "data-x"); err != nil || got {
+		t.Fatalf("ToggleAttribute(data-x) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, ok, err := harness.GetAttribute("#root", "data-x"); err != nil || ok || got != "" {
+		t.Fatalf("GetAttribute(data-x) after ToggleAttribute = (%q, %v, %v), want (\"\", false, nil)", got, ok, err)
+	}
+	if got, err := harness.ToggleAttribute("#root", "data-x"); err != nil || !got {
+		t.Fatalf("ToggleAttribute(data-x) restore = (%v, %v), want (true, nil)", got, err)
 	}
 
 	if err := harness.SetAttribute("#root", "data-x", "2"); err != nil {
@@ -4402,7 +4489,7 @@ func TestAttributeReflectionContracts(t *testing.T) {
 	if got, ok, err := harness.GetAttribute("#root", "data-x"); err != nil || !ok || got != "2" {
 		t.Fatalf("GetAttribute(data-x) after SetAttribute = (%q, %v, %v), want (\"2\", true, nil)", got, ok, err)
 	}
-	if got, want := harness.Debug().DumpDOM(), `<main><div id="root" data-x="2" class="alpha beta"></div></main>`; got != want {
+	if got, want := harness.Debug().DumpDOM(), `<main><div id="root" class="alpha beta" data-x="2"></div></main>`; got != want {
 		t.Fatalf("Debug().DumpDOM() after SetAttribute = %q, want %q", got, want)
 	}
 
@@ -4414,6 +4501,56 @@ func TestAttributeReflectionContracts(t *testing.T) {
 	}
 	if ok, err := harness.HasAttribute("#root", "data-x"); err != nil || ok {
 		t.Fatalf("HasAttribute(data-x) after RemoveAttribute = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
+func TestTreeNavigationContracts(t *testing.T) {
+	harness, err := FromHTML(`<main><div id="root"><span id="child"></span></div><div id="sibling"></div></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if got, err := harness.Contains("#root", "#child"); err != nil || !got {
+		t.Fatalf("Contains(#root, #child) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.Contains("#root", "#root"); err != nil || !got {
+		t.Fatalf("Contains(#root, #root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.Contains("#child", "#root"); err != nil || got {
+		t.Fatalf("Contains(#child, #root) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, err := harness.Contains("#root", "#sibling"); err != nil || got {
+		t.Fatalf("Contains(#root, #sibling) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, err := harness.CompareDocumentPosition("#root", "#child"); err != nil || got != 12 {
+		t.Fatalf("CompareDocumentPosition(#root, #child) = (%d, %v), want (12, nil)", got, err)
+	}
+	if got, err := harness.CompareDocumentPosition("#child", "#root"); err != nil || got != 18 {
+		t.Fatalf("CompareDocumentPosition(#child, #root) = (%d, %v), want (18, nil)", got, err)
+	}
+	if got, err := harness.CompareDocumentPosition("#root", "#root"); err != nil || got != 0 {
+		t.Fatalf("CompareDocumentPosition(#root, #root) = (%d, %v), want (0, nil)", got, err)
+	}
+	if got, err := harness.CompareDocumentPosition("#root", "#sibling"); err != nil || got != 4 {
+		t.Fatalf("CompareDocumentPosition(#root, #sibling) = (%d, %v), want (4, nil)", got, err)
+	}
+	if got, err := harness.IsConnected("#root"); err != nil || !got {
+		t.Fatalf("IsConnected(#root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.IsConnected("#child"); err != nil || !got {
+		t.Fatalf("IsConnected(#child) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.IsConnected("#sibling"); err != nil || !got {
+		t.Fatalf("IsConnected(#sibling) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.HasChildNodes("#root"); err != nil || !got {
+		t.Fatalf("HasChildNodes(#root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := harness.HasChildNodes("#child"); err != nil || got {
+		t.Fatalf("HasChildNodes(#child) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, err := harness.HasChildNodes("#sibling"); err != nil || got {
+		t.Fatalf("HasChildNodes(#sibling) = (%v, %v), want (false, nil)", got, err)
 	}
 }
 
@@ -4555,11 +4692,81 @@ func TestAttributeReflectionContractsRejectInvalidInputs(t *testing.T) {
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("GetAttribute(#missing) error = %#v, want DOM error", err)
 	}
+	if _, _, err := harness.GetAttributeNode("#missing", "id"); err == nil {
+		t.Fatalf("GetAttributeNode(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("GetAttributeNode(#missing) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.HasAttributes("#missing"); err == nil {
+		t.Fatalf("HasAttributes(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("HasAttributes(#missing) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.ToggleAttribute("#missing", "id"); err == nil {
+		t.Fatalf("ToggleAttribute(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("ToggleAttribute(#missing) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.Contains("#missing", "#root"); err == nil {
+		t.Fatalf("Contains(#missing, #root) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Contains(#missing, #root) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.CompareDocumentPosition("#missing", "#root"); err == nil {
+		t.Fatalf("CompareDocumentPosition(#missing, #root) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("CompareDocumentPosition(#missing, #root) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.IsConnected("#missing"); err == nil {
+		t.Fatalf("IsConnected(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("IsConnected(#missing) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.HasChildNodes("#missing"); err == nil {
+		t.Fatalf("HasChildNodes(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("HasChildNodes(#missing) error = %#v, want DOM error", err)
+	}
 
 	if err := harness.SetAttribute("#root", " ", "x"); err == nil {
 		t.Fatalf("SetAttribute(empty name) error = nil, want DOM error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("SetAttribute(empty name) error = %#v, want DOM error", err)
+	}
+	if _, _, err := harness.GetAttributeNode("#root", " "); err == nil {
+		t.Fatalf("GetAttributeNode(empty name) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("GetAttributeNode(empty name) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.HasAttributes(" "); err == nil {
+		t.Fatalf("HasAttributes(empty selector) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("HasAttributes(empty selector) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.ToggleAttribute("#root", " "); err == nil {
+		t.Fatalf("ToggleAttribute(empty name) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("ToggleAttribute(empty name) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.Contains("#root", " "); err == nil {
+		t.Fatalf("Contains(empty selector) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Contains(empty selector) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.CompareDocumentPosition("#root", " "); err == nil {
+		t.Fatalf("CompareDocumentPosition(empty selector) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("CompareDocumentPosition(empty selector) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.IsConnected(" "); err == nil {
+		t.Fatalf("IsConnected(empty selector) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("IsConnected(empty selector) error = %#v, want DOM error", err)
+	}
+	if _, err := harness.HasChildNodes(" "); err == nil {
+		t.Fatalf("HasChildNodes(empty selector) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("HasChildNodes(empty selector) error = %#v, want DOM error", err)
 	}
 
 	if err := harness.RemoveAttribute("#root", " "); err == nil {
@@ -5151,6 +5358,27 @@ func TestInlineScriptsCanBootstrapOfflineNavigatorOnLineSeed(t *testing.T) {
 	}
 	if got := harness.Debug().DOMError(); got != "" {
 		t.Fatalf("Debug().DOMError() = %q, want empty after offline bootstrap", got)
+	}
+}
+
+func TestInlineScriptsCanBootstrapNavigatorLanguageSeed(t *testing.T) {
+	harness, err := NewHarnessBuilder().Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	harness.Mocks().Navigator().SeedLanguage("fr-FR")
+	if got, ok := harness.Debug().NavigatorLanguage(); !ok || got != "fr-FR" {
+		t.Fatalf("Debug().NavigatorLanguage() = (%q, %v), want (fr-FR, true)", got, ok)
+	}
+
+	if err := harness.WriteHTML(`<main><div id="locale"></div><script>host:setTextContent("#locale", expr(navigator.language))</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+	if got, err := harness.TextContent("#locale"); err != nil {
+		t.Fatalf("TextContent(#locale) error = %v", err)
+	} else if got != "fr-FR" {
+		t.Fatalf("TextContent(#locale) = %q, want fr-FR", got)
 	}
 }
 
@@ -6041,6 +6269,30 @@ func TestNilHarnessAttributeWrappersReturnErrors(t *testing.T) {
 	if _, _, err := harness.GetAttribute("#root", "id"); err == nil {
 		t.Fatalf("nil Harness.GetAttribute() error = nil, want DOM error")
 	}
+	if _, err := harness.GetAttributeNames("#root"); err == nil {
+		t.Fatalf("nil Harness.GetAttributeNames() error = nil, want DOM error")
+	}
+	if _, _, err := harness.GetAttributeNode("#root", "id"); err == nil {
+		t.Fatalf("nil Harness.GetAttributeNode() error = nil, want DOM error")
+	}
+	if _, err := harness.HasAttributes("#root"); err == nil {
+		t.Fatalf("nil Harness.HasAttributes() error = nil, want DOM error")
+	}
+	if _, err := harness.Contains("#root", "#root"); err == nil {
+		t.Fatalf("nil Harness.Contains() error = nil, want DOM error")
+	}
+	if _, err := harness.CompareDocumentPosition("#root", "#root"); err == nil {
+		t.Fatalf("nil Harness.CompareDocumentPosition() error = nil, want DOM error")
+	}
+	if _, err := harness.IsConnected("#root"); err == nil {
+		t.Fatalf("nil Harness.IsConnected() error = nil, want DOM error")
+	}
+	if _, err := harness.HasChildNodes("#root"); err == nil {
+		t.Fatalf("nil Harness.HasChildNodes() error = nil, want DOM error")
+	}
+	if _, err := harness.ToggleAttribute("#root", "id"); err == nil {
+		t.Fatalf("nil Harness.ToggleAttribute() error = nil, want DOM error")
+	}
 	if _, err := harness.HasAttribute("#root", "id"); err == nil {
 		t.Fatalf("nil Harness.HasAttribute() error = nil, want DOM error")
 	}
@@ -6128,6 +6380,27 @@ func TestMutationContractsGettersAndSetters(t *testing.T) {
 	}
 }
 
+func TestMutationContractsBeforeAfterAndReplaceWithMutateNodes(t *testing.T) {
+	harness, err := FromHTML(`<main id="root"><span id="a">A</span><span id="b">B</span><span id="c">C</span></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.Before("#b", `<i id="before">x</i>`); err != nil {
+		t.Fatalf("Before(#b) error = %v", err)
+	}
+	if err := harness.After("#a", `<i id="after">y</i>`); err != nil {
+		t.Fatalf("After(#a) error = %v", err)
+	}
+	if err := harness.ReplaceWith("#c", `<strong id="replace">z</strong>`); err != nil {
+		t.Fatalf("ReplaceWith(#c) error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main id="root"><span id="a">A</span><i id="after">y</i><i id="before">x</i><span id="b">B</span><strong id="replace">z</strong></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() after before/after/replaceWith = %q, want %q", got, want)
+	}
+}
+
 func TestMutationContractsCloneNodeDuplicatesSubtree(t *testing.T) {
 	harness, err := FromHTML(`<main><div id="source"><span id="child">text</span></div><p id="tail">tail</p></main>`)
 	if err != nil {
@@ -6192,6 +6465,21 @@ func TestMutationContractsRejectInvalidTargets(t *testing.T) {
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("ReplaceChildren(#missing) error = %#v, want DOM error", err)
 	}
+	if err := harness.Before("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("Before(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Before(#missing) error = %#v, want DOM error", err)
+	}
+	if err := harness.After("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("After(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("After(#missing) error = %#v, want DOM error", err)
+	}
+	if err := harness.ReplaceWith("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("ReplaceWith(#missing) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("ReplaceWith(#missing) error = %#v, want DOM error", err)
+	}
 	if err := harness.SetInnerHTML("#missing", "<p>x</p>"); err == nil {
 		t.Fatalf("SetInnerHTML(#missing) error = nil, want DOM error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
@@ -6243,11 +6531,26 @@ func TestMutationContractsRejectDocumentParentRestrictions(t *testing.T) {
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("InsertAdjacentHTML(beforebegin on document child) error = %#v, want DOM error", err)
 	}
+	if err := harness.Before("#target", "text"); err == nil {
+		t.Fatalf("Before(document child text) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Before(document child text) error = %#v, want DOM error", err)
+	}
 
 	if err := harness.InsertAdjacentHTML("#target", "afterend", `<a id="ae"></a>`); err == nil {
 		t.Fatalf("InsertAdjacentHTML(afterend on document child) error = nil, want DOM error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("InsertAdjacentHTML(afterend on document child) error = %#v, want DOM error", err)
+	}
+	if err := harness.After("#target", "text"); err == nil {
+		t.Fatalf("After(document child text) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("After(document child text) error = %#v, want DOM error", err)
+	}
+	if err := harness.ReplaceWith("#target", "text"); err == nil {
+		t.Fatalf("ReplaceWith(document child text) error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("ReplaceWith(document child text) error = %#v, want DOM error", err)
 	}
 }
 
@@ -9152,6 +9455,21 @@ func TestNilHarnessMutationWrappersReturnDomErrors(t *testing.T) {
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("nil Harness.ReplaceChildren() error = %#v, want DOM error", err)
 	}
+	if err := nilHarness.Before("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil Harness.Before() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("nil Harness.Before() error = %#v, want DOM error", err)
+	}
+	if err := nilHarness.After("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil Harness.After() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("nil Harness.After() error = %#v, want DOM error", err)
+	}
+	if err := nilHarness.ReplaceWith("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil Harness.ReplaceWith() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("nil Harness.ReplaceWith() error = %#v, want DOM error", err)
+	}
 	if err := nilHarness.SetInnerHTML("#target", "<p>x</p>"); err == nil {
 		t.Fatalf("nil Harness.SetInnerHTML() error = nil, want DOM error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
@@ -9193,6 +9511,21 @@ func TestNilHarnessMutationWrappersReturnDomErrors(t *testing.T) {
 		t.Fatalf("Harness{nil session}.TextContent() error = nil, want DOM error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("Harness{nil session}.TextContent() error = %#v, want DOM error", err)
+	}
+	if err := zeroSessionHarness.Before("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("Harness{nil session}.Before() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Harness{nil session}.Before() error = %#v, want DOM error", err)
+	}
+	if err := zeroSessionHarness.After("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("Harness{nil session}.After() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Harness{nil session}.After() error = %#v, want DOM error", err)
+	}
+	if err := zeroSessionHarness.ReplaceWith("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("Harness{nil session}.ReplaceWith() error = nil, want DOM error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("Harness{nil session}.ReplaceWith() error = %#v, want DOM error", err)
 	}
 	if err := zeroSessionHarness.CloneNode("#target", true); err == nil {
 		t.Fatalf("Harness{nil session}.CloneNode() error = nil, want DOM error")

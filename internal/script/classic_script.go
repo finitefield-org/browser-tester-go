@@ -368,6 +368,7 @@ type classicJSStatementParser struct {
 	hasGeneratorNextValue   bool
 	moduleExports           map[string]Value
 	stepLimit               int
+	skipEvaluation          bool
 	pos                     int
 }
 
@@ -1074,6 +1075,7 @@ func (p *classicJSStatementParser) cloneForSkipping(host HostBindings) *classicJ
 		bindingUpdateParent:     p.bindingUpdateParent,
 		moduleExports:           nil,
 		stepLimit:               p.stepLimit,
+		skipEvaluation:          true,
 		pos:                     p.pos,
 	}
 }
@@ -1911,9 +1913,16 @@ func (p *classicJSStatementParser) tryParseArrayDestructuringAssignmentTarget() 
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			lookahead.pos++
+			canStartRegex = false
+		case '`':
+			next, err := scanTemplateLiteralSource(lookahead.source, lookahead.pos)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			lookahead.pos = next
 			canStartRegex = false
 		case '/':
 			if lookahead.pos+1 >= len(lookahead.source) {
@@ -4149,9 +4158,16 @@ func (p *classicJSStatementParser) consumeStatementSource() (string, error) {
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			p.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
+			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -6258,10 +6274,18 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			canStartRegex = false
 			p.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
+			canStartRegex = false
+			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -6404,10 +6428,18 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			canStartRegex = false
 			p.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
+			canStartRegex = false
+			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -6534,10 +6566,15 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			canStartRegex = false
 			p.pos++
+		case '`':
+			if _, _, err := p.consumeTemplateLiteralParts(); err != nil {
+				return "", err
+			}
+			canStartRegex = false
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -6685,9 +6722,16 @@ func (p *classicJSStatementParser) consumeArrowFunctionExpressionSource() (strin
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			p.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
+			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -6787,8 +6831,14 @@ func splitClassicJSForHeader(source string) (string, string, string, error) {
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
+		case '`':
+			next, err := scanTemplateLiteralSource(text, i)
+			if err != nil {
+				return "", "", "", err
+			}
+			i = next - 1
 		case '/':
 			if i+1 < len(text) {
 				switch text[i+1] {
@@ -6887,8 +6937,14 @@ func splitClassicJSForKeywordHeader(source, keyword string) (string, string, boo
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
+		case '`':
+			next, err := scanTemplateLiteralSource(text, i)
+			if err != nil {
+				return "", "", false, err
+			}
+			i = next - 1
 		case '/':
 			if i+1 < len(text) {
 				switch text[i+1] {
@@ -7640,9 +7696,15 @@ func scanClassicJSDelimitedExpressionTerminator(scanner *classicJSStatementParse
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			scanner.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(scanner.source, scanner.pos)
+			if err != nil {
+				return scanner.pos, err
+			}
+			scanner.pos = next
 		case '/':
 			if scanner.pos+1 >= len(scanner.source) {
 				scanner.pos++
@@ -7957,9 +8019,15 @@ func scanClassicJSClassMemberTerminator(scanner *classicJSStatementParser) (int,
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			scanner.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(scanner.source, scanner.pos)
+			if err != nil {
+				return scanner.pos, err
+			}
+			scanner.pos = next
 		case '/':
 			if scanner.pos+1 >= len(scanner.source) {
 				scanner.pos++
@@ -8150,9 +8218,15 @@ func scanClassicJSClauseTerminator(scanner *classicJSStatementParser, stopAtColo
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			scanner.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(scanner.source, scanner.pos)
+			if err != nil {
+				return scanner.pos, err
+			}
+			scanner.pos = next
 		case '/':
 			if scanner.pos+1 >= len(scanner.source) {
 				scanner.pos++
@@ -8640,6 +8714,10 @@ func (p *classicJSStatementParser) parseAdditive() (jsValue, error) {
 		right, err := p.parseMultiplicative()
 		if err != nil {
 			return jsValue{}, err
+		}
+		if p.skipEvaluation {
+			left = scalarJSValue(UndefinedValue())
+			continue
 		}
 		if left.kind != jsValueScalar || right.kind != jsValueScalar {
 			return jsValue{}, NewError(ErrorKindUnsupported, "additive operators only work on scalar values in this bounded classic-JS slice")
@@ -9304,9 +9382,16 @@ func (p *classicJSStatementParser) consumeAssignmentCallArgumentSource() (string
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			p.pos++
+			canStartRegex = false
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
 			canStartRegex = false
 		case '/':
 			if p.pos+1 >= len(p.source) {
@@ -9416,7 +9501,7 @@ func (p *classicJSStatementParser) parsePostfix() (jsValue, error) {
 }
 
 func (p *classicJSStatementParser) parsePostfixTail(value jsValue) (jsValue, error) {
-	shortCircuited := false
+	shortCircuited := p.skipEvaluation
 	for {
 		p.skipSpaceAndComments()
 		switch {
@@ -9581,12 +9666,17 @@ func (p *classicJSStatementParser) parsePostfixTail(value jsValue) (jsValue, err
 			return p.applyClassicJSIncrementDecrement(value, -1, false)
 		case p.consumeByte('('):
 			if shortCircuited {
-				skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-				skip.pos = p.pos
-				if _, err := skip.parseArguments(); err != nil {
+				if value.kind == jsValueScalar && value.value.Kind == ValueKindHostReference && isSkippedHostReferencePreserved(value.value.HostReferencePath) {
+					if resolved, err := p.resolveHostReferencePath(value.value.HostReferencePath); err != nil {
+						return jsValue{}, err
+					} else {
+						_ = resolved
+					}
+				}
+				if _, err := p.consumeAssignmentCallArguments(); err != nil {
 					return jsValue{}, err
 				}
-				p.pos = skip.pos
+				value = scalarJSValue(UndefinedValue())
 				continue
 			}
 			callArgs, err := p.consumeAssignmentCallArguments()
@@ -9768,7 +9858,7 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 		if value.value.Kind == ValueKindString {
 			switch name {
 			case "length":
-				return scalarJSValue(NumberValue(float64(len(value.value.String)))), nil
+				return scalarJSValue(NumberValue(float64(len([]rune(value.value.String))))), nil
 			default:
 				if method, ok, err := p.resolveStringPrototypeMethod(value.value, name); ok || err != nil {
 					return scalarJSValue(method), err
@@ -11117,9 +11207,15 @@ func (p *classicJSStatementParser) consumeBracketAccessExpressionSource() (strin
 		}
 
 		switch ch {
-		case '\'', '"', '`':
+		case '\'', '"':
 			quote = ch
 			p.pos++
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return "", err
+			}
+			p.pos = next
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
@@ -11179,12 +11275,9 @@ func (p *classicJSStatementParser) skipOptionalCallArguments() error {
 		return nil
 	}
 
-	skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-	skip.pos = p.pos
-	if _, err := skip.parseArguments(); err != nil {
+	if _, err := p.consumeAssignmentCallArguments(); err != nil {
 		return err
 	}
-	p.pos = skip.pos
 	return nil
 }
 
@@ -11336,6 +11429,8 @@ func (p *classicJSStatementParser) parsePrimary() (jsValue, error) {
 		return builtinExprJSValue(), nil
 	case "Symbol":
 		return builtinSymbolJSValue(), nil
+	case "NaN":
+		return scalarJSValue(NumberValue(math.NaN())), nil
 	case "true":
 		return scalarJSValue(BoolValue(true)), nil
 	case "false":
@@ -11792,6 +11887,9 @@ func (p *classicJSStatementParser) resolveObjectLiteralShorthandValue(name strin
 			return value, nil
 		}
 	}
+	if name == "NaN" {
+		return NumberValue(math.NaN()), nil
+	}
 	if p.allowUnknownIdentifiers {
 		return UndefinedValue(), nil
 	}
@@ -11827,6 +11925,9 @@ func (p *classicJSStatementParser) parseMemberAccessName() (string, error) {
 }
 
 func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue, error) {
+	restoreHost := setCurrentInvokeHost(p.host)
+	defer restoreHost()
+
 	restoreBindingContext := setCurrentBindingUpdateContext(p)
 	defer restoreBindingContext()
 
@@ -13618,6 +13719,18 @@ func classicJSNumberValue(value Value) (float64, bool) {
 	}
 }
 
+func classicJSSubtractionNumberValue(value Value) (float64, bool) {
+	if number, ok := classicJSNumberValue(value); ok {
+		return number, true
+	}
+	switch value.Kind {
+	case ValueKindArray, ValueKindObject, ValueKindFunction, ValueKindPromise:
+		return math.NaN(), true
+	default:
+		return math.NaN(), false
+	}
+}
+
 func classicJSUnaryNumberValue(value Value) (float64, bool) {
 	switch value.Kind {
 	case ValueKindUndefined:
@@ -13861,8 +13974,8 @@ func classicJSAddValues(left Value, right Value, op byte) (Value, error) {
 		}
 		return NumberValue(leftNum + rightNum), nil
 	case '-':
-		leftNum, leftOK := classicJSNumberValue(left)
-		rightNum, rightOK := classicJSNumberValue(right)
+		leftNum, leftOK := classicJSSubtractionNumberValue(left)
+		rightNum, rightOK := classicJSSubtractionNumberValue(right)
 		if !leftOK || !rightOK {
 			return UndefinedValue(), NewError(ErrorKindUnsupported, "subtraction only works on scalar values in this bounded classic-JS slice")
 		}

@@ -88,6 +88,8 @@ const (
 	selectorPseudoStalled
 	selectorPseudoMuted
 	selectorPseudoVolumeLocked
+	selectorPseudoPictureInPicture
+	selectorPseudoFullscreen
 	selectorPseudoModal
 	selectorPseudoPopoverOpen
 	selectorPseudoOpen
@@ -1240,6 +1242,10 @@ func parseSelectorPseudoClass(name string) (selectorPseudoClass, bool) {
 		return selectorPseudoMuted, true
 	case "volume-locked":
 		return selectorPseudoVolumeLocked, true
+	case "picture-in-picture":
+		return selectorPseudoPictureInPicture, true
+	case "fullscreen":
+		return selectorPseudoFullscreen, true
 	case "modal":
 		return selectorPseudoModal, true
 	case "popover-open":
@@ -1358,6 +1364,10 @@ func (p selectorPseudoClass) matchesWithScope(store *Store, node *Node, scopeNod
 		return pseudoClassMuted(node)
 	case selectorPseudoVolumeLocked:
 		return pseudoClassVolumeLocked(node)
+	case selectorPseudoPictureInPicture:
+		return pseudoClassPictureInPicture(node)
+	case selectorPseudoFullscreen:
+		return pseudoClassFullscreen(node)
 	case selectorPseudoModal:
 		return pseudoClassModal(node)
 	case selectorPseudoPopoverOpen:
@@ -1857,6 +1867,22 @@ func pseudoClassVolumeLocked(node *Node) bool {
 	}
 	_, locked := attributeValue(node.Attrs, "volume-locked")
 	return locked
+}
+
+func pseudoClassPictureInPicture(node *Node) bool {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "video" {
+		return false
+	}
+	_, ok := attributeValue(node.Attrs, "picture-in-picture")
+	return ok
+}
+
+func pseudoClassFullscreen(node *Node) bool {
+	if node == nil || node.Kind != NodeKindElement {
+		return false
+	}
+	_, ok := attributeValue(node.Attrs, "fullscreen")
+	return ok
 }
 
 func pseudoClassDefined(node *Node) bool {

@@ -12,6 +12,7 @@ download, file-input, or storage behavior.
 - `Fetch`
 - `Dialogs`
 - `Clipboard`
+- `Navigator`
 - `Location`
 - `Open`
 - `Close`
@@ -62,6 +63,7 @@ Examples:
 - `Fetch`: response rules, error rules, request call capture
 - `Dialogs`: queued confirm/prompt answers, alert capture, and message capture
 - `Clipboard`: seeded read state and write capture
+- `Navigator`: seeded `language` state for `navigator.language` reads, plus reset semantics
 - `Location`: current URL seed and navigation capture, including `window.location.assign()`,
   `window.location.replace()`, `window.location.reload()`, and URL-property assignments; inline
   scripts drive the same family through `host:locationAssign(...)`, `host:locationReplace(...)`,
@@ -69,7 +71,7 @@ Examples:
   against the current URL
 - `Downloads`: artifact capture through the registry and `Harness.CaptureDownload(...)`, plus
   hyperlink clicks on `a` / `area` elements with `download` attributes
-- `FileInput`: file selection capture and the `input.files` snapshot
+- `FileInput`: file selection capture, seeded file contents via `SeedFileText(selector, fileName, text)`, the `input.files` snapshot with `File.text()` support, and empty-string `value` clears on file inputs
 - `Open`: call capture and optional bootstrap failure
 - `Close`: call capture and optional bootstrap failure
 - `Print`: call capture and optional bootstrap failure
@@ -108,6 +110,7 @@ func main() error {
 	mocks.Fetch().RespondText("https://app.local/api/message", 200, "ok")
 	mocks.Dialogs().QueueConfirm(true)
 	mocks.Clipboard().SeedText("copied text")
+	mocks.Navigator().SeedLanguage("fr-FR")
 	mocks.Storage().SeedLocal("theme", "dark")
 	mocks.MatchMedia().RespondMatches("(prefers-reduced-motion: reduce)", true)
 	mocks.MatchMedia().RecordListenerCall("(prefers-reduced-motion: reduce)", "change")
@@ -124,6 +127,9 @@ func main() error {
 	if _, err := h.ReadClipboard(); err != nil {
 		return err
 	}
+	if got, ok := mocks.Navigator().SeededLanguage(); !ok || got != "fr-FR" {
+		return fmt.Errorf("expected seeded navigator language, got (%q, %v)", got, ok)
+	}
 	if got, err := h.MatchMedia("(prefers-reduced-motion: reduce)"); err != nil || !got {
 		return fmt.Errorf("expected matchMedia to return true, got (%v, %v)", got, err)
 	}
@@ -136,6 +142,7 @@ func main() error {
 		events[0].Value != "dark" {
 		return fmt.Errorf("expected one storage change capture, got %#v", events)
 	}
+	mocks.FileInput().SeedFileText("#upload", "report.csv", "a,b\n1,2")
 	if err := h.SetFiles("#upload", []string{"report.csv"}); err != nil {
 		return err
 	}

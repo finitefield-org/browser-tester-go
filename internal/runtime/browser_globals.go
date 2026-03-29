@@ -72,6 +72,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"print":                 script.HostFunctionReference("print"),
 		"scrollTo":              script.HostFunctionReference("scrollTo"),
 		"scrollBy":              script.HostFunctionReference("scrollBy"),
+		"innerWidth":            script.NumberValue(1280),
 		"setTimeout":            script.HostFunctionReference("setTimeout"),
 		"setInterval":           script.HostFunctionReference("setInterval"),
 		"clearTimeout":          script.HostFunctionReference("clearTimeout"),
@@ -165,6 +166,8 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		}
 		_, scrollY := session.ScrollPosition()
 		return script.NumberValue(float64(scrollY)), nil
+	case "innerWidth":
+		return script.NumberValue(1280), nil
 	case "Intl":
 		return browserIntlValue(session), nil
 	case "HTMLElement":
@@ -292,8 +295,6 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return script.HostObjectReference("console"), nil
 	case "clipboard":
 		return script.HostObjectReference("clipboard"), nil
-	case "crypto":
-		return script.UndefinedValue(), nil
 	}
 
 	if strings.HasPrefix(normalized, "document.") {
@@ -384,6 +385,20 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 			}
 			return browserNodeReplaceChildren(session, store, store.DocumentID(), args)
 		}), nil
+	case "append":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.append is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodeAppend(session, store, store.DocumentID(), "document.append", args)
+		}), nil
+	case "prepend":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.prepend is unavailable in this bounded classic-JS slice")
+			}
+			return browserNodePrepend(session, store, store.DocumentID(), "document.prepend", args)
+		}), nil
 	case "getRootNode":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			if store == nil {
@@ -449,6 +464,10 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 	case "images":
 		return browserHTMLCollectionValueForDocument(store, func(s *dom.Store) (dom.HTMLCollection, error) {
 			return s.Images()
+		})
+	case "embeds":
+		return browserHTMLCollectionValueForDocument(store, func(s *dom.Store) (dom.HTMLCollection, error) {
+			return s.Embeds()
 		})
 	case "scripts":
 		return browserHTMLCollectionValueForDocument(store, func(s *dom.Store) (dom.HTMLCollection, error) {
@@ -814,6 +833,11 @@ func resolveNavigatorReference(session *Session, store *dom.Store, path string) 
 		}
 		return script.BoolValue(session.navigatorOnLine()), nil
 	case "language":
+		if session != nil {
+			if language, ok := session.Registry().Navigator().SeededLanguage(); ok {
+				return script.StringValue(language), nil
+			}
+		}
 		return script.StringValue("en-US"), nil
 	case "cookieEnabled":
 		if session == nil {
@@ -1110,6 +1134,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementDownloadValue(session, store, nodeID)
 	case "placeholder":
 		return resolveElementPlaceholderValue(session, store, nodeID)
+	case "files":
+		return resolveElementFilesValue(session, store, nodeID)
 	case "classList":
 		if node.Kind != dom.NodeKindElement {
 			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
@@ -1133,6 +1159,14 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	case "removeEventListener":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementRemoveEventListener(session, store, nodeID, args)
+		}), nil
+	case "append":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodeAppend(session, store, nodeID, "element.append", args)
+		}), nil
+	case "prepend":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserNodePrepend(session, store, nodeID, "element.prepend", args)
 		}), nil
 	case "focus":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -1179,6 +1213,14 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	case "removeAttribute":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementRemoveAttribute(session, store, nodeID, args)
+		}), nil
+	case "hasAttributes":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserElementHasAttributes(session, store, nodeID, args)
+		}), nil
+	case "toggleAttribute":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserElementToggleAttribute(session, store, nodeID, args)
 		}), nil
 	case "appendChild":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -1395,6 +1437,21 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 			}
 			return script.StringValue(value), nil
 		}), nil
+	case "getAttributeNode":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			name, err := scriptStringArg("element.getAttributeNode", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			attr, ok, err := store.GetAttributeNode(nodeID, name)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			if !ok {
+				return script.NullValue(), nil
+			}
+			return browserAttributeObjectValue(nodeID, attr), nil
+		}), nil
 	case "hasAttribute":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			name, err := scriptStringArg("element.hasAttribute", args, 0)
@@ -1406,6 +1463,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 				return script.UndefinedValue(), err
 			}
 			return script.BoolValue(ok), nil
+		}), nil
+	case "getAttributeNames":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserElementGetAttributeNames(session, store, nodeID, args)
 		}), nil
 	case "form":
 		if node.TagName == "input" || node.TagName == "select" || node.TagName == "textarea" || node.TagName == "button" || node.TagName == "output" {
@@ -2185,6 +2246,10 @@ func browserClearTimeout(session *Session, args []script.Value) (script.Value, e
 	var id int64
 	var err error
 	if len(args) == 1 {
+		if args[0].Kind == script.ValueKindNull || args[0].Kind == script.ValueKindUndefined {
+			session.clearTimeout(0)
+			return script.UndefinedValue(), nil
+		}
 		id, err = browserInt64Value("clearTimeout", args[0])
 		if err != nil {
 			return script.UndefinedValue(), err
@@ -2204,6 +2269,10 @@ func browserClearInterval(session *Session, args []script.Value) (script.Value, 
 	var id int64
 	var err error
 	if len(args) == 1 {
+		if args[0].Kind == script.ValueKindNull || args[0].Kind == script.ValueKindUndefined {
+			session.clearInterval(0)
+			return script.UndefinedValue(), nil
+		}
 		id, err = browserInt64Value("clearInterval", args[0])
 		if err != nil {
 			return script.UndefinedValue(), err

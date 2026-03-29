@@ -8,10 +8,11 @@ func TestIssue202AsyncDigestStubUpdatesDomAfterAwait(t *testing.T) {
 		<div id="err"></div>
 		<div id="meta"></div>
 		<script>
-		  if (!window.crypto) { window.crypto = {}; }
-		  window.crypto.subtle = {
-		    digest: function (_alg, _data) {
-		      return Promise.resolve(new Uint8Array([65, 66, 67]).buffer);
+		  window.crypto = {
+		    subtle: {
+		      digest: function (_alg, _data) {
+		        return Promise.resolve(new Uint8Array([65, 66, 67]).buffer);
+		      }
 		    }
 		  };
 

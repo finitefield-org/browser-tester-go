@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 func (p *classicJSStatementParser) invokeCallableValue(callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
@@ -94,6 +96,17 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				}
 			}
 			return BoolValue(false), nil
+		}), true, nil
+	case "at":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			index, ok, err := browserAtIndex(len(value.Array), args, true)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			if !ok {
+				return UndefinedValue(), nil
+			}
+			return value.Array[index], nil
 		}), true, nil
 	case "indexOf":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -296,6 +309,32 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			return BoolValue(true), nil
 		}), true, nil
+	case "reduce":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), fmt.Errorf("Array.reduce expects a callback")
+			}
+			initial, hasInitial := UndefinedValue(), false
+			if len(args) > 1 {
+				initial = args[1]
+				hasInitial = true
+			}
+			elements := append([]Value(nil), value.Array...)
+			return browserArrayReduce(p, elements, args[0], initial, hasInitial, value, false, "Array.reduce")
+		}), true, nil
+	case "reduceRight":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), fmt.Errorf("Array.reduceRight expects a callback")
+			}
+			initial, hasInitial := UndefinedValue(), false
+			if len(args) > 1 {
+				initial = args[1]
+				hasInitial = true
+			}
+			elements := append([]Value(nil), value.Array...)
+			return browserArrayReduce(p, elements, args[0], initial, hasInitial, value, true, "Array.reduceRight")
+		}), true, nil
 	case "find":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -330,6 +369,52 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
 					element,
+					NumberValue(float64(i)),
+					value,
+				}, thisArg, hasReceiver)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				if jsTruthy(result) {
+					return NumberValue(float64(i)), nil
+				}
+			}
+			return NumberValue(-1), nil
+		}), true, nil
+	case "findLast":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "Array.findLast expects a callback")
+			}
+			callback := args[0]
+			thisArg, hasReceiver := callbackReceiver(args)
+			elements := append([]Value(nil), value.Array...)
+			for i := len(elements) - 1; i >= 0; i-- {
+				result, err := p.invokeCallableValue(callback, []Value{
+					elements[i],
+					NumberValue(float64(i)),
+					value,
+				}, thisArg, hasReceiver)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				if jsTruthy(result) {
+					return elements[i], nil
+				}
+			}
+			return UndefinedValue(), nil
+		}), true, nil
+	case "findLastIndex":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "Array.findLastIndex expects a callback")
+			}
+			callback := args[0]
+			thisArg, hasReceiver := callbackReceiver(args)
+			elements := append([]Value(nil), value.Array...)
+			for i := len(elements) - 1; i >= 0; i-- {
+				result, err := p.invokeCallableValue(callback, []Value{
+					elements[i],
 					NumberValue(float64(i)),
 					value,
 				}, thisArg, hasReceiver)
@@ -414,6 +499,30 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				updated[i] = args[0]
 			}
 
+			updatedValue := ArrayValue(updated)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			return updatedValue, nil
+		}), true, nil
+	case "copyWithin":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			length := len(value.Array)
+			target := indexFromValueOrDefault(args, 0, 0)
+			start := indexFromValueOrDefault(args, 1, 0)
+			end := indexFromValueOrDefault(args, 2, length)
+			target = clampSliceIndex(target, length)
+			start = clampSliceIndex(start, length)
+			end = clampSliceIndex(end, length)
+			if start > end {
+				start = end
+			}
+			count := end - start
+			if remaining := length - target; count > remaining {
+				count = remaining
+			}
+			updated := append([]Value(nil), value.Array...)
+			if count > 0 {
+				copy(updated[target:target+count], updated[start:end])
+			}
 			updatedValue := ArrayValue(updated)
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return updatedValue, nil
@@ -556,9 +665,58 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(strings.TrimSpace(value.String)), nil
 		}), true, nil
+	case "charAt":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			runes := []rune(value.String)
+			index, ok, err := browserAtIndex(len(runes), args, false)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			if !ok {
+				return StringValue(""), nil
+			}
+			return StringValue(string(runes[index])), nil
+		}), true, nil
+	case "trimStart":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(strings.TrimLeftFunc(value.String, unicode.IsSpace)), nil
+		}), true, nil
+	case "trimEnd":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(strings.TrimRightFunc(value.String, unicode.IsSpace)), nil
+		}), true, nil
 	case "toLowerCase":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(strings.ToLower(value.String)), nil
+		}), true, nil
+	case "toUpperCase":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(strings.ToUpper(value.String)), nil
+		}), true, nil
+	case "concat":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			var b strings.Builder
+			b.Grow(len(value.String))
+			b.WriteString(value.String)
+			for _, arg := range args {
+				b.WriteString(ToJSString(arg))
+			}
+			return StringValue(b.String()), nil
+		}), true, nil
+	case "localeCompare":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) > 1 {
+				for _, arg := range args[1:] {
+					if arg.Kind != ValueKindUndefined {
+						return UndefinedValue(), NewError(ErrorKindUnsupported, "String.localeCompare locale/options are not supported in this bounded classic-JS slice")
+					}
+				}
+			}
+			target := "undefined"
+			if len(args) > 0 {
+				target = ToJSString(args[0])
+			}
+			return NumberValue(float64(strings.Compare(value.String, target))), nil
 		}), true, nil
 	case "replace":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -594,6 +752,27 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			}
 			search := ToJSString(args[0])
 			return StringValue(strings.Replace(value.String, search, replacement, 1)), nil
+		}), true, nil
+	case "replaceAll":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 2 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.replaceAll expects 2 arguments")
+			}
+			if args[1].Kind == ValueKindFunction || args[1].Kind == ValueKindHostReference {
+				return UndefinedValue(), NewError(ErrorKindUnsupported, "String.replaceAll only supports string replacements in this bounded classic-JS slice")
+			}
+			replacement := ToJSString(args[1])
+			if compiled, flags, ok, err := classicJSRegExpValue(args[0]); ok || err != nil {
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				if !strings.Contains(flags, "g") {
+					return UndefinedValue(), NewError(ErrorKindRuntime, "String.replaceAll requires a global regular expression")
+				}
+				return StringValue(compiled.ReplaceAllString(value.String, replacement)), nil
+			}
+			search := ToJSString(args[0])
+			return StringValue(strings.ReplaceAll(value.String, search, replacement)), nil
 		}), true, nil
 	case "charCodeAt":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -679,13 +858,54 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			}
 			return ArrayValue([]Value{StringValue(search)}), nil
 		}), true, nil
+	case "matchAll":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.matchAll expects 1 argument")
+			}
+			if compiled, flags, ok, err := classicJSRegExpValue(args[0]); ok || err != nil {
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				if !strings.Contains(flags, "g") {
+					return UndefinedValue(), NewError(ErrorKindRuntime, "String.matchAll requires a global regular expression")
+				}
+				return browserStringMatchAllMatches(value.String, compiled), nil
+			}
+			quoted := regexp.MustCompile(regexp.QuoteMeta(ToJSString(args[0])))
+			return browserStringMatchAllMatches(value.String, quoted), nil
+		}), true, nil
+	case "search":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			searchValue := UndefinedValue()
+			if len(args) > 0 {
+				searchValue = args[0]
+			}
+			if compiled, _, ok, err := classicJSRegExpValue(searchValue); ok || err != nil {
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				match := compiled.FindStringIndex(value.String)
+				if match == nil {
+					return NumberValue(-1), nil
+				}
+				return NumberValue(float64(browserRuneOffset(value.String, match[0]))), nil
+			}
+			search := ToJSString(searchValue)
+			idx := strings.Index(value.String, search)
+			if idx < 0 {
+				return NumberValue(-1), nil
+			}
+			return NumberValue(float64(browserRuneOffset(value.String, idx))), nil
+		}), true, nil
 	case "lastIndexOf":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
 				return UndefinedValue(), fmt.Errorf("String.lastIndexOf expects 1 argument")
 			}
 			search := ToJSString(args[0])
-			length := len(value.String)
+			runes := []rune(value.String)
+			length := len(runes)
 			fromIndex := length
 			if len(args) > 1 {
 				fromIndex = indexFromValue(args[1], length)
@@ -699,12 +919,17 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			if search == "" {
 				return NumberValue(float64(fromIndex)), nil
 			}
-			limit := fromIndex + len(search)
+			searchRunes := []rune(search)
+			limit := fromIndex + len(searchRunes)
 			if limit > length {
 				limit = length
 			}
-			idx := strings.LastIndex(value.String[:limit], search)
-			return NumberValue(float64(idx)), nil
+			suffix := string(runes[:limit])
+			idx := strings.LastIndex(suffix, search)
+			if idx < 0 {
+				return NumberValue(-1), nil
+			}
+			return NumberValue(float64(utf8.RuneCountInString(suffix[:idx]))), nil
 		}), true, nil
 	case "indexOf":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -712,7 +937,8 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				return UndefinedValue(), fmt.Errorf("String.indexOf expects 1 argument")
 			}
 			search := ToJSString(args[0])
-			length := len(value.String)
+			runes := []rune(value.String)
+			length := len(runes)
 			fromIndex := 0
 			if len(args) > 1 {
 				fromIndex = indexFromValue(args[1], 0)
@@ -726,11 +952,12 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			if search == "" {
 				return NumberValue(float64(fromIndex)), nil
 			}
-			idx := strings.Index(value.String[fromIndex:], search)
+			suffix := string(runes[fromIndex:])
+			idx := strings.Index(suffix, search)
 			if idx == -1 {
 				return NumberValue(-1), nil
 			}
-			return NumberValue(float64(fromIndex + idx)), nil
+			return NumberValue(float64(fromIndex + utf8.RuneCountInString(suffix[:idx]))), nil
 		}), true, nil
 	case "startsWith":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -741,6 +968,8 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				return UndefinedValue(), NewError(ErrorKindRuntime, "String.startsWith accepts at most 2 arguments")
 			}
 			search := ToJSString(args[0])
+			runes := []rune(value.String)
+			length := len(runes)
 			fromIndex := 0
 			if len(args) > 1 {
 				fromIndex = indexFromValue(args[1], 0)
@@ -748,13 +977,13 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			if fromIndex < 0 {
 				fromIndex = 0
 			}
-			if fromIndex > len(value.String) {
+			if fromIndex > length {
 				return BoolValue(false), nil
 			}
 			if search == "" {
 				return BoolValue(true), nil
 			}
-			return BoolValue(strings.HasPrefix(value.String[fromIndex:], search)), nil
+			return BoolValue(strings.HasPrefix(string(runes[fromIndex:]), search)), nil
 		}), true, nil
 	case "endsWith":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -765,23 +994,25 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				return UndefinedValue(), NewError(ErrorKindRuntime, "String.endsWith accepts at most 2 arguments")
 			}
 			search := ToJSString(args[0])
-			end := len(value.String)
+			runes := []rune(value.String)
+			length := len(runes)
+			end := length
 			if len(args) > 1 {
 				end = indexFromValue(args[1], end)
 			}
 			if end < 0 {
 				end = 0
 			}
-			if end > len(value.String) {
-				end = len(value.String)
+			if end > length {
+				end = length
 			}
 			if search == "" {
 				return BoolValue(true), nil
 			}
-			if len(search) > end {
+			if len([]rune(search)) > end {
 				return BoolValue(false), nil
 			}
-			return BoolValue(strings.HasSuffix(value.String[:end], search)), nil
+			return BoolValue(strings.HasSuffix(string(runes[:end]), search)), nil
 		}), true, nil
 	case "includes":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -789,6 +1020,8 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				return UndefinedValue(), fmt.Errorf("String.includes expects 1 argument")
 			}
 			search := ToJSString(args[0])
+			runes := []rune(value.String)
+			length := len(runes)
 			start := 0
 			if len(args) > 1 {
 				start = indexFromValue(args[1], 0)
@@ -796,18 +1029,43 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			if start < 0 {
 				start = 0
 			}
-			if start > len(value.String) {
+			if start > length {
 				return BoolValue(false), nil
 			}
-			return BoolValue(strings.Contains(value.String[start:], search)), nil
+			return BoolValue(strings.Contains(string(runes[start:]), search)), nil
+		}), true, nil
+	case "at":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			runes := []rune(value.String)
+			index, ok, err := browserAtIndex(len(runes), args, true)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			if !ok {
+				return UndefinedValue(), nil
+			}
+			return StringValue(string(runes[index])), nil
+		}), true, nil
+	case "codePointAt":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			runes := []rune(value.String)
+			index, ok, err := browserAtIndex(len(runes), args, false)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			if !ok {
+				return UndefinedValue(), nil
+			}
+			return NumberValue(float64(runes[index])), nil
 		}), true, nil
 	case "padStart":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
-				return UndefinedValue(), fmt.Errorf("String.padStart expects 1 argument")
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.padStart expects 1 argument")
 			}
-			targetLength := indexFromValue(args[0], len(value.String))
-			if targetLength <= len(value.String) {
+			valueLength := utf8.RuneCountInString(value.String)
+			targetLength := indexFromValue(args[0], valueLength)
+			if targetLength <= valueLength {
 				return StringValue(value.String), nil
 			}
 			fill := " "
@@ -817,12 +1075,47 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			if fill == "" {
 				return StringValue(value.String), nil
 			}
-			needed := targetLength - len(value.String)
-			var prefix strings.Builder
-			for prefix.Len() < needed {
-				prefix.WriteString(fill)
+			needed := targetLength - valueLength
+			return StringValue(repeatStringToRuneLength(fill, needed) + value.String), nil
+		}), true, nil
+	case "padEnd":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.padEnd expects 1 argument")
 			}
-			return StringValue(prefix.String()[:needed] + value.String), nil
+			valueLength := utf8.RuneCountInString(value.String)
+			targetLength := indexFromValue(args[0], valueLength)
+			if targetLength <= valueLength {
+				return StringValue(value.String), nil
+			}
+			fill := " "
+			if len(args) > 1 && args[1].Kind != ValueKindUndefined {
+				fill = ToJSString(args[1])
+			}
+			if fill == "" {
+				return StringValue(value.String), nil
+			}
+			needed := targetLength - valueLength
+			return StringValue(value.String + repeatStringToRuneLength(fill, needed)), nil
+		}), true, nil
+	case "repeat":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			countArg := UndefinedValue()
+			if len(args) > 0 {
+				countArg = args[0]
+			}
+			count, err := browserStringRepeatCount(countArg)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			if count == 0 || value.String == "" {
+				return StringValue(""), nil
+			}
+			maxInt := int(^uint(0) >> 1)
+			if len(value.String) > maxInt/count {
+				return UndefinedValue(), NewError(ErrorKindRuntime, "String.repeat result is too large in this bounded classic-JS slice")
+			}
+			return StringValue(strings.Repeat(value.String, count)), nil
 		}), true, nil
 	case "slice":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -837,12 +1130,153 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			}
 			return StringValue(string(runes[start:end])), nil
 		}), true, nil
+	case "substring":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			runes := []rune(value.String)
+			length := len(runes)
+			start := indexFromValueOrDefault(args, 0, 0)
+			end := indexFromValueOrDefault(args, 1, length)
+			if start < 0 {
+				start = 0
+			}
+			if end < 0 {
+				end = 0
+			}
+			if start > length {
+				start = length
+			}
+			if end > length {
+				end = length
+			}
+			if start > end {
+				start, end = end, start
+			}
+			return StringValue(string(runes[start:end])), nil
+		}), true, nil
 	case "toString", "valueOf":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(value.String), nil
 		}), true, nil
 	}
 	return UndefinedValue(), false, nil
+}
+
+func repeatStringToRuneLength(fill string, targetLength int) string {
+	if fill == "" || targetLength <= 0 {
+		return ""
+	}
+	fillRunes := []rune(fill)
+	if len(fillRunes) == 0 {
+		return ""
+	}
+	repeated := make([]rune, 0, targetLength)
+	for len(repeated) < targetLength {
+		repeated = append(repeated, fillRunes...)
+	}
+	if len(repeated) > targetLength {
+		repeated = repeated[:targetLength]
+	}
+	return string(repeated)
+}
+
+func browserStringMatchAllMatches(text string, compiled *regexp.Regexp) Value {
+	matches := compiled.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return ArrayValue(nil)
+	}
+	out := make([]Value, 0, len(matches))
+	for _, match := range matches {
+		parts := make([]Value, 0, len(match))
+		for _, part := range match {
+			parts = append(parts, StringValue(part))
+		}
+		out = append(out, ArrayValue(parts))
+	}
+	return ArrayValue(out)
+}
+
+func browserStringRepeatCount(value Value) (int, error) {
+	number, ok := classicJSUnaryNumberValue(value)
+	if !ok {
+		return 0, NewError(ErrorKindRuntime, "String.repeat count must be a scalar value in this bounded classic-JS slice")
+	}
+	if math.IsNaN(number) {
+		return 0, nil
+	}
+	if math.IsInf(number, 0) {
+		return 0, NewError(ErrorKindRuntime, "String.repeat count must be finite")
+	}
+	truncated := math.Trunc(number)
+	if truncated < 0 {
+		return 0, NewError(ErrorKindRuntime, "String.repeat count must be non-negative")
+	}
+	maxInt := float64(int(^uint(0) >> 1))
+	if truncated > maxInt {
+		return 0, NewError(ErrorKindRuntime, "String.repeat count is too large in this bounded classic-JS slice")
+	}
+	return int(truncated), nil
+}
+
+func browserArrayReduce(p *classicJSStatementParser, elements []Value, callback Value, initial Value, hasInitial bool, source Value, reverse bool, methodName string) (Value, error) {
+	if len(elements) == 0 {
+		if hasInitial {
+			return initial, nil
+		}
+		return UndefinedValue(), fmt.Errorf("%s requires at least one value", methodName)
+	}
+	start, end, step := 0, len(elements), 1
+	if reverse {
+		start, end, step = len(elements)-1, -1, -1
+	}
+	var accumulator Value
+	if hasInitial {
+		accumulator = initial
+	} else {
+		accumulator = elements[start]
+		start += step
+	}
+	for i := start; i != end; i += step {
+		result, err := p.invokeCallableValue(callback, []Value{
+			accumulator,
+			elements[i],
+			NumberValue(float64(i)),
+			source,
+		}, UndefinedValue(), false)
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		accumulator = result
+	}
+	return accumulator, nil
+}
+
+func browserAtIndex(length int, args []Value, wrapNegative bool) (int, bool, error) {
+	indexValue := UndefinedValue()
+	if len(args) > 0 && args[0].Kind != ValueKindUndefined {
+		indexValue = args[0]
+	}
+	number, ok := classicJSNumberValue(indexValue)
+	if !ok {
+		return 0, false, NewError(ErrorKindRuntime, "at index must be a scalar value in this bounded classic-JS slice")
+	}
+	if math.IsNaN(number) {
+		return 0, true, nil
+	}
+	if math.IsInf(number, 0) {
+		return 0, false, nil
+	}
+	truncated := math.Trunc(number)
+	index := int(truncated)
+	if truncated < 0 {
+		if !wrapNegative {
+			return 0, false, nil
+		}
+		index = length + index
+	}
+	if index < 0 || index >= length {
+		return 0, false, nil
+	}
+	return index, true, nil
 }
 
 func (p *classicJSStatementParser) resolveBoolPrototypeMethod(value Value, name string) (Value, bool, error) {
@@ -983,6 +1417,10 @@ func (p *classicJSStatementParser) resolveDatePrototypeMethod(value Value, name 
 	case "valueOf", "getTime":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "getFullYear":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateYear(ms))), nil
 		}), true, nil
 	}
 	return UndefinedValue(), false, nil
@@ -1209,12 +1647,22 @@ func invokeStringReplaceCallback(host HostBindings, replacer Value, input, match
 			args = append(args, StringValue(input[matchLoc[i]:matchLoc[i+1]]))
 		}
 	}
-	args = append(args, NumberValue(float64(start)), StringValue(input))
+	args = append(args, NumberValue(float64(browserRuneOffset(input, start))), StringValue(input))
 	result, err := InvokeCallableValue(host, replacer, args, UndefinedValue(), false)
 	if err != nil {
 		return "", err
 	}
 	return ToJSString(result), nil
+}
+
+func browserRuneOffset(input string, byteOffset int) int {
+	if byteOffset <= 0 {
+		return 0
+	}
+	if byteOffset >= len(input) {
+		return utf8.RuneCountInString(input)
+	}
+	return utf8.RuneCountInString(input[:byteOffset])
 }
 
 func numberToStringRadix(number float64, radix int) (string, error) {

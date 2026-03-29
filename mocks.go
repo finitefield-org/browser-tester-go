@@ -119,6 +119,13 @@ func (v MockRegistryView) Clipboard() *ClipboardMocks {
 	return &ClipboardMocks{family: v.registry.Clipboard()}
 }
 
+func (v MockRegistryView) Navigator() *NavigatorMocks {
+	if v.registry == nil {
+		return nil
+	}
+	return &NavigatorMocks{family: v.registry.Navigator()}
+}
+
 func (v MockRegistryView) Location() *LocationMocks {
 	if v.registry == nil {
 		return nil
@@ -343,6 +350,31 @@ func (m *ClipboardMocks) Writes() []string {
 }
 
 func (m *ClipboardMocks) Reset() {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.Reset()
+}
+
+type NavigatorMocks struct {
+	family *imocks.NavigatorFamily
+}
+
+func (m *NavigatorMocks) SeedLanguage(value string) {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.SeedLanguage(value)
+}
+
+func (m *NavigatorMocks) SeededLanguage() (string, bool) {
+	if m == nil || m.family == nil {
+		return "", false
+	}
+	return m.family.SeededLanguage()
+}
+
+func (m *NavigatorMocks) Reset() {
 	if m == nil || m.family == nil {
 		return
 	}
@@ -665,6 +697,13 @@ func (m *FileInputMocks) SetFiles(selector string, files []string) {
 		return
 	}
 	m.family.SetFiles(selector, files)
+}
+
+func (m *FileInputMocks) SeedFileText(selector, fileName, text string) {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.SeedFileText(selector, fileName, text)
 }
 
 func (m *FileInputMocks) Selections() []FileInputSelection {

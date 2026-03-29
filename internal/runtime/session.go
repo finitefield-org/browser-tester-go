@@ -251,6 +251,17 @@ func (s *Session) NavigatorOnLine() (bool, bool) {
 	return s.config.NavigatorOnLine, true
 }
 
+func (s *Session) NavigatorLanguage() (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	registry := s.Registry()
+	if registry == nil {
+		return "", false
+	}
+	return registry.Navigator().SeededLanguage()
+}
+
 func (s *Session) navigatorOnLine() bool {
 	onLine, ok := s.NavigatorOnLine()
 	if !ok {
@@ -718,7 +729,7 @@ func (s *Session) CaptureDownload(fileName string, bytes []byte) error {
 	return nil
 }
 
-func (s *Session) SetFiles(selector string, files []string) error {
+func (s *Session) SetFiles(selector string, files []string) (err error) {
 	if s == nil {
 		return fmt.Errorf("session is unavailable")
 	}
@@ -726,12 +737,26 @@ func (s *Session) SetFiles(selector string, files []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			s.discardMicrotasks()
+		}
+	}()
 	s.Registry().FileInput().SetFiles(selector, files)
 	normalized := strings.TrimSpace(selector)
 	if normalized != "" {
 		if matches, err := store.Select(normalized); err == nil && len(matches) > 0 {
 			if node := store.Node(matches[0]); node != nil && node.Kind == dom.NodeKindElement && node.TagName == "input" && inputType(node) == "file" {
-				_ = store.SetUserValidity(matches[0], true)
+				if err := store.SetUserValidity(matches[0], true); err != nil {
+					return err
+				}
+				if _, err := s.dispatchEventListeners(store, matches[0], "input"); err != nil {
+					return err
+				}
+				if _, err := s.dispatchEventListeners(store, matches[0], "change"); err != nil {
+					return err
+				}
+				return s.drainMicrotasks(store)
 			}
 		}
 	}
@@ -927,6 +952,28 @@ func (s *Session) GetAttribute(selector, name string) (string, bool, error) {
 	return store.GetAttribute(nodeID, name)
 }
 
+func (s *Session) GetAttributeNode(selector, name string) (dom.Attribute, bool, error) {
+	if s == nil {
+		return dom.Attribute{}, false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return dom.Attribute{}, false, err
+	}
+	return store.GetAttributeNode(nodeID, name)
+}
+
+func (s *Session) GetAttributeNames(selector string) ([]string, error) {
+	if s == nil {
+		return nil, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return nil, err
+	}
+	return store.GetAttributeNames(nodeID)
+}
+
 func (s *Session) HasAttribute(selector, name string) (bool, error) {
 	if s == nil {
 		return false, fmt.Errorf("session is unavailable")
@@ -936,6 +983,80 @@ func (s *Session) HasAttribute(selector, name string) (bool, error) {
 		return false, err
 	}
 	return store.HasAttribute(nodeID, name)
+}
+
+func (s *Session) HasAttributes(selector string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return false, err
+	}
+	return store.HasAttributes(nodeID)
+}
+
+func (s *Session) Contains(selector, other string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return false, err
+	}
+	_, otherID, _, _, err := s.resolveActionTarget(other)
+	if err != nil {
+		return false, err
+	}
+	return store.ContainsNode(nodeID, otherID), nil
+}
+
+func (s *Session) CompareDocumentPosition(selector, other string) (uint16, error) {
+	if s == nil {
+		return 0, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return 0, err
+	}
+	_, otherID, _, _, err := s.resolveActionTarget(other)
+	if err != nil {
+		return 0, err
+	}
+	return store.CompareDocumentPosition(nodeID, otherID), nil
+}
+
+func (s *Session) IsConnected(selector string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return false, err
+	}
+	return store.IsConnected(nodeID), nil
+}
+
+func (s *Session) HasChildNodes(selector string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return false, err
+	}
+	return store.HasChildNodes(nodeID), nil
+}
+
+func (s *Session) ToggleAttribute(selector, name string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, _, _, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return false, err
+	}
+	return store.ToggleAttribute(nodeID, name, false, false)
 }
 
 func (s *Session) SetAttribute(selector, name, value string) error {

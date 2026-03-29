@@ -39,6 +39,7 @@ const (
 	collectionKindChildren collectionKind = iota
 	collectionKindScripts
 	collectionKindImages
+	collectionKindEmbeds
 	collectionKindForms
 	collectionKindFormElements
 	collectionKindSelectedOptions
@@ -77,6 +78,14 @@ func newImageCollection(store *Store, parentID NodeID) HTMLCollection {
 		store:    store,
 		parentID: parentID,
 		kind:     collectionKindImages,
+	}
+}
+
+func newEmbedCollection(store *Store, parentID NodeID) HTMLCollection {
+	return HTMLCollection{
+		store:    store,
+		parentID: parentID,
+		kind:     collectionKindEmbeds,
 	}
 }
 
@@ -205,6 +214,10 @@ func (c HTMLCollection) elementIDs() []NodeID {
 	case collectionKindImages:
 		return c.store.descendantElementIDs(c.parentID, func(node *Node) bool {
 			return node.TagName == "img"
+		})
+	case collectionKindEmbeds:
+		return c.store.descendantElementIDs(c.parentID, func(node *Node) bool {
+			return node.TagName == "embed"
 		})
 	case collectionKindForms:
 		return c.store.descendantElementIDs(c.parentID, func(node *Node) bool {

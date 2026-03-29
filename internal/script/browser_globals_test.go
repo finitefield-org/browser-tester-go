@@ -329,6 +329,51 @@ func TestDispatchSupportsBuiltinMapSlice(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsBuiltinMapForEach(t *testing.T) {
+	host := &promiseCaptureHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const pickMap = new Map([["sku-1", 12], ["sku-2", 5]]);
+			const context = { prefix: "ctx" };
+			let seen = "";
+			pickMap.forEach(function (value, key, mapObject) {
+				seen = seen + (seen === "" ? "" : "|") + host.echo(this.prefix + ":" + key + ":" + value + ":" + mapObject.get(key));
+			}, context);
+			seen
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Map.forEach) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Map.forEach) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "ctx:sku-1:12:12|ctx:sku-2:5:5" {
+		t.Fatalf("Dispatch(Map.forEach) value = %q, want ctx:sku-1:12:12|ctx:sku-2:5:5", result.Value.String)
+	}
+	if got, want := strings.Join(host.echoes, "|"), "ctx:sku-1:12:12|ctx:sku-2:5:5"; got != want {
+		t.Fatalf("Dispatch(Map.forEach) host echoes = %q, want %q", got, want)
+	}
+}
+
+func TestDispatchRejectsBuiltinMapForEachWithoutCallback(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `new Map().forEach()`})
+	if err == nil {
+		t.Fatalf("Dispatch(new Map().forEach()) error = nil, want callback error")
+	}
+	if !strings.Contains(err.Error(), "Map.forEach expects a callback") {
+		t.Fatalf("Dispatch(new Map().forEach()) error = %v, want callback error", err)
+	}
+}
+
 func TestDispatchRejectsMapCallWithoutNew(t *testing.T) {
 	runtime := NewRuntimeWithBindings(nil, map[string]Value{
 		"Map": BuiltinMapValue(),
@@ -407,19 +452,19 @@ func TestDispatchReportsUnsupportedBrowserSurfaceDirectly(t *testing.T) {
 		"window": HostObjectReference("window"),
 	})
 
-	_, err := runtime.Dispatch(DispatchRequest{Source: `window.crypto.randomUUID()`})
+	_, err := runtime.Dispatch(DispatchRequest{Source: `window.crypto`})
 	if err == nil {
-		t.Fatalf("Dispatch(window.crypto.randomUUID()) error = nil, want unsupported error")
+		t.Fatalf("Dispatch(window.crypto) error = nil, want unsupported error")
 	}
 	scriptErr, ok := err.(Error)
 	if !ok {
-		t.Fatalf("Dispatch(window.crypto.randomUUID()) error type = %T, want script.Error", err)
+		t.Fatalf("Dispatch(window.crypto) error type = %T, want script.Error", err)
 	}
 	if scriptErr.Kind != ErrorKindUnsupported {
-		t.Fatalf("Dispatch(window.crypto.randomUUID()) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
+		t.Fatalf("Dispatch(window.crypto) error kind = %q, want %q", scriptErr.Kind, ErrorKindUnsupported)
 	}
 	if !strings.Contains(scriptErr.Message, "window.crypto") {
-		t.Fatalf("Dispatch(window.crypto.randomUUID()) error = %q, want browser-surface path", scriptErr.Message)
+		t.Fatalf("Dispatch(window.crypto) error = %q, want browser-surface path", scriptErr.Message)
 	}
 }
 
@@ -509,6 +554,26 @@ func TestDispatchPropagatesPromiseThenCallbackErrors(t *testing.T) {
 	}
 	if len(host.clipboardWrites) != 1 || host.clipboardWrites[0] != "copied" {
 		t.Fatalf("clipboard writes = %#v, want one copied write", host.clipboardWrites)
+	}
+}
+
+func TestDispatchPreservesHostBindingsForPromiseThenContinuationResolvedFromGo(t *testing.T) {
+	host := &promiseCaptureHost{}
+	promise, resolvePromise := NewPendingPromise()
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"promise": promise,
+	})
+
+	if _, err := runtime.Dispatch(DispatchRequest{
+		Source: `promise.then(function (value) { host.echo(value); return value; }); "queued"`,
+	}); err != nil {
+		t.Fatalf("Dispatch(promise.then) error = %v", err)
+	}
+
+	resolvePromise(StringValue("ready"))
+
+	if got, want := strings.Join(host.echoes, "|"), "ready"; got != want {
+		t.Fatalf("promise then host echoes = %q, want %q", got, want)
 	}
 }
 

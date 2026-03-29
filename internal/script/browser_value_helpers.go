@@ -70,6 +70,16 @@ func propertyKeyString(value Value) string {
 	return ToJSString(value)
 }
 
+func IsConstructibleFunctionValue(value Value) bool {
+	if value.Kind != ValueKindFunction {
+		return false
+	}
+	if value.NativeConstructibleFunction != nil {
+		return true
+	}
+	return value.Function != nil && value.Function.constructible
+}
+
 func browserElementReferenceTag(path string) (string, bool) {
 	normalized := strings.TrimSpace(path)
 	if !strings.HasPrefix(normalized, "element:") {
@@ -149,6 +159,10 @@ func BrowserDateLocaleDateString(ms int64, locale string) string {
 		return t.Format("2006/01/02")
 	}
 	return strconv.Itoa(int(t.Month())) + "/" + strconv.Itoa(t.Day()) + "/" + strconv.Itoa(t.Year())
+}
+
+func BrowserDateYear(ms int64) int {
+	return time.UnixMilli(ms).UTC().Year()
 }
 
 func RegExpLiteralParts(value Value) (pattern string, flags string, ok bool) {

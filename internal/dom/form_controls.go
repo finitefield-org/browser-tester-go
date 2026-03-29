@@ -15,6 +15,15 @@ func (s *Store) SetFormControlValue(nodeID NodeID, value string) error {
 	case "textarea":
 		return s.setTextContent(nodeID, value, false)
 	case "input":
+		if inputType(node) == "file" {
+			if value != "" {
+				return fmt.Errorf(
+					"set_value is only supported on text-like inputs and textareas, not <input type=%q>",
+					inputType(node),
+				)
+			}
+			return nil
+		}
 		if !isTextInputType(inputType(node)) {
 			return fmt.Errorf(
 				"set_value is only supported on text-like inputs and textareas, not <input type=%q>",

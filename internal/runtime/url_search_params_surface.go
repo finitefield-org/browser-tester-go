@@ -92,7 +92,7 @@ func browserURLSearchParamsValueFromState(state *browserURLSearchParamsState) sc
 					return script.UndefinedValue(), err
 				}
 				for _, pair := range pairs {
-					if _, err := script.InvokeCallableValue(nil, callback, []script.Value{
+					if _, err := script.InvokeCallableValue(script.CurrentInvokeHost(), callback, []script.Value{
 						script.StringValue(pair.value),
 						script.StringValue(pair.key),
 						paramsValue,

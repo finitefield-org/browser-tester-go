@@ -31,7 +31,7 @@ func (s *Store) ValueForNode(nodeID NodeID) string {
 		// The DOM store models textarea value as its text content.
 		return s.TextContentForNode(nodeID)
 	case "input":
-		// File inputs are not wired into the DOM store yet (they are captured via mocks).
+		// File inputs still keep the DOM-store value empty; file contents surface through the runtime bridge.
 		if inputType(node) == "file" {
 			return ""
 		}

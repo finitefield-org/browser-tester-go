@@ -263,6 +263,60 @@ func TestSessionReportsDownloadAndFileInputCaptures(t *testing.T) {
 	}
 }
 
+func TestSessionSetFilesExposesSeededFileText(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { const file = document.getElementById("upload").files[0]; file.text().then((text) => { document.getElementById("out").textContent = text; }); });</script></main>`,
+	})
+	s.Registry().FileInput().SeedFileText("#upload", "sample.json", `{"message":"ok"}`)
+
+	if err := s.SetFiles("#upload", []string{"sample.json"}); err != nil {
+		t.Fatalf("SetFiles() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `{"message":"ok"}` {
+		t.Fatalf("TextContent(#out) = %q, want seeded file content", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after seeded file text capture", got)
+	}
+}
+
+func TestSessionSetFilesAllowsClearingFileInputValue(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { document.getElementById("upload").value = ""; document.getElementById("out").textContent = "cleared"; });</script></main>`,
+	})
+
+	if err := s.SetFiles("#upload", []string{"sample.json"}); err != nil {
+		t.Fatalf("SetFiles() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "cleared" {
+		t.Fatalf("TextContent(#out) = %q, want cleared", got)
+	}
+	if got := s.FileInputSelections(); len(got) != 0 {
+		t.Fatalf("FileInputSelections() = %#v, want empty after file-input value clear", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after file-input value clear", got)
+	}
+}
+
+func TestSessionSetFilesRejectsUnseededFileTextRead(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { const file = document.getElementById("upload").files[0]; file.text().then((text) => { document.getElementById("out").textContent = text; }); });</script></main>`,
+	})
+
+	if err := s.SetFiles("#upload", []string{"sample.json"}); err == nil {
+		t.Fatalf("SetFiles() error = nil, want unseeded file text failure")
+	} else if !strings.Contains(err.Error(), "file content is unavailable") {
+		t.Fatalf("SetFiles() error = %q, want unseeded file text failure text", err)
+	}
+}
+
 func TestSessionSchedulerBackedTime(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
 
@@ -529,8 +583,23 @@ func TestSessionAttributeReflectionDelegatesToDOM(t *testing.T) {
 	if got, ok, err := s.GetAttribute("#root", "data-x"); err != nil || !ok || got != "1" {
 		t.Fatalf("GetAttribute(data-x) = (%q, %v, %v), want (\"1\", true, nil)", got, ok, err)
 	}
+	if got, ok, err := s.GetAttributeNode("#root", "data-x"); err != nil || !ok || got.Name != "data-x" || got.Value != "1" {
+		t.Fatalf("GetAttributeNode(data-x) = (%#v, %v, %v), want ({Name:data-x Value:1}, true, nil)", got, ok, err)
+	}
+	if ok, err := s.HasAttributes("#root"); err != nil || !ok {
+		t.Fatalf("HasAttributes(#root) = (%v, %v), want (true, nil)", ok, err)
+	}
 	if ok, err := s.HasAttribute("#root", "data-x"); err != nil || !ok {
 		t.Fatalf("HasAttribute(data-x) = (%v, %v), want (true, nil)", ok, err)
+	}
+	if got, err := s.ToggleAttribute("#root", "data-x"); err != nil || got {
+		t.Fatalf("ToggleAttribute(data-x) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, ok, err := s.GetAttribute("#root", "data-x"); err != nil || ok || got != "" {
+		t.Fatalf("GetAttribute(data-x) after ToggleAttribute = (%q, %v, %v), want (\"\", false, nil)", got, ok, err)
+	}
+	if got, err := s.ToggleAttribute("#root", "data-x"); err != nil || !got {
+		t.Fatalf("ToggleAttribute(data-x) restore = (%v, %v), want (true, nil)", got, err)
 	}
 
 	if err := s.SetAttribute("#root", "data-x", "2"); err != nil {
@@ -545,6 +614,76 @@ func TestSessionAttributeReflectionDelegatesToDOM(t *testing.T) {
 	}
 	if got, ok, err := s.GetAttribute("#root", "data-x"); err != nil || ok || got != "" {
 		t.Fatalf("GetAttribute(data-x) after RemoveAttribute = (%q, %v, %v), want (\"\", false, nil)", got, ok, err)
+	}
+}
+
+func TestSessionContainsDelegatesToDOM(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="root"><span id="child"></span></div><div id="sibling"></div></main>`,
+	})
+
+	if got, err := s.Contains("#root", "#child"); err != nil || !got {
+		t.Fatalf("Contains(#root, #child) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := s.Contains("#root", "#root"); err != nil || !got {
+		t.Fatalf("Contains(#root, #root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := s.Contains("#child", "#root"); err != nil || got {
+		t.Fatalf("Contains(#child, #root) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, err := s.Contains("#root", "#sibling"); err != nil || got {
+		t.Fatalf("Contains(#root, #sibling) = (%v, %v), want (false, nil)", got, err)
+	}
+}
+
+func TestSessionCompareDocumentPositionDelegatesToDOM(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="root"><span id="child"></span></div><div id="sibling"></div></main>`,
+	})
+
+	if got, err := s.CompareDocumentPosition("#root", "#child"); err != nil || got != 12 {
+		t.Fatalf("CompareDocumentPosition(#root, #child) = (%d, %v), want (12, nil)", got, err)
+	}
+	if got, err := s.CompareDocumentPosition("#child", "#root"); err != nil || got != 18 {
+		t.Fatalf("CompareDocumentPosition(#child, #root) = (%d, %v), want (18, nil)", got, err)
+	}
+	if got, err := s.CompareDocumentPosition("#root", "#root"); err != nil || got != 0 {
+		t.Fatalf("CompareDocumentPosition(#root, #root) = (%d, %v), want (0, nil)", got, err)
+	}
+	if got, err := s.CompareDocumentPosition("#root", "#sibling"); err != nil || got != 4 {
+		t.Fatalf("CompareDocumentPosition(#root, #sibling) = (%d, %v), want (4, nil)", got, err)
+	}
+}
+
+func TestSessionIsConnectedDelegatesToDOM(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="root"><span id="child"></span></div><div id="sibling"></div></main>`,
+	})
+
+	if got, err := s.IsConnected("#root"); err != nil || !got {
+		t.Fatalf("IsConnected(#root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := s.IsConnected("#child"); err != nil || !got {
+		t.Fatalf("IsConnected(#child) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := s.IsConnected("#sibling"); err != nil || !got {
+		t.Fatalf("IsConnected(#sibling) = (%v, %v), want (true, nil)", got, err)
+	}
+}
+
+func TestSessionHasChildNodesDelegatesToDOM(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><div id="root"><span id="child"></span></div><div id="sibling"></div></main>`,
+	})
+
+	if got, err := s.HasChildNodes("#root"); err != nil || !got {
+		t.Fatalf("HasChildNodes(#root) = (%v, %v), want (true, nil)", got, err)
+	}
+	if got, err := s.HasChildNodes("#child"); err != nil || got {
+		t.Fatalf("HasChildNodes(#child) = (%v, %v), want (false, nil)", got, err)
+	}
+	if got, err := s.HasChildNodes("#sibling"); err != nil || got {
+		t.Fatalf("HasChildNodes(#sibling) = (%v, %v), want (false, nil)", got, err)
 	}
 }
 
@@ -1040,6 +1179,27 @@ func TestNilSessionHelpersStaySafe(t *testing.T) {
 	}
 	if _, _, err := s.GetAttribute("#cta", "id"); err == nil {
 		t.Fatalf("GetAttribute(#cta) error = nil, want session unavailable error")
+	}
+	if _, _, err := s.GetAttributeNode("#cta", "id"); err == nil {
+		t.Fatalf("GetAttributeNode(#cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.HasAttributes("#cta"); err == nil {
+		t.Fatalf("HasAttributes(#cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.CompareDocumentPosition("#cta", "#cta"); err == nil {
+		t.Fatalf("CompareDocumentPosition(#cta, #cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.Contains("#cta", "#cta"); err == nil {
+		t.Fatalf("Contains(#cta, #cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.IsConnected("#cta"); err == nil {
+		t.Fatalf("IsConnected(#cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.HasChildNodes("#cta"); err == nil {
+		t.Fatalf("HasChildNodes(#cta) error = nil, want session unavailable error")
+	}
+	if _, err := s.ToggleAttribute("#cta", "id"); err == nil {
+		t.Fatalf("ToggleAttribute(#cta) error = nil, want session unavailable error")
 	}
 	if _, err := s.HasAttribute("#cta", "id"); err == nil {
 		t.Fatalf("HasAttribute(#cta) error = nil, want session unavailable error")

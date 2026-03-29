@@ -16,6 +16,13 @@ func (s *Store) Images() (HTMLCollection, error) {
 	return newImageCollection(s, s.documentID), nil
 }
 
+func (s *Store) Embeds() (HTMLCollection, error) {
+	if s == nil {
+		return HTMLCollection{}, fmt.Errorf("dom store is nil")
+	}
+	return newEmbedCollection(s, s.documentID), nil
+}
+
 func (s *Store) Forms() (HTMLCollection, error) {
 	if s == nil {
 		return HTMLCollection{}, fmt.Errorf("dom store is nil")

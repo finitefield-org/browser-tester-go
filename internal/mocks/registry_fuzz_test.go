@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -546,6 +547,85 @@ func FuzzFileInputFamilyCaptureModel(f *testing.F) {
 	})
 }
 
+func FuzzFileInputFamilyTextAndClearModel(f *testing.F) {
+	seeds := [][]byte{
+		nil,
+		[]byte("file-input-text"),
+		[]byte{0, 1, 2, 3, 4, 5, 6},
+	}
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var family FileInputFamily
+		wantSelections := make([]FileInputSelection, 0)
+		wantTexts := make(map[string]map[string]string)
+
+		for i, b := range data {
+			selector := fmt.Sprintf(" #upload-%02x-%d ", b, i)
+			fileName := fmt.Sprintf(" file-%02x-%d.txt ", b, i)
+			text := fmt.Sprintf("text-%02x-%d", b, i)
+			files := []string{
+				fileName,
+				fmt.Sprintf("extra-%02x-%d.txt", b, i),
+			}
+
+			switch b % 3 {
+			case 0:
+				family.SetFiles(selector, files)
+				copied := append([]string(nil), files...)
+				wantSelections = append(wantSelections, FileInputSelection{Selector: selector, Files: copied})
+			case 1:
+				family.SeedFileText(selector, fileName, text)
+				normalizedSelector := strings.TrimSpace(selector)
+				normalizedFileName := strings.TrimSpace(fileName)
+				if wantTexts[normalizedSelector] == nil {
+					wantTexts[normalizedSelector] = map[string]string{}
+				}
+				wantTexts[normalizedSelector][normalizedFileName] = text
+				if got, ok := family.FileText(selector, fileName); !ok || got != text {
+					t.Fatalf("FileText(%q, %q) after seed = (%q, %v), want (%q, true)", selector, fileName, got, ok, text)
+				}
+			default:
+				family.ClearFiles(selector)
+				normalizedSelector := strings.TrimSpace(selector)
+				filtered := make([]FileInputSelection, 0, len(wantSelections))
+				for _, selection := range wantSelections {
+					if strings.TrimSpace(selection.Selector) == normalizedSelector {
+						continue
+					}
+					filtered = append(filtered, selection)
+				}
+				wantSelections = filtered
+			}
+
+			if got := family.Selections(); !reflect.DeepEqual(got, wantSelections) {
+				t.Fatalf("Selections() after step %d = %#v, want %#v", i, got, wantSelections)
+			}
+			for selector, files := range wantTexts {
+				for fileName, wantText := range files {
+					got, ok := family.FileText(selector, fileName)
+					if !ok || got != wantText {
+						t.Fatalf("FileText(%q, %q) after step %d = (%q, %v), want (%q, true)", selector, fileName, i, got, ok, wantText)
+					}
+				}
+			}
+		}
+
+		if got := family.Selections(); !reflect.DeepEqual(got, wantSelections) {
+			t.Fatalf("Selections() final = %#v, want %#v", got, wantSelections)
+		}
+		family.Reset()
+		if got := family.Selections(); len(got) != 0 {
+			t.Fatalf("Selections() after Reset = %#v, want empty", got)
+		}
+		if got, ok := family.FileText(" #upload-00-0 ", " file-00-0.txt "); ok || got != "" {
+			t.Fatalf("FileText() after Reset = (%q, %v), want empty", got, ok)
+		}
+	})
+}
+
 func seedRegistryState(r *Registry, step int, b byte) {
 	if r == nil {
 		return
@@ -558,7 +638,7 @@ func seedRegistryState(r *Registry, step int, b byte) {
 	fileName := fmt.Sprintf("file-%02x-%d.txt", b, step)
 	selector := fmt.Sprintf("#input-%02x-%d", b, step)
 
-	switch b % 9 {
+	switch b % 10 {
 	case 0:
 		r.Fetch().RespondText(url, 200, value)
 		r.Fetch().Fail(url, "fetch blocked")
@@ -575,9 +655,11 @@ func seedRegistryState(r *Registry, step int, b byte) {
 		r.Clipboard().SeedText(value)
 		r.Clipboard().RecordWrite(value + "-write")
 	case 3:
+		r.Navigator().SeedLanguage(value)
+	case 4:
 		r.Location().SetCurrentURL(url)
 		r.Location().RecordNavigation(url + "#next")
-	case 4:
+	case 5:
 		r.Open().Fail("open blocked")
 		_ = r.Open().Invoke(url)
 		r.Close().Fail("close blocked")
@@ -586,14 +668,14 @@ func seedRegistryState(r *Registry, step int, b byte) {
 		_ = r.Print().Invoke()
 		r.Scroll().Fail("scroll blocked")
 		_ = r.Scroll().Invoke("to", int64(step), int64(b))
-	case 5:
+	case 6:
 		r.MatchMedia().RespondMatches(query, b%2 == 0)
 		r.MatchMedia().RecordCall(query)
 		r.MatchMedia().RecordListenerCall(query, "change")
 		_, _ = r.MatchMedia().Resolve(query)
-	case 6:
-		r.Downloads().Capture(fileName, []byte(value))
 	case 7:
+		r.Downloads().Capture(fileName, []byte(value))
+	case 8:
 		r.FileInput().SetFiles(selector, []string{fileName, value})
 	default:
 		r.Storage().SeedLocal(key, value)
@@ -806,6 +888,9 @@ func assertRegistryEmpty(t *testing.T, r *Registry) {
 	}
 	if _, ok := r.Clipboard().SeededText(); ok {
 		t.Fatalf("Clipboard seeded text should be cleared after ResetAll")
+	}
+	if _, ok := r.Navigator().SeededLanguage(); ok {
+		t.Fatalf("Navigator seeded language should be cleared after ResetAll")
 	}
 
 	if got := r.Location().Navigations(); len(got) != 0 {

@@ -77,6 +77,26 @@ func TestSessionMutationHelpersReadAndWriteDOM(t *testing.T) {
 	}
 }
 
+func TestSessionMutationHelpersSupportBeforeAfterAndReplaceWith(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main id="root"><span id="a">A</span><span id="b">B</span><span id="c">C</span></main>`,
+	})
+
+	if err := s.Before("#b", `<i id="before">x</i>`); err != nil {
+		t.Fatalf("Before(#b) error = %v", err)
+	}
+	if err := s.After("#a", `<i id="after">y</i>`); err != nil {
+		t.Fatalf("After(#a) error = %v", err)
+	}
+	if err := s.ReplaceWith("#c", `<strong id="replace">z</strong>`); err != nil {
+		t.Fatalf("ReplaceWith(#c) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main id="root"><span id="a">A</span><i id="after">y</i><i id="before">x</i><span id="b">B</span><strong id="replace">z</strong></main>`; got != want {
+		t.Fatalf("DumpDOM() after before/after/replaceWith = %q, want %q", got, want)
+	}
+}
+
 func TestSessionSetTextContentPreservesFocusedNodeAndClearsTargetDescendants(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><div id="target"><span id="child">x</span></div><p id="other">y</p></main>`,
@@ -240,6 +260,15 @@ func TestSessionMutationHelpersRejectInvalidInputs(t *testing.T) {
 	if err := nilSession.InsertAdjacentHTML("#target", "beforeend", "<p>x</p>"); err == nil {
 		t.Fatalf("nil InsertAdjacentHTML() error = nil, want session unavailable error")
 	}
+	if err := nilSession.Before("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil Before() error = nil, want session unavailable error")
+	}
+	if err := nilSession.After("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil After() error = nil, want session unavailable error")
+	}
+	if err := nilSession.ReplaceWith("#target", "<p>x</p>"); err == nil {
+		t.Fatalf("nil ReplaceWith() error = nil, want session unavailable error")
+	}
 	if err := nilSession.RemoveNode("#target"); err == nil {
 		t.Fatalf("nil RemoveNode() error = nil, want session unavailable error")
 	}
@@ -275,6 +304,15 @@ func TestSessionMutationHelpersRejectInvalidInputs(t *testing.T) {
 	if err := s.InsertAdjacentHTML("#missing", "beforeend", "<p>x</p>"); err == nil {
 		t.Fatalf("InsertAdjacentHTML(#missing) error = nil, want missing target error")
 	}
+	if err := s.Before("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("Before(#missing) error = nil, want missing target error")
+	}
+	if err := s.After("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("After(#missing) error = nil, want missing target error")
+	}
+	if err := s.ReplaceWith("#missing", "<p>x</p>"); err == nil {
+		t.Fatalf("ReplaceWith(#missing) error = nil, want missing target error")
+	}
 	if err := s.RemoveNode("#missing"); err == nil {
 		t.Fatalf("RemoveNode(#missing) error = nil, want missing target error")
 	}
@@ -297,6 +335,25 @@ func TestSessionMutationHelpersRejectInvalidInputs(t *testing.T) {
 	}
 	if err := s.InsertAdjacentHTML("#top", "afterend", `<a id="ae"></a>`); err == nil {
 		t.Fatalf("InsertAdjacentHTML(#top,afterend) error = nil, want document-parent restriction")
+	}
+	beforeCount := s.domStore.NodeCount()
+	if err := s.Before("#top", "x"); err == nil {
+		t.Fatalf("Before(#top, text) error = nil, want document-parent restriction")
+	}
+	if got, want := s.domStore.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid Before(#top) = %d, want %d", got, want)
+	}
+	if err := s.After("#top", "x"); err == nil {
+		t.Fatalf("After(#top, text) error = nil, want document-parent restriction")
+	}
+	if got, want := s.domStore.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid After(#top) = %d, want %d", got, want)
+	}
+	if err := s.ReplaceWith("#top", "x"); err == nil {
+		t.Fatalf("ReplaceWith(#top, text) error = nil, want document-parent restriction")
+	}
+	if got, want := s.domStore.NodeCount(), beforeCount; got != want {
+		t.Fatalf("NodeCount() after invalid ReplaceWith(#top) = %d, want %d", got, want)
 	}
 	if err := s.CloneNode("#top", true); err != nil {
 		t.Fatalf("CloneNode(#top) error = %v, want clone to succeed for top-level nodes", err)

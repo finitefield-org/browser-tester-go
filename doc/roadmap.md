@@ -297,7 +297,8 @@ Exit criteria:
   `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()`, `:nth-of-type()`,
   `:nth-last-child()`, `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`,
   `:lang()`, `:dir()`, `:placeholder-shown`, `:blank`, `:heading`, `:heading(integer#)`, `:playing`,
-  `:paused`, `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:modal`,
+  `:paused`, `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`,
+  `:picture-in-picture`, `:fullscreen`, `:modal`,
   `:popover-open`, `:open`, `:focus`, `:focus-visible`, `:focus-within`, `:target`,
   `:target-within`, `:is()`, `:where()`, `:not()`, and `:has()` first.
 - Add script-side query APIs that reuse the same selector engine, plus a minimal snapshot `NodeList`

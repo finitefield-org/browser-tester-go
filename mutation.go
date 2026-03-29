@@ -53,6 +53,36 @@ func (h *Harness) ReplaceChildren(selector, markup string) error {
 	return nil
 }
 
+func (h *Harness) Before(selector, markup string) error {
+	if h == nil || h.session == nil {
+		return NewError(ErrorKindDOM, "before is unavailable")
+	}
+	if err := h.session.Before(selector, markup); err != nil {
+		return NewError(ErrorKindDOM, err.Error())
+	}
+	return nil
+}
+
+func (h *Harness) After(selector, markup string) error {
+	if h == nil || h.session == nil {
+		return NewError(ErrorKindDOM, "after is unavailable")
+	}
+	if err := h.session.After(selector, markup); err != nil {
+		return NewError(ErrorKindDOM, err.Error())
+	}
+	return nil
+}
+
+func (h *Harness) ReplaceWith(selector, markup string) error {
+	if h == nil || h.session == nil {
+		return NewError(ErrorKindDOM, "replace with is unavailable")
+	}
+	if err := h.session.ReplaceWith(selector, markup); err != nil {
+		return NewError(ErrorKindDOM, err.Error())
+	}
+	return nil
+}
+
 func (h *Harness) SetTextContent(selector, text string) error {
 	if h == nil || h.session == nil {
 		return NewError(ErrorKindDOM, "set text content is unavailable")

@@ -10,6 +10,7 @@ type Registry struct {
 	fetch      FetchFamily
 	dialogs    DialogFamily
 	clipboard  ClipboardFamily
+	navigator  NavigatorFamily
 	location   LocationFamily
 	open       OpenFamily
 	close      CloseFamily
@@ -44,6 +45,13 @@ func (r *Registry) Clipboard() *ClipboardFamily {
 		return nil
 	}
 	return &r.clipboard
+}
+
+func (r *Registry) Navigator() *NavigatorFamily {
+	if r == nil {
+		return nil
+	}
+	return &r.navigator
 }
 
 func (r *Registry) Location() *LocationFamily {
@@ -116,6 +124,7 @@ func (r *Registry) ResetAll() {
 	r.fetch.Reset()
 	r.dialogs.Reset()
 	r.clipboard.Reset()
+	r.navigator.Reset()
 	r.location.Reset()
 	r.open.Reset()
 	r.close.Reset()
@@ -448,6 +457,32 @@ func (f *ClipboardFamily) Reset() {
 	}
 	f.seededText = nil
 	f.writes = nil
+}
+
+type NavigatorFamily struct {
+	language *string
+}
+
+func (f *NavigatorFamily) SeedLanguage(value string) {
+	if f == nil {
+		return
+	}
+	seeded := value
+	f.language = &seeded
+}
+
+func (f *NavigatorFamily) SeededLanguage() (string, bool) {
+	if f == nil || f.language == nil {
+		return "", false
+	}
+	return *f.language, true
+}
+
+func (f *NavigatorFamily) Reset() {
+	if f == nil {
+		return
+	}
+	f.language = nil
 }
 
 type LocationFamily struct {
@@ -935,6 +970,7 @@ type FileInputSelection struct {
 
 type FileInputFamily struct {
 	selections []FileInputSelection
+	texts      map[string]map[string]string
 }
 
 func (f *FileInputFamily) SetFiles(selector string, files []string) {
@@ -947,6 +983,62 @@ func (f *FileInputFamily) SetFiles(selector string, files []string) {
 		Selector: selector,
 		Files:    copied,
 	})
+}
+
+func (f *FileInputFamily) ClearFiles(selector string) {
+	if f == nil {
+		return
+	}
+	normalized := strings.TrimSpace(selector)
+	if normalized == "" || len(f.selections) == 0 {
+		return
+	}
+	kept := f.selections[:0]
+	for _, selection := range f.selections {
+		if strings.TrimSpace(selection.Selector) == normalized {
+			continue
+		}
+		kept = append(kept, selection)
+	}
+	f.selections = kept
+}
+
+func (f *FileInputFamily) SeedFileText(selector, fileName, text string) {
+	if f == nil {
+		return
+	}
+	normalizedSelector := strings.TrimSpace(selector)
+	normalizedFileName := strings.TrimSpace(fileName)
+	if normalizedSelector == "" || normalizedFileName == "" {
+		return
+	}
+	if f.texts == nil {
+		f.texts = make(map[string]map[string]string)
+	}
+	if f.texts[normalizedSelector] == nil {
+		f.texts[normalizedSelector] = make(map[string]string)
+	}
+	f.texts[normalizedSelector][normalizedFileName] = text
+}
+
+func (f *FileInputFamily) FileText(selector, fileName string) (string, bool) {
+	if f == nil {
+		return "", false
+	}
+	normalizedSelector := strings.TrimSpace(selector)
+	normalizedFileName := strings.TrimSpace(fileName)
+	if normalizedSelector == "" || normalizedFileName == "" {
+		return "", false
+	}
+	if f.texts == nil {
+		return "", false
+	}
+	files := f.texts[normalizedSelector]
+	if len(files) == 0 {
+		return "", false
+	}
+	text, ok := files[normalizedFileName]
+	return text, ok
 }
 
 func (f *FileInputFamily) Selections() []FileInputSelection {
@@ -980,6 +1072,7 @@ func (f *FileInputFamily) Reset() {
 		return
 	}
 	f.selections = nil
+	f.texts = nil
 }
 
 type StorageFamily struct {

@@ -27,6 +27,170 @@ func TestSessionInlineScriptsSupportStandardNodeConstructionHelpers(t *testing.T
 	}
 }
 
+func TestSessionInlineScriptsCanUseElementAppendAndPrepend(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root"><div id="box">middle</div><div id="probe"></div><script>const box = document.querySelector("#box"); const em = document.createElement("em"); em.textContent = "first"; const strong = document.createElement("strong"); strong.textContent = "second"; box.prepend("head|", em); box.append(strong, "|tail"); document.querySelector("#probe").textContent = box.innerHTML</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `head|<em>first</em>middle<strong>second</strong>|tail`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsCanUseDocumentAppendAndPrepend(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root"><article id="body"></article><script>document.prepend(document.createElement("header")); document.append(document.createElement("footer"))</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<header></header><main id="root"><article id="body"></article><script>document.prepend(document.createElement("header")); document.append(document.createElement("footer"))</script></main><footer></footer>`; got != want {
+		t.Fatalf("DumpDOM() after document append/prepend = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementAppendDocumentNode(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="box"></div><script>const box = document.querySelector("#box"); box.append(document)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want unsupported document append")
+	}
+	if !strings.Contains(err.Error(), "element.append") || !strings.Contains(err.Error(), "document nodes") {
+		t.Fatalf("WriteHTML() error = %q, want document-node append error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementPrependDocumentNode(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="box"></div><script>const box = document.querySelector("#box"); box.prepend(document)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want unsupported document prepend")
+	}
+	if !strings.Contains(err.Error(), "element.prepend") || !strings.Contains(err.Error(), "document nodes") {
+		t.Fatalf("WriteHTML() error = %q, want document-node prepend error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectDocumentAppendTextNode(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="box"></div><script>document.append("text")</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want unsupported document append text")
+	}
+	if !strings.Contains(err.Error(), "document node can only contain element children") {
+		t.Fatalf("WriteHTML() error = %q, want document-node child error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectDocumentPrependTextNode(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><div id="box"></div><script>document.prepend("text")</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want unsupported document prepend text")
+	}
+	if !strings.Contains(err.Error(), "document node can only contain element children") {
+		t.Fatalf("WriteHTML() error = %q, want document-node child error", err)
+	}
+}
+
+func TestSessionInlineScriptsCanToggleElementAttribute(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root"><button id="btn"></button><div id="probe"></div><script>const btn = document.querySelector("#btn"); const first = btn.toggleAttribute("data-active"); const second = btn.toggleAttribute("data-active"); const third = btn.toggleAttribute("data-active", true); const fourth = btn.toggleAttribute("data-active", false); document.querySelector("#probe").textContent = [String(first), String(second), String(third), String(fourth), String(btn.hasAttribute("data-active"))].join("|")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `true|false|true|false|false`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementToggleAttributeForceType(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><button id="btn"></button><script>document.querySelector("#btn").toggleAttribute("data-active", "yes")</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want toggleAttribute boolean validation failure")
+	}
+	if !strings.Contains(err.Error(), "toggleAttribute") || !strings.Contains(err.Error(), "boolean") {
+		t.Fatalf("WriteHTML() error = %q, want toggleAttribute boolean validation error", err)
+	}
+}
+
+func TestSessionInlineScriptsCanUseElementHasAttributes(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root"><button id="btn" data-active="yes"></button><button></button><div id="probe"></div><script>const btn = document.querySelector("#btn"); const empty = document.querySelectorAll("button")[1]; document.querySelector("#probe").textContent = [String(btn.hasAttributes()), String(empty.hasAttributes())].join("|")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `true|false`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsCanUseElementGetAttributeNames(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root" data-b="2" data-a="1"><div id="probe"></div><script>const root = document.querySelector("#root"); document.querySelector("#probe").textContent = root.getAttributeNames().join("|")</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `id|data-b|data-a`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsCanUseElementGetAttributeNode(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root" data-b="2" data-a="1"><div id="probe"></div><script>const root = document.querySelector("#root"); const attr = root.getAttributeNode("data-a"); document.querySelector("#probe").textContent = attr.name + "=" + attr.value + "|" + String(root.getAttributeNode("missing") === null)</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if want := `data-a=1|true`; got != want {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementHasAttributesWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><button id="btn"></button><script>document.querySelector("#btn").hasAttributes(1)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want hasAttributes arity failure")
+	}
+	if !strings.Contains(err.Error(), "hasAttributes") || !strings.Contains(err.Error(), "no arguments") {
+		t.Fatalf("WriteHTML() error = %q, want hasAttributes arity error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementGetAttributeNamesWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><button id="btn"></button><script>document.querySelector("#btn").getAttributeNames(1)</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want getAttributeNames arity failure")
+	}
+	if !strings.Contains(err.Error(), "getAttributeNames") || !strings.Contains(err.Error(), "no arguments") {
+		t.Fatalf("WriteHTML() error = %q, want getAttributeNames arity error", err)
+	}
+}
+
+func TestSessionInlineScriptsRejectElementGetAttributeNodeWithWrongArity(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	err := s.WriteHTML(`<main id="root"><button id="btn"></button><script>document.querySelector("#btn").getAttributeNode()</script></main>`)
+	if err == nil {
+		t.Fatalf("WriteHTML() error = nil, want getAttributeNode arity failure")
+	}
+	if !strings.Contains(err.Error(), "getAttributeNode") || !strings.Contains(err.Error(), "requires argument 1") {
+		t.Fatalf("WriteHTML() error = %q, want getAttributeNode arity error", err)
+	}
+}
+
 func TestSessionInlineScriptsCanUpdateTextNodeNodeValue(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
 	if err := s.WriteHTML(`<main id="root"><div id="out"></div><script>const out = document.querySelector("#out"); const text = document.createTextNode("seed"); out.appendChild(text); text.nodeValue = "updated"</script></main>`); err != nil {

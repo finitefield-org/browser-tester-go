@@ -323,6 +323,24 @@ func TestFormControlMutationHelpersRejectUnsupportedNodes(t *testing.T) {
 	}
 }
 
+func TestFormControlMutationHelpersAllowClearingFileInputValue(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main><input id="upload" type="file"></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	uploadID := mustSelectSingle(t, store, "#upload")
+	if err := store.SetFormControlValue(uploadID, ""); err != nil {
+		t.Fatalf("SetFormControlValue(#upload, empty) error = %v", err)
+	}
+	if got, want := store.ValueForNode(uploadID), ""; got != want {
+		t.Fatalf("ValueForNode(#upload) after clear = %q, want %q", got, want)
+	}
+	if err := store.SetFormControlValue(uploadID, "report.csv"); err == nil {
+		t.Fatalf("SetFormControlValue(#upload, report.csv) error = nil, want unsupported file-input value error")
+	}
+}
+
 func TestResetFormControlsRestoresInitialState(t *testing.T) {
 	store := NewStore()
 	input := `<form id="profile"><input id="name"><input id="flag" type="checkbox"><input id="radio-a" type="radio" name="size" checked><input id="radio-b" type="radio" name="size"><textarea id="bio">Base</textarea><select id="mode"><option value="a" selected>A</option><option>B</option><option value="c">C</option></select></form>`

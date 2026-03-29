@@ -106,6 +106,17 @@ func (s *Store) IsConnected(nodeID NodeID) bool {
 	return false
 }
 
+func (s *Store) HasChildNodes(nodeID NodeID) bool {
+	if s == nil || nodeID == 0 {
+		return false
+	}
+	node := s.Node(nodeID)
+	if node == nil {
+		return false
+	}
+	return len(node.Children) > 0
+}
+
 func (s *Store) RootNodeID(nodeID NodeID) NodeID {
 	if s == nil || nodeID == 0 {
 		return 0

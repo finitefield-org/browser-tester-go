@@ -68,6 +68,12 @@ func (v DatasetView) Remove(name string) error {
 	return nil
 }
 
+// AttributeNode is a snapshot of a reflected attribute node.
+type AttributeNode struct {
+	Name  string
+	Value string
+}
+
 func (h *Harness) ClassList(selector string) (ClassListView, error) {
 	if h == nil || h.session == nil {
 		return ClassListView{}, NewError(ErrorKindDOM, "class list is unavailable")
@@ -88,4 +94,15 @@ func (h *Harness) Dataset(selector string) (DatasetView, error) {
 		return DatasetView{}, NewError(ErrorKindDOM, err.Error())
 	}
 	return DatasetView{dataset: dataset}, nil
+}
+
+func (h *Harness) GetAttributeNode(selector, name string) (AttributeNode, bool, error) {
+	if h == nil || h.session == nil {
+		return AttributeNode{}, false, NewError(ErrorKindDOM, "get attribute node is unavailable")
+	}
+	attr, ok, err := h.session.GetAttributeNode(selector, name)
+	if err != nil {
+		return AttributeNode{}, false, NewError(ErrorKindDOM, err.Error())
+	}
+	return AttributeNode{Name: attr.Name, Value: attr.Value}, ok, nil
 }

@@ -21,6 +21,25 @@ func (s *Store) GetAttribute(nodeID NodeID, name string) (string, bool, error) {
 	return value, ok, nil
 }
 
+func (s *Store) GetAttributeNode(nodeID NodeID, name string) (Attribute, bool, error) {
+	if s == nil {
+		return Attribute{}, false, fmt.Errorf("dom store is nil")
+	}
+	normalized, err := normalizeAttributeName(name)
+	if err != nil {
+		return Attribute{}, false, err
+	}
+	node, err := s.elementNode(nodeID)
+	if err != nil {
+		return Attribute{}, false, err
+	}
+	value, ok := attributeValue(node.Attrs, normalized)
+	if !ok {
+		return Attribute{}, false, nil
+	}
+	return Attribute{Name: normalized, Value: value, HasValue: true}, true, nil
+}
+
 func (s *Store) HasAttribute(nodeID NodeID, name string) (bool, error) {
 	if s == nil {
 		return false, fmt.Errorf("dom store is nil")
@@ -69,6 +88,63 @@ func (s *Store) RemoveAttribute(nodeID NodeID, name string) error {
 	}
 	node.Attrs = removeAttribute(node.Attrs, normalized)
 	return nil
+}
+
+func (s *Store) HasAttributes(nodeID NodeID) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("dom store is nil")
+	}
+	node, err := s.elementNode(nodeID)
+	if err != nil {
+		return false, err
+	}
+	return len(node.Attrs) > 0, nil
+}
+
+func (s *Store) GetAttributeNames(nodeID NodeID) ([]string, error) {
+	if s == nil {
+		return nil, fmt.Errorf("dom store is nil")
+	}
+	node, err := s.elementNode(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(node.Attrs))
+	for _, attr := range node.Attrs {
+		names = append(names, attr.Name)
+	}
+	return names, nil
+}
+
+func (s *Store) ToggleAttribute(nodeID NodeID, name string, force bool, hasForce bool) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("dom store is nil")
+	}
+	normalized, err := normalizeAttributeName(name)
+	if err != nil {
+		return false, err
+	}
+	node, err := s.elementNode(nodeID)
+	if err != nil {
+		return false, err
+	}
+
+	_, present := attributeValue(node.Attrs, normalized)
+	if hasForce {
+		if force {
+			node.Attrs = setAttribute(node.Attrs, normalized, "", false)
+			return true, nil
+		}
+		node.Attrs = removeAttribute(node.Attrs, normalized)
+		return false, nil
+	}
+
+	if present {
+		node.Attrs = removeAttribute(node.Attrs, normalized)
+		return false, nil
+	}
+	node.Attrs = setAttribute(node.Attrs, normalized, "", false)
+	return true, nil
 }
 
 func (s *Store) elementNode(nodeID NodeID) (*Node, error) {

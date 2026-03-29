@@ -333,6 +333,26 @@ func TestLocationTakeNavigationsClearsState(t *testing.T) {
 	}
 }
 
+func TestNavigatorFamilySeedLanguageAndReset(t *testing.T) {
+	var f NavigatorFamily
+
+	if got, ok := f.SeededLanguage(); ok || got != "" {
+		t.Fatalf("SeededLanguage() = (%q, %v), want empty seed state", got, ok)
+	}
+
+	f.SeedLanguage("fr-FR")
+
+	if got, ok := f.SeededLanguage(); !ok || got != "fr-FR" {
+		t.Fatalf("SeededLanguage() = (%q, %v), want seeded language", got, ok)
+	}
+
+	f.Reset()
+
+	if got, ok := f.SeededLanguage(); ok || got != "" {
+		t.Fatalf("SeededLanguage() after Reset = (%q, %v), want empty seed state", got, ok)
+	}
+}
+
 func TestDownloadFamilyTakeReturnsDeepCopyAndClearsState(t *testing.T) {
 	var f DownloadFamily
 
@@ -367,6 +387,57 @@ func TestFileInputFamilyTakeSelectionsReturnsDeepCopyAndClearsState(t *testing.T
 	selections[0].Files[0] = "returned-mutation.txt"
 	if got := f.TakeSelections(); len(got) != 0 {
 		t.Fatalf("TakeSelections() second read = %#v, want empty", got)
+	}
+}
+
+func TestFileInputFamilyClearFilesRemovesMatchingSelections(t *testing.T) {
+	var f FileInputFamily
+
+	f.SetFiles("#upload", []string{"a.txt"})
+	f.SetFiles("#other", []string{"b.txt"})
+	f.ClearFiles("#upload")
+
+	selections := f.Selections()
+	if len(selections) != 1 || selections[0].Selector != "#other" || len(selections[0].Files) != 1 || selections[0].Files[0] != "b.txt" {
+		t.Fatalf("Selections() after ClearFiles = %#v, want only remaining non-matching selection", selections)
+	}
+}
+
+func TestFileInputFamilyClearFilesKeepsSeededTextAvailable(t *testing.T) {
+	var f FileInputFamily
+
+	f.SetFiles("#upload", []string{"sample.json"})
+	f.SeedFileText("#upload", "sample.json", "{\"message\":\"ok\"}")
+	f.ClearFiles("#upload")
+
+	if got, ok := f.FileText("#upload", "sample.json"); !ok || got != "{\"message\":\"ok\"}" {
+		t.Fatalf("FileText(#upload, sample.json) after ClearFiles = (%q, %v), want seeded text to remain available", got, ok)
+	}
+	if got := f.Selections(); len(got) != 0 {
+		t.Fatalf("Selections() after ClearFiles = %#v, want empty", got)
+	}
+}
+
+func TestFileInputFamilySeedFileTextReturnsCopyAndClearsState(t *testing.T) {
+	var f FileInputFamily
+
+	f.SeedFileText("#upload", "sample.json", "{\"message\":\"ok\"}")
+	f.SeedFileText("#upload", "empty.txt", "")
+
+	if got, ok := f.FileText("#upload", "sample.json"); !ok || got != "{\"message\":\"ok\"}" {
+		t.Fatalf("FileText(#upload, sample.json) = (%q, %v), want seeded text", got, ok)
+	}
+	if got, ok := f.FileText("#upload", "empty.txt"); !ok || got != "" {
+		t.Fatalf("FileText(#upload, empty.txt) = (%q, %v), want seeded empty text", got, ok)
+	}
+	if got, ok := f.FileText("#upload", "missing.txt"); ok || got != "" {
+		t.Fatalf("FileText(#upload, missing.txt) = (%q, %v), want missing seed", got, ok)
+	}
+
+	f.Reset()
+
+	if got, ok := f.FileText("#upload", "sample.json"); ok || got != "" {
+		t.Fatalf("FileText() after Reset = (%q, %v), want empty", got, ok)
 	}
 }
 
@@ -485,6 +556,7 @@ func TestRegistryResetAllClearsAllFamilies(t *testing.T) {
 	r.Fetch().RespondText("https://example.test/a", 200, "ok")
 	r.Dialogs().RecordAlert("alert")
 	r.Clipboard().SeedText("seed")
+	r.Navigator().SeedLanguage("fr-FR")
 	r.Location().RecordNavigation("https://example.test/n")
 	r.Open().Fail("open blocked")
 	r.Close().Fail("close blocked")
@@ -493,6 +565,7 @@ func TestRegistryResetAllClearsAllFamilies(t *testing.T) {
 	r.MatchMedia().RespondMatches("(prefers-reduced-motion: reduce)", true)
 	r.Downloads().Capture("a.txt", []byte("abc"))
 	r.FileInput().SetFiles("#upload", []string{"a.txt"})
+	r.FileInput().SeedFileText("#upload", "a.txt", "file-content")
 	r.Storage().SeedLocal("k", "v")
 	r.Storage().SeedSession("s", "1")
 
@@ -506,6 +579,9 @@ func TestRegistryResetAllClearsAllFamilies(t *testing.T) {
 	}
 	if _, ok := r.Clipboard().SeededText(); ok {
 		t.Fatalf("Clipboard seeded text should be cleared after ResetAll")
+	}
+	if _, ok := r.Navigator().SeededLanguage(); ok {
+		t.Fatalf("Navigator seeded language should be cleared after ResetAll")
 	}
 	if got := r.Location().Navigations(); len(got) != 0 {
 		t.Fatalf("Location navigations after ResetAll = %#v, want empty", got)
@@ -530,6 +606,9 @@ func TestRegistryResetAllClearsAllFamilies(t *testing.T) {
 	}
 	if got := r.FileInput().Selections(); len(got) != 0 {
 		t.Fatalf("FileInput selections after ResetAll = %#v, want empty", got)
+	}
+	if got, ok := r.FileInput().FileText("#upload", "a.txt"); ok || got != "" {
+		t.Fatalf("FileInput file text after ResetAll = (%q, %v), want empty", got, ok)
 	}
 	if got := r.Storage().Local(); len(got) != 0 {
 		t.Fatalf("Storage local after ResetAll = %#v, want empty", got)
