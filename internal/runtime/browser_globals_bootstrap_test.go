@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"browsertester/internal/script"
 )
@@ -1058,6 +1060,218 @@ func TestSessionBootstrapsRevokedBlobObjectUrlSkipsDownloadCapture(t *testing.T)
 	}
 }
 
+func TestSessionBootstrapsCanvasImagePngExport(t *testing.T) {
+	const rawHTML = `<main><div id="state"></div><div id="out"></div><script>const img = new Image(); const canvas = document.createElement("canvas"); canvas.width = 20; canvas.height = 20; const ctx = canvas.getContext("2d"); document.getElementById("state").textContent = [img instanceof HTMLImageElement, canvas instanceof HTMLCanvasElement, !!ctx, canvas.toDataURL().startsWith("data:image/png;base64,"), typeof ctx.drawImage].join("|"); ctx.drawImage(img, 0, 0); canvas.toBlob((blob) => { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "canvas.png"; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); document.getElementById("out").textContent = blob ? "ok" : "missing"; }, "image/png");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#state"); err != nil {
+		t.Fatalf("TextContent(#state) error = %v", err)
+	} else if got != "true|true|true|true|function" {
+		t.Fatalf("TextContent(#state) = %q, want true|true|true|true|function", got)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	downloads := session.Registry().Downloads().Artifacts()
+	if len(downloads) != 1 {
+		t.Fatalf("Downloads().Artifacts() = %#v, want one captured PNG download", downloads)
+	}
+	if downloads[0].FileName != "canvas.png" {
+		t.Fatalf("Downloads()[0].FileName = %q, want canvas.png", downloads[0].FileName)
+	}
+	if len(downloads[0].Bytes) < 8 {
+		t.Fatalf("Downloads()[0].Bytes length = %d, want PNG signature bytes", len(downloads[0].Bytes))
+	}
+	if got, want := string(downloads[0].Bytes[:8]), "\x89PNG\r\n\x1a\n"; got != want {
+		t.Fatalf("Downloads()[0].Bytes signature = %q, want PNG signature", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after canvas PNG export bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsAsyncTimerCallbackCanvasPngExport(t *testing.T) {
+	const rawHTML = `<main><button id="go" type="button">Go</button><div id="out"></div><script>async function svgMarkupToPngBlob(svgMarkup, widthPx, heightPx) { const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" }); const url = URL.createObjectURL(blob); try { const image = await new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = url; }); const canvas = document.createElement("canvas"); canvas.width = widthPx; canvas.height = heightPx; const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); return await new Promise((resolve, reject) => { canvas.toBlob((pngBlob) => { if (pngBlob) resolve(pngBlob); else reject(new Error("png blob failed")); }, "image/png"); }); } finally { URL.revokeObjectURL(url); } } function downloadBlob(filename, blob) { const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); } document.getElementById("go").addEventListener("click", () => { const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; window.setTimeout(async () => { const png = await svgMarkupToPngBlob(svg, 8, 8); downloadBlob("canvas.png", png); document.getElementById("out").textContent = "ok"; }, 230); });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if err := session.AdvanceTime(230); err != nil {
+		t.Fatalf("AdvanceTime(230) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	downloads := session.Registry().Downloads().Artifacts()
+	if len(downloads) != 1 {
+		t.Fatalf("Downloads().Artifacts() = %#v, want one captured PNG download", downloads)
+	}
+	if downloads[0].FileName != "canvas.png" {
+		t.Fatalf("Downloads()[0].FileName = %q, want canvas.png", downloads[0].FileName)
+	}
+	if len(downloads[0].Bytes) < 8 {
+		t.Fatalf("Downloads()[0].Bytes length = %d, want PNG signature bytes", len(downloads[0].Bytes))
+	}
+	if got, want := string(downloads[0].Bytes[:8]), "\x89PNG\r\n\x1a\n"; got != want {
+		t.Fatalf("Downloads()[0].Bytes signature = %q, want PNG signature", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after async timer canvas PNG export bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsAsyncTimerCallbackAwaitingPromiseResolve(t *testing.T) {
+	const rawHTML = `<main><button id="go" type="button">Go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { window.setTimeout(async () => { const value = await Promise.resolve("ok"); document.getElementById("out").textContent = value; }, 230); });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if err := session.AdvanceTime(230); err != nil {
+		t.Fatalf("AdvanceTime(230) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after async timer await bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsAsyncTimerCallbackAwaitingNestedTimeout(t *testing.T) {
+	const rawHTML = `<main><button id="go" type="button">Go</button><div id="out"></div><script>document.getElementById("go").addEventListener("click", () => { window.setTimeout(async () => { document.getElementById("out").textContent = "start"; const promise = new Promise((resolve) => { window.setTimeout(() => resolve("ok"), 0); }); promise.then(() => { document.getElementById("out").textContent += "|then"; }); try { const value = await promise; document.getElementById("out").textContent = value; } catch (error) { document.getElementById("out").textContent = "catch:" + (error && error.message ? error.message : String(error)); } }, 230); });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if err := session.AdvanceTime(230); err != nil {
+		t.Fatalf("AdvanceTime(230) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#out) = %q, want ok", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after nested timer await bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsSvgBlobImageLoadCallbacks(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" }); const url = URL.createObjectURL(blob); const img = new Image(); const seen = []; img.onload = () => seen.push("onload"); img.addEventListener("load", () => seen.push("listener")); img.addEventListener("error", () => seen.push("error")); img.src = url; setTimeout(() => { document.getElementById("out").textContent = seen.sort().join("|") || "pending"; URL.revokeObjectURL(url); }, 1);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if err := session.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "listener|onload" {
+		t.Fatalf("TextContent(#out) = %q, want listener|onload", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after SVG blob image load bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsRevokedSvgBlobImageErrorCallbacks(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" }); const url = URL.createObjectURL(blob); const img = new Image(); const seen = []; img.onerror = () => seen.push("onerror"); img.addEventListener("error", () => seen.push("listener")); URL.revokeObjectURL(url); img.src = url; setTimeout(() => { document.getElementById("out").textContent = seen.sort().join("|") || "pending"; }, 1);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if err := session.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "listener|onerror" {
+		t.Fatalf("TextContent(#out) = %q, want listener|onerror", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after revoked SVG blob image bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsSvgBlobImageHandlerDeletionClearsOnload(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" }); const url = URL.createObjectURL(blob); const img = new Image(); const seen = []; img.onload = () => seen.push("onload"); delete img.onload; img.addEventListener("load", () => seen.push("listener")); img.src = url; setTimeout(() => { document.getElementById("out").textContent = seen.sort().join("|") || "pending"; URL.revokeObjectURL(url); }, 1);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if err := session.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "listener" {
+		t.Fatalf("TextContent(#out) = %q, want listener", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after deleted SVG blob image onload bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsSvgBlobImageHandlerDeletionClearsOnerror(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#000"/></svg>'; const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" }); const url = URL.createObjectURL(blob); const img = new Image(); const seen = []; img.onerror = () => seen.push("onerror"); delete img.onerror; img.addEventListener("error", () => seen.push("listener")); URL.revokeObjectURL(url); img.src = url; setTimeout(() => { document.getElementById("out").textContent = seen.sort().join("|") || "pending"; }, 1);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if err := session.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "listener" {
+		t.Fatalf("TextContent(#out) = %q, want listener", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after deleted SVG blob image onerror bootstrap", got)
+	}
+}
+
+func TestSessionRejectsCanvasToBlobWithUnsupportedType(t *testing.T) {
+	const rawHTML = `<main><script>const canvas = document.createElement("canvas"); canvas.toBlob(() => {}, "image/jpeg");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want unsupported canvas export type")
+	} else if !strings.Contains(err.Error(), "image/png") {
+		t.Fatalf("ensureDOM() error = %v, want image/png restriction", err)
+	}
+}
+
 func TestSessionRejectsURLCreateObjectURLForNonBlobValue(t *testing.T) {
 	const rawHTML = `<main><script>URL.createObjectURL({})</script></main>`
 
@@ -1106,7 +1320,37 @@ func TestSessionBootstrapsInfinityGlobalSurface(t *testing.T) {
 }
 
 func TestSessionBootstrapsDateInstanceOfSurface(t *testing.T) {
-	const rawHTML = `<main><div id="out"></div><script>const date = new Date(0); document.getElementById("out").textContent = [date instanceof Date, Number.isNaN(date.getTime())].join("|")</script></main>`
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); document.getElementById("out").textContent = [date instanceof Date, Number.isNaN(date.getTime()), date.getFullYear(), date.getUTCFullYear(), date.getMonth(), date.getUTCMonth(), date.getDate(), date.getUTCDate(), date.getDay(), date.getUTCDay(), date.getHours(), date.getUTCHours(), date.getMinutes(), date.getUTCMinutes(), date.getSeconds(), date.getUTCSeconds(), date.getMilliseconds(), date.getUTCMilliseconds(), date.getTimezoneOffset(), date.toDateString(), date.toTimeString(), date.toUTCString(), date.toLocaleString("en-US"), date.toLocaleTimeString("en-US"), String(Date.parse(date.toUTCString())), String(new Date(date.toUTCString()).getTime()), String(date.setTime(1700000004567))].join("|")</script></main>`
+	dt := time.UnixMilli(1700000000123).UTC()
+	want := strings.Join([]string{
+		"true",
+		"false",
+		strconv.Itoa(dt.Year()),
+		strconv.Itoa(dt.Year()),
+		strconv.Itoa(int(dt.Month()) - 1),
+		strconv.Itoa(int(dt.Month()) - 1),
+		strconv.Itoa(dt.Day()),
+		strconv.Itoa(dt.Day()),
+		strconv.Itoa(int(dt.Weekday())),
+		strconv.Itoa(int(dt.Weekday())),
+		strconv.Itoa(dt.Hour()),
+		strconv.Itoa(dt.Hour()),
+		strconv.Itoa(dt.Minute()),
+		strconv.Itoa(dt.Minute()),
+		strconv.Itoa(dt.Second()),
+		strconv.Itoa(dt.Second()),
+		strconv.Itoa(dt.Nanosecond() / int(time.Millisecond)),
+		strconv.Itoa(dt.Nanosecond() / int(time.Millisecond)),
+		"0",
+		dt.Format("Mon Jan _2 2006"),
+		dt.Format("15:04:05 GMT"),
+		dt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		dt.Format("1/2/2006, 3:04:05 PM"),
+		dt.Format("3:04:05 PM"),
+		strconv.FormatInt(dt.Truncate(time.Second).UnixMilli(), 10),
+		strconv.FormatInt(dt.Truncate(time.Second).UnixMilli(), 10),
+		"1700000004567",
+	}, "|")
 
 	session := NewSession(SessionConfig{HTML: rawHTML})
 	if _, err := session.ensureDOM(); err != nil {
@@ -1115,11 +1359,173 @@ func TestSessionBootstrapsDateInstanceOfSurface(t *testing.T) {
 
 	if got, err := session.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != "true|false" {
-		t.Fatalf("TextContent(#out) = %q, want true|false", got)
+	} else if got != want {
+		t.Fatalf("TextContent(#out) = %q, want %s", got, want)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Date instanceof bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetMillisecondsMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setMilliseconds(567)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCMilliseconds(999)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1700000000567|1700000000567|2023-11-14T22:13:20.567Z|1700000000999|1700000000999|2023-11-14T22:13:20.999Z" {
+		t.Fatalf("TextContent(#out) = %q, want 1700000000567|1700000000567|2023-11-14T22:13:20.567Z|1700000000999|1700000000999|2023-11-14T22:13:20.999Z", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setMilliseconds bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetDateMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setDate(5)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCDate(31)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	dt := time.UnixMilli(1700000000123).UTC()
+	wantFirst := time.Date(dt.Year(), dt.Month(), 5, dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	wantSecond := time.Date(dt.Year(), dt.Month(), 31, dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != want {
+		t.Fatalf("TextContent(#out) = %q, want %s", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setDate bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetMonthMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setMonth(0)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCMonth(11, 31)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	dt := time.UnixMilli(1700000000123).UTC()
+	wantFirst := time.Date(dt.Year(), time.January, dt.Day(), dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	wantSecond := time.Date(dt.Year(), time.December, 31, dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != want {
+		t.Fatalf("TextContent(#out) = %q, want %s", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setMonth bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetFullYearMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setFullYear(2024)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCFullYear(2025, 0, 15)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	dt := time.UnixMilli(1700000000123).UTC()
+	wantFirst := time.Date(2024, dt.Month(), dt.Day(), dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	wantSecond := time.Date(2025, time.January, 15, dt.Hour(), dt.Minute(), dt.Second(), dt.Nanosecond(), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != want {
+		t.Fatalf("TextContent(#out) = %q, want %s", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setFullYear bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetSecondsMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setSeconds(5, 7)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCSeconds(59, 8)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1699999985007|1699999985007|2023-11-14T22:13:05.007Z|1700000039008|1700000039008|2023-11-14T22:13:59.008Z" {
+		t.Fatalf("TextContent(#out) = %q, want 1699999985007|1699999985007|2023-11-14T22:13:05.007Z|1700000039008|1700000039008|2023-11-14T22:13:59.008Z", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setSeconds bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetMinutesMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setMinutes(4, 5, 6)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCMinutes(59, 58, 57)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1699999445006|1699999445006|2023-11-14T22:04:05.006Z|1700002798057|1700002798057|2023-11-14T22:59:58.057Z" {
+		t.Fatalf("TextContent(#out) = %q, want 1699999445006|1699999445006|2023-11-14T22:04:05.006Z|1700002798057|1700002798057|2023-11-14T22:59:58.057Z", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setMinutes bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsDateSetHoursMutatesReceiver(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const date = new Date(1700000000123); const first = [String(date.setHours(4, 5, 6, 7)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCHours(23, 58, 57, 56)), String(date.getTime()), date.toISOString()].join("|"); document.getElementById("out").textContent = [first, second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1699934706007|1699934706007|2023-11-14T04:05:06.007Z|1700006337056|1700006337056|2023-11-14T23:58:57.056Z" {
+		t.Fatalf("TextContent(#out) = %q, want 1699934706007|1699934706007|2023-11-14T04:05:06.007Z|1700006337056|1700006337056|2023-11-14T23:58:57.056Z", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Date.setHours bootstrap", got)
 	}
 }
 
@@ -2442,6 +2848,132 @@ func TestSessionBootstrapsIntlNumberFormatMinimumFractionDigits(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsNumberToLocaleString(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = (600).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "600.0" {
+		t.Fatalf("TextContent(#out) = %q, want 600.0", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Number.toLocaleString bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlNumberFormatResolvedOptions(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const resolved = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", minimumFractionDigits: 0, maximumFractionDigits: 0 }).resolvedOptions(); document.getElementById("out").textContent = [resolved.locale, resolved.style, resolved.currency, String(resolved.minimumFractionDigits), String(resolved.maximumFractionDigits), String(resolved.useGrouping)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ja-JP|currency|JPY|0|0|true" {
+		t.Fatalf("TextContent(#out) = %q, want ja-JP|currency|JPY|0|0|true", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat resolvedOptions bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlNumberFormatFormatToParts(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const parts = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).formatToParts(-1200); document.getElementById("out").textContent = parts.map((part) => part.type + ":" + part.value).join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "minusSign:-|currency:￥|integer:1|group:,|integer:200" {
+		t.Fatalf("TextContent(#out) = %q, want minusSign:-|currency:￥|integer:1|group:,|integer:200", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat formatToParts bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlNumberFormatSupportedLocalesOf(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = Intl.NumberFormat.supportedLocalesOf(["en-US", "", "sv", "en-US"]).join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "en-US|sv" {
+		t.Fatalf("TextContent(#out) = %q, want en-US|sv", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat.supportedLocalesOf bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlDateTimeFormatResolvedOptions(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const resolved = new Intl.DateTimeFormat("en-US-u-nu-latn", { timeZone: "America/Chicago", hour12: false }).resolvedOptions(); document.getElementById("out").textContent = [resolved.locale, resolved.timeZone, String(resolved.hour12), resolved.calendar, resolved.numberingSystem, resolved.year, resolved.month, resolved.day, resolved.hour, resolved.minute, resolved.second].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "en-US-u-nu-latn|America/Chicago|false|gregory|latn|numeric|numeric|numeric|numeric|numeric|numeric" {
+		t.Fatalf("TextContent(#out) = %q, want en-US-u-nu-latn|America/Chicago|false|gregory|latn|numeric|numeric|numeric|numeric|numeric|numeric", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.DateTimeFormat resolvedOptions bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlDateTimeFormatSupportedLocalesOf(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = Intl.DateTimeFormat.supportedLocalesOf(["en-US", "", "sv", "en-US"]).join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "en-US|sv" {
+		t.Fatalf("TextContent(#out) = %q, want en-US|sv", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.DateTimeFormat.supportedLocalesOf bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlDateTimeFormatFormatRangeAndFormatRangeToParts(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>(() => { const formatter = new Intl.DateTimeFormat("en-US-u-nu-latn", { timeZone: "America/Chicago", hour12: false }); const start = new Date(Date.UTC(2026, 0, 21, 8, 45, 0, 0)); const end = new Date(Date.UTC(2026, 0, 21, 9, 15, 0, 0)); const range = formatter.formatRange(start, end); const parts = formatter.formatRangeToParts(start, end); document.getElementById("out").textContent = [range, parts.map((part) => part.value).join(""), parts[0].source, parts.find((part) => part.type === "literal" && part.value === " – ").source, parts[parts.length - 1].source].join("|"); })();</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "01/21/2026, 02:45 – 01/21/2026, 03:15|01/21/2026, 02:45 – 01/21/2026, 03:15|startRange|shared|endRange" {
+		t.Fatalf("TextContent(#out) = %q, want 01/21/2026, 02:45 – 01/21/2026, 03:15|01/21/2026, 02:45 – 01/21/2026, 03:15|startRange|shared|endRange", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.DateTimeFormat formatRange bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsIntlCurrencyFormattingWithMapLookup(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>(() => { const state = { currency: "JPY", decimalOverride: "auto", cost: "", adoptedPrice: 1200, }; const currencyMap = new Map([["JPY", { code: "JPY", locale: "ja-JP", decimals: 0 }]]); function getDecimals() { if (state.decimalOverride !== "auto") { return Number(state.decimalOverride); } const meta = currencyMap.get(state.currency); return meta && meta.decimals != null ? meta.decimals : 2; } function formatMoney(value) { const meta = currencyMap.get(state.currency) || { code: state.currency, locale: "en-US", decimals: 2, }; const digits = getDecimals(); return new Intl.NumberFormat(meta.locale, { style: "currency", currency: meta.code, minimumFractionDigits: digits, maximumFractionDigits: digits, }).format(value); } document.getElementById("out").textContent = formatMoney(1200); })();</script></main>`
 
@@ -2486,6 +3018,24 @@ func TestSessionBootstrapsIntlCollatorNumericAndSwedishSorting(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Intl.Collator bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlCollatorSupportedLocalesOf(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = Intl.Collator.supportedLocalesOf(["sv", "", "en-US", "sv"]).join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "sv|en-US" {
+		t.Fatalf("TextContent(#out) = %q, want sv|en-US", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.Collator.supportedLocalesOf bootstrap", got)
 	}
 }
 
@@ -3180,6 +3730,31 @@ func TestSessionBootstrapsTemplateLocaleAndExternalWindowGlobals(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after optional browser globals bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsExternalJSVarGlobalVisibleToBareIdentifier(t *testing.T) {
+	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
+	rawHTML := `<main><div id="icons"></div><div id="status"></div><script src="` + scriptURL + `"></script><script>lucide.createIcons(); host:setTextContent("#status", "ok")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	session.Registry().ExternalJS().RespondSource(scriptURL, `var lucide = globalThis.lucide = window.lucide = { createIcons: function () { document.getElementById("icons").textContent = "loaded"; } };`)
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#icons"); err != nil {
+		t.Fatalf("TextContent(#icons) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#icons) = %q, want loaded", got)
+	}
+	if got, err := session.TextContent("#status"); err != nil {
+		t.Fatalf("TextContent(#status) error = %v", err)
+	} else if got != "ok" {
+		t.Fatalf("TextContent(#status) = %q, want ok", got)
+	}
+	if got := session.Registry().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
 	}
 }
 

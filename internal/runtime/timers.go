@@ -292,21 +292,45 @@ func (s *Session) settlePendingWork(store *dom.Store) (err error) {
 		store = s.domStore
 	}
 
-	for _, timer := range s.dueTimers() {
-		if err = s.runTimer(store, timer); err != nil {
-			return err
+	for {
+		asyncWorkDelivered := false
+		for _, timer := range s.dueTimers() {
+			var asyncPending bool
+			if asyncPending, err = s.runTimer(store, timer); err != nil {
+				return err
+			}
+			if asyncPending {
+				asyncWorkDelivered = true
+			}
+			if err = s.drainMicrotasks(store); err != nil {
+				return err
+			}
+			if s.domStore != nil && s.domStore != store {
+				return nil
+			}
 		}
-		if err = s.drainMicrotasks(store); err != nil {
-			return err
-		}
-		if s.domStore != nil && s.domStore != store {
-			return nil
-		}
-	}
 
-	for _, frame := range s.pendingAnimationFrames() {
-		if err = s.runAnimationFrame(store, frame); err != nil {
-			return err
+		for _, frame := range s.pendingAnimationFrames() {
+			var asyncPending bool
+			if asyncPending, err = s.runAnimationFrame(store, frame); err != nil {
+				return err
+			}
+			if asyncPending {
+				asyncWorkDelivered = true
+			}
+			if err = s.drainMicrotasks(store); err != nil {
+				return err
+			}
+			if s.domStore != nil && s.domStore != store {
+				return nil
+			}
+		}
+
+		if !asyncWorkDelivered {
+			return nil
+		}
+		if len(s.microtasks) == 0 && len(s.dueTimers()) == 0 && len(s.pendingAnimationFrames()) == 0 {
+			return nil
 		}
 		if err = s.drainMicrotasks(store); err != nil {
 			return err
@@ -315,7 +339,6 @@ func (s *Session) settlePendingWork(store *dom.Store) (err error) {
 			return nil
 		}
 	}
-	return nil
 }
 
 func (s *Session) dueTimers() []timerRecord {
@@ -343,20 +366,20 @@ func (s *Session) dueTimers() []timerRecord {
 	return out
 }
 
-func (s *Session) runTimer(store *dom.Store, timer timerRecord) error {
+func (s *Session) runTimer(store *dom.Store, timer timerRecord) (bool, error) {
 	if s == nil {
-		return fmt.Errorf("session is unavailable")
+		return false, fmt.Errorf("session is unavailable")
 	}
 	if store == nil {
-		return fmt.Errorf("dom store is unavailable")
+		return false, fmt.Errorf("dom store is unavailable")
 	}
 	if len(s.timers) == 0 {
-		return nil
+		return false, nil
 	}
 
 	current, ok := s.timers[timer.id]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	delete(s.timers, timer.id)
 	prevRunningID := s.runningTimerID
@@ -368,15 +391,19 @@ func (s *Session) runTimer(store *dom.Store, timer timerRecord) error {
 		s.runningTimerCancelled = prevRunningCancelled
 	}()
 
+	asyncPending := false
 	if current.hasCallback {
-		_, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, current.callbackArgs, script.HostObjectReference("window"), true)
+		result, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, current.callbackArgs, script.HostObjectReference("window"), true)
 		if err != nil {
-			return err
+			return false, err
 		}
+		asyncPending = script.IsPendingPromise(result)
 	} else {
-		if _, err := s.runScriptOnStore(store, current.source); err != nil {
-			return err
+		result, err := s.runScriptOnStore(store, current.source)
+		if err != nil {
+			return false, err
 		}
+		asyncPending = script.IsPendingPromise(result)
 	}
 	if current.repeat && !s.runningTimerCancelled {
 		if s.timers == nil {
@@ -391,7 +418,7 @@ func (s *Session) runTimer(store *dom.Store, timer timerRecord) error {
 		}
 		s.timers[current.id] = next
 	}
-	return nil
+	return asyncPending, nil
 }
 
 func (s *Session) pendingAnimationFrames() []animationFrameRecord {
@@ -413,28 +440,37 @@ func (s *Session) pendingAnimationFrames() []animationFrameRecord {
 	return out
 }
 
-func (s *Session) runAnimationFrame(store *dom.Store, frame animationFrameRecord) error {
+func (s *Session) runAnimationFrame(store *dom.Store, frame animationFrameRecord) (bool, error) {
 	if s == nil {
-		return fmt.Errorf("session is unavailable")
+		return false, fmt.Errorf("session is unavailable")
 	}
 	if store == nil {
-		return fmt.Errorf("dom store is unavailable")
+		return false, fmt.Errorf("dom store is unavailable")
 	}
 	if len(s.animationFrames) == 0 {
-		return nil
+		return false, nil
 	}
 
 	current, ok := s.animationFrames[frame.id]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	delete(s.animationFrames, frame.id)
+	asyncPending := false
 	if current.hasCallback {
-		_, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, nil, script.HostObjectReference("window"), true)
-		return err
+		result, err := script.InvokeCallableValue(&inlineScriptHost{session: s, store: store}, current.callback, nil, script.HostObjectReference("window"), true)
+		if err != nil {
+			return false, err
+		}
+		asyncPending = script.IsPendingPromise(result)
+	} else {
+		result, err := s.runScriptOnStore(store, current.source)
+		if err != nil {
+			return false, err
+		}
+		asyncPending = script.IsPendingPromise(result)
 	}
-	_, err := s.runScriptOnStore(store, current.source)
-	return err
+	return asyncPending, nil
 }
 
 func saturatingAddInt64(base, delta int64) int64 {

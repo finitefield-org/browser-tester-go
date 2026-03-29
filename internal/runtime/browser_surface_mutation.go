@@ -172,6 +172,33 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
 		}
 		return store.SetAttribute(nodeID, "download", script.ToJSString(value))
+	case rest == "src":
+		if node.TagName != "img" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		src := script.ToJSString(value)
+		if err := store.SetAttribute(nodeID, "src", src); err != nil {
+			return err
+		}
+		return browserScheduleImageSourceEvent(session, nodeID, src)
+	case rest == "onload", rest == "onerror":
+		if node.TagName != "img" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		if err := session.setElementEventHandler(nodeID, strings.TrimPrefix(rest, "on"), value); err != nil {
+			return err
+		}
+		return nil
+	case rest == "width":
+		if node.TagName != "img" && node.TagName != "canvas" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetAttribute(nodeID, "width", script.ToJSString(value))
+	case rest == "height":
+		if node.TagName != "img" && node.TagName != "canvas" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		return store.SetAttribute(nodeID, "height", script.ToJSString(value))
 	case rest == "className":
 		return store.SetAttribute(nodeID, "class", script.ToJSString(value))
 	case rest == "textContent" || rest == "innerText" || rest == "outerText":
@@ -297,6 +324,12 @@ func deleteElementReferenceValue(session *Session, store *dom.Store, path string
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
 	case rest == "dataset":
 		return script.NewError(script.ErrorKindUnsupported, "deletion of element.dataset is unsupported in this bounded classic-JS slice")
+	case rest == "onload", rest == "onerror":
+		if node.TagName != "img" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+		}
+		session.deleteElementEventHandler(nodeID, strings.TrimPrefix(rest, "on"))
+		return nil
 	case rest == "files":
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
 	case strings.HasPrefix(rest, "dataset."):

@@ -39,8 +39,11 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"Boolean":               script.HostFunctionReference("Boolean"),
 		"NaN":                   script.NumberValue(math.NaN()),
 		"Infinity":              script.NumberValue(math.Inf(1)),
+		"Image":                 script.HostConstructorReference("HTMLImageElement"),
 		"HTMLElement":           script.HostConstructorReference("HTMLElement"),
 		"HTMLButtonElement":     script.HostConstructorReference("HTMLButtonElement"),
+		"HTMLImageElement":      script.HostConstructorReference("HTMLImageElement"),
+		"HTMLCanvasElement":     script.HostConstructorReference("HTMLCanvasElement"),
 		"HTMLSelectElement":     script.HostConstructorReference("HTMLSelectElement"),
 		"Math":                  script.HostObjectReference("Math"),
 		"Date":                  script.HostConstructorReference("Date"),
@@ -180,6 +183,20 @@ func resolveBrowserGlobalReference(session *Session, store *dom.Store, path stri
 		return script.HostConstructorReference("HTMLElement"), nil
 	case "HTMLButtonElement":
 		return script.HostConstructorReference("HTMLButtonElement"), nil
+	case "Image":
+		return script.HostConstructorReference("HTMLImageElement"), nil
+	case "HTMLImageElement":
+		return script.NativeConstructibleNamedFunctionValue("HTMLImageElement", func(args []script.Value) (script.Value, error) {
+			return browserImageConstructor(session, store, args)
+		}, func(args []script.Value) (script.Value, error) {
+			return browserImageConstructor(session, store, args)
+		}), nil
+	case "HTMLCanvasElement":
+		return script.NativeConstructibleNamedFunctionValue("HTMLCanvasElement", func(args []script.Value) (script.Value, error) {
+			return browserCanvasConstructor(session, store, args)
+		}, func(args []script.Value) (script.Value, error) {
+			return browserCanvasConstructor(session, store, args)
+		}), nil
 	case "HTMLSelectElement":
 		return script.HostConstructorReference("HTMLSelectElement"), nil
 	case "URL":
@@ -887,19 +904,111 @@ func resolveIntlReference(session *Session, path string) (script.Value, error) {
 	case "":
 		return script.HostObjectReference("Intl"), nil
 	case "NumberFormat":
-		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserNumberFormatConstructor(args)
-		}), nil
+		value := script.NativeConstructibleNamedFunctionValue("NumberFormat",
+			func(args []script.Value) (script.Value, error) {
+				return browserNumberFormatConstructor(args)
+			},
+			func(args []script.Value) (script.Value, error) {
+				return browserNumberFormatConstructor(args)
+			},
+		)
+		script.SetFunctionOwnProperty(value, "supportedLocalesOf", script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserSupportedLocalesOf(args, "Intl.NumberFormat.supportedLocalesOf")
+		}))
+		return value, nil
 	case "Collator":
-		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserCollatorConstructor(args)
-		}), nil
+		value := script.NativeConstructibleNamedFunctionValue("Collator",
+			func(args []script.Value) (script.Value, error) {
+				return browserCollatorConstructor(args)
+			},
+			func(args []script.Value) (script.Value, error) {
+				return browserCollatorConstructor(args)
+			},
+		)
+		script.SetFunctionOwnProperty(value, "supportedLocalesOf", script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserSupportedLocalesOf(args, "Intl.Collator.supportedLocalesOf")
+		}))
+		return value, nil
 	case "DateTimeFormat":
-		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserDateTimeFormatConstructor(args)
-		}), nil
+		value := script.NativeConstructibleNamedFunctionValue("DateTimeFormat",
+			func(args []script.Value) (script.Value, error) {
+				return browserDateTimeFormatConstructor(args)
+			},
+			func(args []script.Value) (script.Value, error) {
+				return browserDateTimeFormatConstructor(args)
+			},
+		)
+		script.SetFunctionOwnProperty(value, "supportedLocalesOf", script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserSupportedLocalesOf(args, "Intl.DateTimeFormat.supportedLocalesOf")
+		}))
+		return value, nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Intl."+rest))
+}
+
+func browserSupportedLocalesOf(args []script.Value, label string) (script.Value, error) {
+	if len(args) == 0 {
+		return script.ArrayValue(nil), nil
+	}
+	if len(args) > 2 {
+		return script.UndefinedValue(), fmt.Errorf("%s expects at most 2 arguments", label)
+	}
+	locales, err := browserSupportedLocalesList(args[0], label)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	if len(args) == 2 && args[1].Kind != script.ValueKindUndefined && args[1].Kind != script.ValueKindNull && args[1].Kind != script.ValueKindObject {
+		return script.UndefinedValue(), fmt.Errorf("%s options argument must be an object", label)
+	}
+	return script.ArrayValue(browserSupportedLocaleValues(locales)), nil
+}
+
+func browserSupportedLocalesList(value script.Value, label string) ([]string, error) {
+	switch value.Kind {
+	case script.ValueKindUndefined, script.ValueKindNull:
+		return nil, nil
+	case script.ValueKindString:
+		locale := strings.TrimSpace(value.String)
+		if locale == "" {
+			return nil, nil
+		}
+		return []string{locale}, nil
+	case script.ValueKindArray:
+		locales := make([]string, 0, len(value.Array))
+		seen := make(map[string]struct{}, len(value.Array))
+		for _, item := range value.Array {
+			locale := strings.TrimSpace(script.ToJSString(item))
+			if locale == "" {
+				continue
+			}
+			if _, exists := seen[locale]; exists {
+				continue
+			}
+			seen[locale] = struct{}{}
+			locales = append(locales, locale)
+		}
+		return locales, nil
+	default:
+		locale := strings.TrimSpace(script.ToJSString(value))
+		if locale == "" {
+			return nil, nil
+		}
+		if value.Kind == script.ValueKindObject && value.Object != nil {
+			return nil, fmt.Errorf("%s locales argument must be a string or array", label)
+		}
+		return []string{locale}, nil
+	}
+}
+
+func browserSupportedLocaleValues(locales []string) []script.Value {
+	if len(locales) == 0 {
+		return nil
+	}
+	values := make([]script.Value, 0, len(locales))
+	for _, locale := range locales {
+		values = append(values, script.StringValue(locale))
+	}
+	return values
 }
 
 func resolveStorageReference(session *Session, scope string, path string) (script.Value, error) {
@@ -1151,6 +1260,69 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementPlaceholderValue(session, store, nodeID)
 	case "lang":
 		return resolveElementLangValue(session, store, nodeID)
+	case "src":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		value, ok := domAttributeValue(store, nodeID, "src")
+		if !ok {
+			return script.StringValue(""), nil
+		}
+		return script.StringValue(value), nil
+	case "onload", "onerror":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		if session == nil {
+			return script.NullValue(), nil
+		}
+		if value, ok := session.elementEventHandler(nodeID, strings.TrimPrefix(rest, "on")); ok {
+			return value, nil
+		}
+		return script.NullValue(), nil
+	case "complete":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.BoolValue(true), nil
+	case "naturalWidth":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.NumberValue(float64(browserElementDimensionValue(store, nodeID, "width", 0))), nil
+	case "naturalHeight":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.NumberValue(float64(browserElementDimensionValue(store, nodeID, "height", 0))), nil
+	case "decode":
+		if node.TagName != "img" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("element.decode accepts no arguments")
+			}
+			return script.PromiseValue(script.UndefinedValue()), nil
+		}), nil
+	case "width":
+		if node.TagName != "img" && node.TagName != "canvas" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		defaultWidth := 0
+		if node.TagName == "canvas" {
+			defaultWidth = 300
+		}
+		return script.NumberValue(float64(browserElementDimensionValue(store, nodeID, "width", defaultWidth))), nil
+	case "height":
+		if node.TagName != "img" && node.TagName != "canvas" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		defaultHeight := 0
+		if node.TagName == "canvas" {
+			defaultHeight = 150
+		}
+		return script.NumberValue(float64(browserElementDimensionValue(store, nodeID, "height", defaultHeight))), nil
 	case "files":
 		return resolveElementFilesValue(session, store, nodeID)
 	case "classList":
@@ -1193,6 +1365,21 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementBlur(session, store, nodeID, args)
 		}), nil
+	case "getContext":
+		if node.TagName != "canvas" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return browserCanvasGetContextValue(session, store, nodeID), nil
+	case "toBlob":
+		if node.TagName != "canvas" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return browserCanvasToBlobValue(session, store, nodeID), nil
+	case "toDataURL":
+		if node.TagName != "canvas" {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
+		}
+		return browserCanvasToDataURLValue(session, store, nodeID), nil
 	case "click":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementClick(session, store, nodeID, args)
@@ -1643,6 +1830,9 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 	maxSignificantDigits := -1
 	style := ""
 	currency := ""
+	hasMinimumFractionDigits := false
+	hasMaximumFractionDigits := false
+	hasMaximumSignificantDigits := false
 	var options script.Value
 	hasOptions := false
 	switch len(args) {
@@ -1683,6 +1873,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				return script.UndefinedValue(), err
 			}
 			minFractionDigits = int(parsed)
+			hasMinimumFractionDigits = true
 		}
 		if value, ok := objectProperty(options, "maximumFractionDigits"); ok {
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
@@ -1693,6 +1884,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				return script.UndefinedValue(), err
 			}
 			maxFractionDigits = int(parsed)
+			hasMaximumFractionDigits = true
 		}
 		if maxFractionDigits >= 0 && minFractionDigits > maxFractionDigits {
 			return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat minimumFractionDigits cannot exceed maximumFractionDigits")
@@ -1706,6 +1898,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				return script.UndefinedValue(), err
 			}
 			maxSignificantDigits = int(parsed)
+			hasMaximumSignificantDigits = true
 		}
 	}
 
@@ -1725,6 +1918,54 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 					formatted = browserCurrencyFormat(formatted, currency, locale)
 				}
 				return script.StringValue(formatted), nil
+			}),
+		},
+		{
+			Key: "formatToParts",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) != 1 {
+					return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat#formatToParts expects 1 argument")
+				}
+				number, err := browserFloat64Value("Intl.NumberFormat#formatToParts", args[0])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits)
+				if style == "currency" {
+					formatted = browserCurrencyFormat(formatted, currency, locale)
+				}
+				return script.ArrayValue(browserNumberFormatParts(formatted, style, currency, locale)), nil
+			}),
+		},
+		{
+			Key: "resolvedOptions",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) != 0 {
+					return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat#resolvedOptions expects no arguments")
+				}
+				resolvedStyle := style
+				if resolvedStyle == "" {
+					resolvedStyle = "decimal"
+				}
+				resolved := []script.ObjectEntry{
+					{Key: "locale", Value: script.StringValue(locale)},
+					{Key: "style", Value: script.StringValue(resolvedStyle)},
+					{Key: "useGrouping", Value: script.BoolValue(true)},
+					{Key: "minimumIntegerDigits", Value: script.NumberValue(1)},
+				}
+				if hasMinimumFractionDigits {
+					resolved = append(resolved, script.ObjectEntry{Key: "minimumFractionDigits", Value: script.NumberValue(float64(minFractionDigits))})
+				}
+				if hasMaximumFractionDigits {
+					resolved = append(resolved, script.ObjectEntry{Key: "maximumFractionDigits", Value: script.NumberValue(float64(maxFractionDigits))})
+				}
+				if hasMaximumSignificantDigits {
+					resolved = append(resolved, script.ObjectEntry{Key: "maximumSignificantDigits", Value: script.NumberValue(float64(maxSignificantDigits))})
+				}
+				if style == "currency" || currency != "" {
+					resolved = append(resolved, script.ObjectEntry{Key: "currency", Value: script.StringValue(currency)})
+				}
+				return script.ObjectValue(resolved), nil
 			}),
 		},
 	}
@@ -1760,6 +2001,64 @@ func browserCurrencySymbol(currency, locale string) string {
 		return "£"
 	}
 	return ""
+}
+
+func browserNumberFormatParts(formatted, style, currency, locale string) []script.Value {
+	parts := make([]script.Value, 0, 6)
+	remaining := formatted
+	if strings.HasPrefix(remaining, "-") {
+		parts = append(parts, browserNumberFormatPart("minusSign", "-"))
+		remaining = strings.TrimPrefix(remaining, "-")
+	}
+	if style == "currency" {
+		symbol := browserCurrencySymbol(currency, locale)
+		if symbol == "" {
+			symbol = currency
+		}
+		if symbol != "" && strings.HasPrefix(remaining, symbol) {
+			parts = append(parts, browserNumberFormatPart("currency", symbol))
+			remaining = strings.TrimPrefix(remaining, symbol)
+		}
+	}
+	switch remaining {
+	case "NaN":
+		return append(parts, browserNumberFormatPart("nan", remaining))
+	case "Infinity":
+		return append(parts, browserNumberFormatPart("infinity", remaining))
+	}
+	integer := remaining
+	fraction := ""
+	if dot := strings.IndexByte(remaining, '.'); dot >= 0 {
+		integer = remaining[:dot]
+		fraction = remaining[dot+1:]
+	}
+	if integer != "" {
+		segments := strings.Split(integer, ",")
+		if len(segments) == 1 {
+			parts = append(parts, browserNumberFormatPart("integer", segments[0]))
+		} else {
+			parts = append(parts, browserNumberFormatPart("integer", segments[0]))
+			for _, segment := range segments[1:] {
+				parts = append(parts, browserNumberFormatPart("group", ","))
+				parts = append(parts, browserNumberFormatPart("integer", segment))
+			}
+		}
+	}
+	if fraction != "" {
+		parts = append(parts, browserNumberFormatPart("decimal", "."))
+		parts = append(parts, browserNumberFormatPart("fraction", fraction))
+	}
+	if len(parts) == 0 {
+		return []script.Value{browserNumberFormatPart("integer", remaining)}
+	}
+	return parts
+}
+
+func browserNumberFormatPart(partType, value string) script.Value {
+	return script.ObjectValue([]script.ObjectEntry{
+		{Key: "type", Value: script.StringValue(partType)},
+		{Key: "value", Value: script.StringValue(value)},
+	})
 }
 
 func browserDateTimeFormatConstructor(args []script.Value) (script.Value, error) {
@@ -1836,8 +2135,93 @@ func browserDateTimeFormatConstructor(args []script.Value) (script.Value, error)
 				return script.ArrayValue(formatDateTimeParts(ms, locale, hour12, location)), nil
 			}),
 		},
+		{
+			Key: "formatRange",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) != 2 {
+					return script.UndefinedValue(), fmt.Errorf("Intl.DateTimeFormat#formatRange expects 2 arguments")
+				}
+				startMs, err := browserInt64Value("Intl.DateTimeFormat#formatRange", args[0])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				endMs, err := browserInt64Value("Intl.DateTimeFormat#formatRange", args[1])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				if startMs > endMs {
+					return script.UndefinedValue(), fmt.Errorf("Intl.DateTimeFormat#formatRange start must not exceed end")
+				}
+				return script.StringValue(formatDateTimeRange(startMs, endMs, locale, hour12, location)), nil
+			}),
+		},
+		{
+			Key: "formatRangeToParts",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) != 2 {
+					return script.UndefinedValue(), fmt.Errorf("Intl.DateTimeFormat#formatRangeToParts expects 2 arguments")
+				}
+				startMs, err := browserInt64Value("Intl.DateTimeFormat#formatRangeToParts", args[0])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				endMs, err := browserInt64Value("Intl.DateTimeFormat#formatRangeToParts", args[1])
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				if startMs > endMs {
+					return script.UndefinedValue(), fmt.Errorf("Intl.DateTimeFormat#formatRangeToParts start must not exceed end")
+				}
+				return script.ArrayValue(formatDateTimeRangeParts(startMs, endMs, locale, hour12, location)), nil
+			}),
+		},
+		{
+			Key: "resolvedOptions",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) != 0 {
+					return script.UndefinedValue(), fmt.Errorf("Intl.DateTimeFormat#resolvedOptions expects no arguments")
+				}
+				timeZone := "UTC"
+				if location != nil {
+					timeZone = location.String()
+				}
+				return script.ObjectValue([]script.ObjectEntry{
+					{Key: "locale", Value: script.StringValue(locale)},
+					{Key: "calendar", Value: script.StringValue("gregory")},
+					{Key: "numberingSystem", Value: script.StringValue("latn")},
+					{Key: "timeZone", Value: script.StringValue(timeZone)},
+					{Key: "hour12", Value: script.BoolValue(hour12)},
+					{Key: "year", Value: script.StringValue("numeric")},
+					{Key: "month", Value: script.StringValue("numeric")},
+					{Key: "day", Value: script.StringValue("numeric")},
+					{Key: "hour", Value: script.StringValue("numeric")},
+					{Key: "minute", Value: script.StringValue("numeric")},
+					{Key: "second", Value: script.StringValue("numeric")},
+				}), nil
+			}),
+		},
 	}
 	return script.ObjectValue(entries), nil
+}
+
+func formatDateTimeRange(startMs, endMs int64, locale string, hour12 bool, location *time.Location) string {
+	start := formatDateTime(startMs, locale, hour12, location)
+	end := formatDateTime(endMs, locale, hour12, location)
+	if start == end {
+		return start
+	}
+	return start + " – " + end
+}
+
+func formatDateTimeRangeParts(startMs, endMs int64, locale string, hour12 bool, location *time.Location) []script.Value {
+	if startMs == endMs {
+		return formatDateTimeShortPartsWithSource(startMs, locale, hour12, location, "shared")
+	}
+	parts := make([]script.Value, 0, 16)
+	parts = append(parts, formatDateTimeShortPartsWithSource(startMs, locale, hour12, location, "startRange")...)
+	parts = append(parts, dateTimeFormatPartWithSource("literal", " – ", "shared"))
+	parts = append(parts, formatDateTimeShortPartsWithSource(endMs, locale, hour12, location, "endRange")...)
+	return parts
 }
 
 func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignificantDigits int) string {
@@ -1986,6 +2370,10 @@ func formatDateTime(ms int64, locale string, hour12 bool, location *time.Locatio
 }
 
 func formatDateTimeParts(ms int64, locale string, hour12 bool, location *time.Location) []script.Value {
+	return formatDateTimePartsWithSource(ms, locale, hour12, location, "")
+}
+
+func formatDateTimePartsWithSource(ms int64, locale string, hour12 bool, location *time.Location, source string) []script.Value {
 	if location == nil {
 		location = time.UTC
 	}
@@ -2009,29 +2397,95 @@ func formatDateTimeParts(ms int64, locale string, hour12 bool, location *time.Lo
 	}
 
 	parts := []script.Value{
-		dateTimeFormatPart("year", fmt.Sprintf("%04d", t.Year())),
-		dateTimeFormatPart("literal", "/"),
-		dateTimeFormatPart("month", fmt.Sprintf("%02d", int(t.Month()))),
-		dateTimeFormatPart("literal", "/"),
-		dateTimeFormatPart("day", fmt.Sprintf("%02d", t.Day())),
-		dateTimeFormatPart("literal", ", "),
-		dateTimeFormatPart("hour", fmt.Sprintf("%02d", hour)),
-		dateTimeFormatPart("literal", ":"),
-		dateTimeFormatPart("minute", fmt.Sprintf("%02d", t.Minute())),
-		dateTimeFormatPart("literal", ":"),
-		dateTimeFormatPart("second", fmt.Sprintf("%02d", t.Second())),
+		dateTimeFormatPartWithSource("year", fmt.Sprintf("%04d", t.Year()), source),
+		dateTimeFormatPartWithSource("literal", "/", source),
+		dateTimeFormatPartWithSource("month", fmt.Sprintf("%02d", int(t.Month())), source),
+		dateTimeFormatPartWithSource("literal", "/", source),
+		dateTimeFormatPartWithSource("day", fmt.Sprintf("%02d", t.Day()), source),
+		dateTimeFormatPartWithSource("literal", ", ", source),
+		dateTimeFormatPartWithSource("hour", fmt.Sprintf("%02d", hour), source),
+		dateTimeFormatPartWithSource("literal", ":", source),
+		dateTimeFormatPartWithSource("minute", fmt.Sprintf("%02d", t.Minute()), source),
+		dateTimeFormatPartWithSource("literal", ":", source),
+		dateTimeFormatPartWithSource("second", fmt.Sprintf("%02d", t.Second()), source),
 	}
 	if hour12 {
-		parts = append(parts, dateTimeFormatPart("literal", " "), dateTimeFormatPart("dayPeriod", dayPeriod))
+		parts = append(parts, dateTimeFormatPartWithSource("literal", " ", source), dateTimeFormatPartWithSource("dayPeriod", dayPeriod, source))
+	}
+	return parts
+}
+
+func formatDateTimeShortPartsWithSource(ms int64, locale string, hour12 bool, location *time.Location, source string) []script.Value {
+	if location == nil {
+		location = time.UTC
+	}
+	t := time.UnixMilli(ms).In(location)
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	_ = normalized
+
+	hour := t.Hour()
+	dayPeriod := ""
+	if hour12 {
+		dayPeriod = "AM"
+		switch {
+		case hour == 0:
+			hour = 12
+		case hour == 12:
+			dayPeriod = "PM"
+		case hour > 12:
+			hour -= 12
+			dayPeriod = "PM"
+		}
+	}
+
+	if strings.HasPrefix(normalized, "ja") {
+		parts := []script.Value{
+			dateTimeFormatPartWithSource("year", fmt.Sprintf("%04d", t.Year()), source),
+			dateTimeFormatPartWithSource("literal", "/", source),
+			dateTimeFormatPartWithSource("month", fmt.Sprintf("%02d", int(t.Month())), source),
+			dateTimeFormatPartWithSource("literal", "/", source),
+			dateTimeFormatPartWithSource("day", fmt.Sprintf("%02d", t.Day()), source),
+			dateTimeFormatPartWithSource("literal", " ", source),
+			dateTimeFormatPartWithSource("hour", fmt.Sprintf("%02d", hour), source),
+			dateTimeFormatPartWithSource("literal", ":", source),
+			dateTimeFormatPartWithSource("minute", fmt.Sprintf("%02d", t.Minute()), source),
+		}
+		if hour12 {
+			parts = append(parts, dateTimeFormatPartWithSource("literal", " ", source), dateTimeFormatPartWithSource("dayPeriod", dayPeriod, source))
+		}
+		return parts
+	}
+
+	parts := []script.Value{
+		dateTimeFormatPartWithSource("month", fmt.Sprintf("%02d", int(t.Month())), source),
+		dateTimeFormatPartWithSource("literal", "/", source),
+		dateTimeFormatPartWithSource("day", fmt.Sprintf("%02d", t.Day()), source),
+		dateTimeFormatPartWithSource("literal", "/", source),
+		dateTimeFormatPartWithSource("year", fmt.Sprintf("%04d", t.Year()), source),
+		dateTimeFormatPartWithSource("literal", ", ", source),
+		dateTimeFormatPartWithSource("hour", fmt.Sprintf("%02d", hour), source),
+		dateTimeFormatPartWithSource("literal", ":", source),
+		dateTimeFormatPartWithSource("minute", fmt.Sprintf("%02d", t.Minute()), source),
+	}
+	if hour12 {
+		parts = append(parts, dateTimeFormatPartWithSource("literal", " ", source), dateTimeFormatPartWithSource("dayPeriod", dayPeriod, source))
 	}
 	return parts
 }
 
 func dateTimeFormatPart(partType, value string) script.Value {
-	return script.ObjectValue([]script.ObjectEntry{
+	return dateTimeFormatPartWithSource(partType, value, "")
+}
+
+func dateTimeFormatPartWithSource(partType, value, source string) script.Value {
+	entries := []script.ObjectEntry{
 		{Key: "type", Value: script.StringValue(partType)},
 		{Key: "value", Value: script.StringValue(value)},
-	})
+	}
+	if source != "" {
+		entries = append(entries, script.ObjectEntry{Key: "source", Value: script.StringValue(source)})
+	}
+	return script.ObjectValue(entries)
 }
 
 func browserMatchMedia(session *Session, args []script.Value) (script.Value, error) {

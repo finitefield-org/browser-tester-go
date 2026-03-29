@@ -12,7 +12,9 @@ same response and error rules apply whether the request comes from `Harness.Fetc
 code.
 
 The `ExternalJS` family backs `<script src>` loads and external module `src` dependencies. Use it
-to seed exact source text for CDN-style libraries without touching the network.
+to seed exact source text for CDN-style libraries without touching the network. Seeded classic
+script sources run in the same session, so globals they define remain visible to later classic
+scripts in that session.
 
 ## Current Mock Families
 

@@ -1,6 +1,7 @@
 package script
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +252,23 @@ func TestDispatchSupportsStringReplaceCallbackReplacer(t *testing.T) {
 	}
 	if result.Value.String != "a1:0b2:2|g:0:g|あ1:1い2:3" {
 		t.Fatalf("Dispatch(String.replace callback) value = %q, want %q", result.Value.String, "a1:0b2:2|g:0:g|あ1:1い2:3")
+	}
+}
+
+func TestDispatchSupportsStringReplaceRegexpReplacementCaptures(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `"10.0".replace(/\.0+$|(\.\d*?)0+$/, "$1")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.replace regexp replacement captures) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.replace regexp replacement captures) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "10" {
+		t.Fatalf("Dispatch(String.replace regexp replacement captures) value = %q, want %q", result.Value.String, "10")
 	}
 }
 
@@ -1021,6 +1039,23 @@ func TestDispatchSupportsNumberToPrecisionAndToExponential(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsNumberToLocaleString(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[(600).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }), (1200).toLocaleString("ja-JP", { style: "currency", currency: "JPY", minimumFractionDigits: 0, maximumFractionDigits: 0 })].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Number.toLocaleString) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Number.toLocaleString) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "600.0|￥1,200" {
+		t.Fatalf("Dispatch(Number.toLocaleString) value = %q, want %q", result.Value.String, "600.0|￥1,200")
+	}
+}
+
 func TestDispatchSupportsBrowserDateToLocaleDateString(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -1061,6 +1096,366 @@ func TestDispatchSupportsBrowserDateGetFullYear(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsBrowserDateSetTime(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `const next = date.setTime(1700000004567); [next, date.getTime(), date.toISOString()].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setTime) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setTime) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1700000004567|1700000004567|2023-11-14T22:13:24.567Z" {
+		t.Fatalf("Dispatch(Date.setTime) value = %q, want %q", result.Value.String, "1700000004567|1700000004567|2023-11-14T22:13:24.567Z")
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetMilliseconds(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setMilliseconds(567), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCMilliseconds(999), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setMilliseconds) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setMilliseconds) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	wantFirst := time.UnixMilli(1700000000567).UTC().Format("2006-01-02T15:04:05.000Z")
+	wantSecond := time.UnixMilli(1700000000999).UTC().Format("2006-01-02T15:04:05.000Z")
+	want := strings.Join([]string{
+		"1700000000567",
+		"1700000000567",
+		wantFirst,
+		"1700000000999",
+		"1700000000999",
+		wantSecond,
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setMilliseconds) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetDate(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setDate(5), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCDate(31), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setDate) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setDate) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	wantFirst := time.Date(2023, time.November, 5, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	wantSecond := time.Date(2023, time.November, 31, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setDate) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetMonth(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setMonth(0), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCMonth(11, 31), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setMonth) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setMonth) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	wantFirst := time.Date(2023, time.January, 14, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	wantSecond := time.Date(2023, time.December, 31, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setMonth) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetSeconds(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setSeconds(5, 7), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCSeconds(59, 8), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setSeconds) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setSeconds) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	want := strings.Join([]string{
+		"1699999985007",
+		"1699999985007",
+		time.UnixMilli(1699999985007).UTC().Format("2006-01-02T15:04:05.000Z"),
+		"1700000039008",
+		"1700000039008",
+		time.UnixMilli(1700000039008).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setSeconds) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetMonthNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.setMonth(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setMonth(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setMonth requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setMonth(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetDateNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.setDate(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setDate(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setDate requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setDate(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetFullYear(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setFullYear(2024), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCFullYear(2025, 0, 15), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setFullYear) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setFullYear) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	wantFirst := time.Date(2024, time.November, 14, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	wantSecond := time.Date(2025, time.January, 15, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setFullYear) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetFullYearNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.setFullYear(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setFullYear(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setFullYear requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setFullYear(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetMinutes(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setMinutes(4, 5, 6), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCMinutes(59, 58, 57), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setMinutes) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setMinutes) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	want := strings.Join([]string{
+		strconv.FormatInt(time.Date(2023, time.November, 14, 22, 4, 5, 6*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 22, 4, 5, 6*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		time.UnixMilli(time.Date(2023, time.November, 14, 22, 4, 5, 6*int(time.Millisecond), time.UTC).UnixMilli()).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 22, 59, 58, 57*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 22, 59, 58, 57*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		time.UnixMilli(time.Date(2023, time.November, 14, 22, 59, 58, 57*int(time.Millisecond), time.UTC).UnixMilli()).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setMinutes) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchSupportsBrowserDateSetHours(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `const first = [date.setHours(4, 5, 6, 7), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCHours(23, 58, 57, 56), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Date.setHours) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Date.setHours) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	want := strings.Join([]string{
+		strconv.FormatInt(time.Date(2023, time.November, 14, 4, 5, 6, 7*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 4, 5, 6, 7*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		time.UnixMilli(time.Date(2023, time.November, 14, 4, 5, 6, 7*int(time.Millisecond), time.UTC).UnixMilli()).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 23, 58, 57, 56*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2023, time.November, 14, 23, 58, 57, 56*int(time.Millisecond), time.UTC).UnixMilli(), 10),
+		time.UnixMilli(time.Date(2023, time.November, 14, 23, 58, 57, 56*int(time.Millisecond), time.UTC).UnixMilli()).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.Value.String != want {
+		t.Fatalf("Dispatch(Date.setHours) value = %q, want %q", result.Value.String, want)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetTimeNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.setTime(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setTime(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setTime requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setTime(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetMillisecondsNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(time.Date(2024, time.February, 3, 0, 0, 0, 0, time.UTC).UnixMilli()),
+		},
+		Source: `date.setMilliseconds(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setMilliseconds(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setMilliseconds requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setMilliseconds(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetSecondsNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `date.setSeconds(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setSeconds(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setSeconds requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setSeconds(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetMinutesNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `date.setMinutes(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setMinutes(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setMinutes requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setMinutes(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
+func TestDispatchRejectsBrowserDateSetHoursNonFinite(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Bindings: map[string]Value{
+			"date": BrowserDateValue(1700000000123),
+		},
+		Source: `date.setHours(0 / 0)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Date.setHours(NaN)) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Date.prototype.setHours requires a finite timestamp") {
+		t.Fatalf("Dispatch(Date.setHours(NaN)) error = %q, want finite timestamp error", got)
+	}
+}
+
 func TestDispatchRejectsInvalidNumberToPrecision(t *testing.T) {
 	runtime := NewRuntime(&echoHost{})
 
@@ -1074,6 +1469,18 @@ func TestDispatchRejectsInvalidNumberToPrecision(t *testing.T) {
 	}
 	if scriptErr.Kind != ErrorKindRuntime {
 		t.Fatalf("Dispatch(Number.toPrecision(0)) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+}
+
+func TestDispatchRejectsInvalidNumberToLocaleStringOptions(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `(600).toLocaleString("en-US", "bad")`})
+	if err == nil {
+		t.Fatalf("Dispatch(Number.toLocaleString invalid options) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "options argument must be an object") {
+		t.Fatalf("Dispatch(Number.toLocaleString invalid options) error = %q, want options type error", got)
 	}
 }
 

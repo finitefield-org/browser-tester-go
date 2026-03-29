@@ -687,3 +687,51 @@ func TestPendingPromiseAwaitContinuationStateResumesManually(t *testing.T) {
 		t.Fatalf("host echoes after manual resume = %#v, want one done echo", host.echoes)
 	}
 }
+
+func TestPendingPromiseAwaitDeclarationContinuationResumesFollowingStatement(t *testing.T) {
+	host := &promiseCaptureHost{}
+	promise, resolvePromise := NewPendingPromise()
+	env := newClassicJSEnvironment()
+	if err := env.declare("host", scalarJSValue(HostObjectReference("host")), true); err != nil {
+		t.Fatalf("declare(host) error = %v", err)
+	}
+	if err := env.declare("promise", scalarJSValue(promise), true); err != nil {
+		t.Fatalf("declare(promise) error = %v", err)
+	}
+
+	parser := &classicJSStatementParser{
+		host:        host,
+		env:         env,
+		allowAwait:  true,
+		allowReturn: true,
+	}
+
+	_, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(`const value = await promise; host.echo(value)`, host, env, DefaultRuntimeConfig().StepLimit, true, false, false, nil, UndefinedValue(), false, nil, nil)
+	if err == nil {
+		t.Fatalf("evalClassicJSProgramWithAllowAwaitAndYieldAndExports error = nil, want await suspension")
+	}
+	awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err)
+	if !ok {
+		t.Fatalf("await signal details = false, want await suspension")
+	}
+	if awaitedPromise == nil {
+		t.Fatalf("awaitedPromise = nil, want pending promise state")
+	}
+	if resumeState == nil {
+		t.Fatalf("resumeState = nil, want continuation state")
+	}
+	resolvePromise(StringValue("ready"))
+	parser.resumeState = resumeState
+	parser.generatorNextValue = StringValue("ready")
+	parser.hasGeneratorNextValue = true
+	_, nextState, err := parser.resumeClassicJSState(resumeState)
+	if err != nil {
+		t.Fatalf("resumeClassicJSState() error = %v", err)
+	}
+	if nextState != nil {
+		t.Fatalf("resumeClassicJSState() nextState = %#v, want nil", nextState)
+	}
+	if len(host.echoes) != 1 || host.echoes[0] != "ready" {
+		t.Fatalf("host echoes after manual resume = %#v, want one ready echo", host.echoes)
+	}
+}

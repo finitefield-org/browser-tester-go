@@ -106,6 +106,9 @@ func browserHTMLConstructorTag(name string) (string, bool) {
 	if normalized == "HTMLElement" {
 		return "", true
 	}
+	if normalized == "HTMLImageElement" {
+		return "img", true
+	}
 	if !strings.HasPrefix(normalized, "HTML") || !strings.HasSuffix(normalized, "Element") {
 		return "", false
 	}
@@ -148,8 +151,251 @@ func BrowserDateTimestamp(value Value) (int64, bool) {
 	return 0, false
 }
 
+func BrowserDateSetTimestamp(value *Value, ms int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	for i := len(value.Object) - 1; i >= 0; i-- {
+		if value.Object[i].Key != browserDateTimestampKey {
+			continue
+		}
+		value.Object[i].Value = NumberValue(float64(ms))
+		return true
+	}
+	return false
+}
+
+func BrowserDateSetDayOfMonth(value *Value, day int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	next := time.Date(
+		current.Year(),
+		current.Month(),
+		int(day),
+		current.Hour(),
+		current.Minute(),
+		current.Second(),
+		current.Nanosecond(),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetMonth(value *Value, month int64, day *int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	dom := int64(current.Day())
+	if day != nil {
+		dom = *day
+	}
+	next := time.Date(
+		current.Year(),
+		time.Month(month+1),
+		int(dom),
+		current.Hour(),
+		current.Minute(),
+		current.Second(),
+		current.Nanosecond(),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetFullYear(value *Value, year int64, month *int64, day *int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	mon := current.Month()
+	if month != nil {
+		mon = time.Month(*month + 1)
+	}
+	dom := int64(current.Day())
+	if day != nil {
+		dom = *day
+	}
+	next := time.Date(
+		int(year),
+		mon,
+		int(dom),
+		current.Hour(),
+		current.Minute(),
+		current.Second(),
+		current.Nanosecond(),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetMilliseconds(value *Value, milliseconds int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	next := time.Date(
+		current.Year(),
+		current.Month(),
+		current.Day(),
+		current.Hour(),
+		current.Minute(),
+		current.Second(),
+		int(milliseconds)*int(time.Millisecond),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetSeconds(value *Value, seconds int64, milliseconds *int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	ms := int64(current.Nanosecond() / int(time.Millisecond))
+	if milliseconds != nil {
+		ms = *milliseconds
+	}
+	next := time.Date(
+		current.Year(),
+		current.Month(),
+		current.Day(),
+		current.Hour(),
+		current.Minute(),
+		int(seconds),
+		int(ms)*int(time.Millisecond),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetMinutes(value *Value, minutes int64, seconds *int64, milliseconds *int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	sec := int64(current.Second())
+	if seconds != nil {
+		sec = *seconds
+	}
+	ms := int64(current.Nanosecond() / int(time.Millisecond))
+	if milliseconds != nil {
+		ms = *milliseconds
+	}
+	next := time.Date(
+		current.Year(),
+		current.Month(),
+		current.Day(),
+		current.Hour(),
+		int(minutes),
+		int(sec),
+		int(ms)*int(time.Millisecond),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
+func BrowserDateSetHours(value *Value, hours int64, minutes *int64, seconds *int64, milliseconds *int64) bool {
+	if value == nil || value.Kind != ValueKindObject {
+		return false
+	}
+	currentMs, ok := BrowserDateTimestamp(*value)
+	if !ok {
+		return false
+	}
+	current := time.UnixMilli(currentMs).UTC()
+	min := int64(current.Minute())
+	if minutes != nil {
+		min = *minutes
+	}
+	sec := int64(current.Second())
+	if seconds != nil {
+		sec = *seconds
+	}
+	ms := int64(current.Nanosecond() / int(time.Millisecond))
+	if milliseconds != nil {
+		ms = *milliseconds
+	}
+	next := time.Date(
+		current.Year(),
+		current.Month(),
+		current.Day(),
+		int(hours),
+		int(min),
+		int(sec),
+		int(ms)*int(time.Millisecond),
+		time.UTC,
+	).UnixMilli()
+	return BrowserDateSetTimestamp(value, next)
+}
+
 func BrowserDateISOString(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func BrowserDateUTCString(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
+}
+
+func BrowserDateDateString(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("Mon Jan _2 2006")
+}
+
+func BrowserDateTimeString(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("15:04:05 GMT")
+}
+
+func BrowserDateParse(text string) (int64, bool) {
+	normalized := strings.TrimSpace(text)
+	if normalized == "" {
+		return 0, false
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		time.RFC1123,
+		time.RFC1123Z,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, normalized); err == nil {
+			return t.UnixMilli(), true
+		}
+	}
+	return 0, false
 }
 
 func BrowserDateLocaleDateString(ms int64, locale string) string {
@@ -161,8 +407,62 @@ func BrowserDateLocaleDateString(ms int64, locale string) string {
 	return strconv.Itoa(int(t.Month())) + "/" + strconv.Itoa(t.Day()) + "/" + strconv.Itoa(t.Year())
 }
 
+func BrowserDateLocaleString(ms int64, locale string) string {
+	t := time.UnixMilli(ms).UTC()
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	if strings.HasPrefix(normalized, "ja") {
+		return t.Format("2006/01/02 15:04:05")
+	}
+	return t.Format("1/2/2006, 3:04:05 PM")
+}
+
+func BrowserDateLocaleTimeString(ms int64, locale string) string {
+	t := time.UnixMilli(ms).UTC()
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	if strings.HasPrefix(normalized, "ja") {
+		return t.Format("15:04:05")
+	}
+	return t.Format("3:04:05 PM")
+}
+
 func BrowserDateYear(ms int64) int {
 	return time.UnixMilli(ms).UTC().Year()
+}
+
+func BrowserDateMonth(ms int64) int {
+	return int(time.UnixMilli(ms).UTC().Month()) - 1
+}
+
+func BrowserDateUTCMonth(ms int64) int {
+	return int(time.UnixMilli(ms).UTC().Month()) - 1
+}
+
+func BrowserDateDayOfMonth(ms int64) int {
+	return time.UnixMilli(ms).UTC().Day()
+}
+
+func BrowserDateDayOfWeek(ms int64) int {
+	return int(time.UnixMilli(ms).UTC().Weekday())
+}
+
+func BrowserDateHour(ms int64) int {
+	return time.UnixMilli(ms).UTC().Hour()
+}
+
+func BrowserDateMinute(ms int64) int {
+	return time.UnixMilli(ms).UTC().Minute()
+}
+
+func BrowserDateSecond(ms int64) int {
+	return time.UnixMilli(ms).UTC().Second()
+}
+
+func BrowserDateMillisecond(ms int64) int {
+	return time.UnixMilli(ms).UTC().Nanosecond() / int(time.Millisecond)
+}
+
+func BrowserDateTimezoneOffset(ms int64) int {
+	return 0
 }
 
 func RegExpLiteralParts(value Value) (pattern string, flags string, ok bool) {
@@ -198,10 +498,6 @@ func BuiltinFunctionValue(name string, params []string, restName string, body st
 		allowReturn: true,
 		env:         newClassicJSEnvironment(),
 	})
-}
-
-func browserDateTimeString(ms int64) string {
-	return BrowserDateISOString(ms)
 }
 
 func browserNumberToString(value float64, radix int) string {

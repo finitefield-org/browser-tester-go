@@ -493,6 +493,15 @@ func (s *classicJSYieldDeclarationState) cloneDetached(mapping map[*classicJSEnv
 	return cloned
 }
 
+type classicJSReturnAwaitState struct{}
+
+func (s *classicJSReturnAwaitState) cloneDetached(mapping map[*classicJSEnvironment]*classicJSEnvironment) classicJSResumeState {
+	if s == nil {
+		return nil
+	}
+	return &classicJSReturnAwaitState{}
+}
+
 type classicJSYieldAssignmentState struct {
 	env                *classicJSEnvironment
 	name               string
@@ -2339,6 +2348,12 @@ func (p *classicJSStatementParser) parseReturnStatement() (Value, error) {
 
 	value, err := p.parseExpression()
 	if err != nil {
+		if awaitedPromise, _, ok := classicJSAwaitSignalDetails(err); ok {
+			return UndefinedValue(), classicJSAwaitSignal{
+				promise:     awaitedPromise,
+				resumeState: &classicJSReturnAwaitState{},
+			}
+		}
 		return UndefinedValue(), err
 	}
 	return UndefinedValue(), classicJSReturnSignal{value: value}
@@ -2999,6 +3014,11 @@ func (p *classicJSStatementParser) parseFunctionStatement(async bool, generator 
 	if err := p.env.declare(name, scalarJSValue(value), false); err != nil {
 		return UndefinedValue(), err
 	}
+	if p.moduleExports == nil && p.env.parent == nil {
+		if mutator, ok := p.host.(HostReferenceMutator); ok {
+			_ = mutator.SetHostReference(name, value)
+		}
+	}
 	return UndefinedValue(), nil
 }
 
@@ -3117,6 +3137,17 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 	if p.env == nil {
 		p.env = newClassicJSEnvironment()
 	}
+	newDeclarationResumeState := func(name string, pattern classicJSBindingPattern, hasPattern bool) *classicJSYieldDeclarationState {
+		return &classicJSYieldDeclarationState{
+			env:                p.env,
+			kind:               kind,
+			name:               name,
+			pattern:            pattern,
+			hasPattern:         hasPattern,
+			privateClass:       p.privateClass,
+			privateFieldPrefix: p.privateFieldPrefix,
+		}
+	}
 
 	for {
 		p.skipSpaceAndComments()
@@ -3140,22 +3171,22 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 			}
 			value, err := p.parseScalarExpression()
 			if err != nil {
+				if awaitedPromise, _, ok := classicJSAwaitSignalDetails(err); ok {
+					p.skipSpaceAndComments()
+					if p.peekByte() == ',' {
+						return UndefinedValue(), NewError(ErrorKindUnsupported, "awaited declaration initializers are only supported in single declaration initializers in this bounded classic-JS slice")
+					}
+					return UndefinedValue(), classicJSAwaitSignal{
+						promise:     awaitedPromise,
+						resumeState: newDeclarationResumeState("", pattern, true),
+					}
+				}
 				if yieldedValue, _, ok := classicJSYieldSignalDetails(err); ok {
 					p.skipSpaceAndComments()
 					if p.peekByte() == ',' {
 						return UndefinedValue(), NewError(ErrorKindUnsupported, "yield send values are only supported in single declaration initializers in this bounded classic-JS slice")
 					}
-					return UndefinedValue(), classicJSYieldSignal{
-						value: yieldedValue,
-						resumeState: &classicJSYieldDeclarationState{
-							env:                p.env,
-							kind:               kind,
-							pattern:            pattern,
-							hasPattern:         true,
-							privateClass:       p.privateClass,
-							privateFieldPrefix: p.privateFieldPrefix,
-						},
-					}
+					return UndefinedValue(), classicJSYieldSignal{value: yieldedValue, resumeState: newDeclarationResumeState("", pattern, true)}
 				}
 				return UndefinedValue(), err
 			}
@@ -3180,21 +3211,22 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 				}
 				parsed, err := p.parseScalarExpression()
 				if err != nil {
+					if awaitedPromise, _, ok := classicJSAwaitSignalDetails(err); ok {
+						p.skipSpaceAndComments()
+						if p.peekByte() == ',' {
+							return UndefinedValue(), NewError(ErrorKindUnsupported, "awaited declaration initializers are only supported in single declaration initializers in this bounded classic-JS slice")
+						}
+						return UndefinedValue(), classicJSAwaitSignal{
+							promise:     awaitedPromise,
+							resumeState: newDeclarationResumeState(name, classicJSBindingPattern{}, false),
+						}
+					}
 					if yieldedValue, _, ok := classicJSYieldSignalDetails(err); ok {
 						p.skipSpaceAndComments()
 						if p.peekByte() == ',' {
 							return UndefinedValue(), NewError(ErrorKindUnsupported, "yield send values are only supported in single declaration initializers in this bounded classic-JS slice")
 						}
-						return UndefinedValue(), classicJSYieldSignal{
-							value: yieldedValue,
-							resumeState: &classicJSYieldDeclarationState{
-								env:                p.env,
-								kind:               kind,
-								name:               name,
-								privateClass:       p.privateClass,
-								privateFieldPrefix: p.privateFieldPrefix,
-							},
-						}
+						return UndefinedValue(), classicJSYieldSignal{value: yieldedValue, resumeState: newDeclarationResumeState(name, classicJSBindingPattern{}, false)}
 					}
 					return UndefinedValue(), err
 				}
@@ -3211,6 +3243,11 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 			}
 			if kind == "var" {
 				p.env.bindings[name] = classicJSBinding{value: scalarJSValue(value), mutable: true}
+				if p.moduleExports == nil && p.env.parent == nil {
+					if mutator, ok := p.host.(HostReferenceMutator); ok {
+						_ = mutator.SetHostReference(name, value)
+					}
+				}
 			} else {
 				if err := p.env.declare(name, scalarJSValue(value), kind == "let"); err != nil {
 					return UndefinedValue(), err
@@ -4401,6 +4438,14 @@ func (p *classicJSStatementParser) resumeClassicJSState(state classicJSResumeSta
 			}
 		}
 		return UndefinedValue(), nil, nil
+	case *classicJSReturnAwaitState:
+		if current == nil {
+			return UndefinedValue(), nil, NewError(ErrorKindRuntime, "return await state is unavailable")
+		}
+		if p.hasGeneratorNextValue {
+			return p.generatorNextValue, nil, classicJSReturnSignal{value: p.generatorNextValue}
+		}
+		return UndefinedValue(), nil, classicJSReturnSignal{value: UndefinedValue()}
 	case *classicJSYieldAssignmentState:
 		if current == nil {
 			return UndefinedValue(), nil, NewError(ErrorKindRuntime, "yield assignment state is unavailable")
@@ -6102,11 +6147,16 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 		switch state.stage {
 		case classicJSTryStageTry:
 			value, nextBlock, err := p.resumeBlockState(state.tryBlock)
-			if nextBlock != nil {
-				state.tryBlock = nextBlock
-				return value, state, nil
-			}
 			if err != nil {
+				if awaitedPromise, awaitedState, ok := classicJSAwaitSignalDetails(err); ok {
+					if block, ok := awaitedState.(*classicJSBlockState); ok {
+						state.tryBlock = block
+					}
+					return UndefinedValue(), nil, classicJSAwaitSignal{
+						promise:     awaitedPromise,
+						resumeState: state,
+					}
+				}
 				if throwValue, ok := classicJSThrowSignalValue(err); ok {
 					state.pendingThrow = throwValue
 					state.hasPendingThrow = true
@@ -6134,6 +6184,10 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 				}
 				state.stage = classicJSTryStageDone
 				return p.finalizeTryCompletion(state)
+			}
+			if nextBlock != nil {
+				state.tryBlock = nextBlock
+				return value, state, nil
 			}
 			state.result = value
 			state.tryBlock = nil
@@ -6175,11 +6229,16 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 			}
 
 			value, nextBlock, err := p.resumeBlockState(state.catchBlock)
-			if nextBlock != nil {
-				state.catchBlock = nextBlock
-				return value, state, nil
-			}
 			if err != nil {
+				if awaitedPromise, awaitedState, ok := classicJSAwaitSignalDetails(err); ok {
+					if block, ok := awaitedState.(*classicJSBlockState); ok {
+						state.catchBlock = block
+					}
+					return UndefinedValue(), nil, classicJSAwaitSignal{
+						promise:     awaitedPromise,
+						resumeState: state,
+					}
+				}
 				if throwValue, ok := classicJSThrowSignalValue(err); ok {
 					state.pendingThrow = throwValue
 					state.hasPendingThrow = true
@@ -6204,6 +6263,10 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 				state.stage = classicJSTryStageDone
 				return p.finalizeTryCompletion(state)
 			}
+			if nextBlock != nil {
+				state.catchBlock = nextBlock
+				return value, state, nil
+			}
 			state.result = value
 			state.catchBlock = nil
 			state.pendingErr = nil
@@ -6223,11 +6286,16 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 			}
 
 			value, nextBlock, err := p.resumeBlockState(state.finallyBlock)
-			if nextBlock != nil {
-				state.finallyBlock = nextBlock
-				return value, state, nil
-			}
 			if err != nil {
+				if awaitedPromise, awaitedState, ok := classicJSAwaitSignalDetails(err); ok {
+					if block, ok := awaitedState.(*classicJSBlockState); ok {
+						state.finallyBlock = block
+					}
+					return UndefinedValue(), nil, classicJSAwaitSignal{
+						promise:     awaitedPromise,
+						resumeState: state,
+					}
+				}
 				if throwValue, ok := classicJSThrowSignalValue(err); ok {
 					state.pendingThrow = throwValue
 					state.hasPendingThrow = true
@@ -6239,6 +6307,10 @@ func (p *classicJSStatementParser) resumeTryState(state *classicJSTryState) (Val
 				}
 				state.stage = classicJSTryStageDone
 				return p.finalizeTryCompletion(state)
+			}
+			if nextBlock != nil {
+				state.finallyBlock = nextBlock
+				return value, state, nil
 			}
 			state.finallyBlock = nil
 			state.stage = classicJSTryStageDone
@@ -10568,6 +10640,21 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 			if right.Function == nil || !right.Function.constructible {
 				return false, NewError(ErrorKindRuntime, "relational `instanceof` requires a class object or constructible function value on the right in this bounded classic-JS slice")
 			}
+			if left.Kind == ValueKindHostReference {
+				if expectedTag, ok := browserHTMLConstructorTag(right.Function.name); ok {
+					if strings.Contains(left.HostReferencePath, ".") {
+						return false, nil
+					}
+					leftTag, hasTag := browserElementReferenceTag(left.HostReferencePath)
+					if !hasTag {
+						return false, nil
+					}
+					if expectedTag == "" {
+						return true, nil
+					}
+					return leftTag == expectedTag, nil
+				}
+			}
 			marker, ok := classicJSConstructibleFunctionMarker(right.Function)
 			if !ok || marker == "" {
 				return false, NewError(ErrorKindRuntime, "relational `instanceof` requires a class object or constructible function value on the right in this bounded classic-JS slice")
@@ -12313,18 +12400,22 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 		return scalarJSValue(promiseValueFromState(resultPromise))
 	}
 
-	var resumeAsyncState func(classicJSResumeState)
-	resumeAsyncState = func(state classicJSResumeState) {
+	var resumeAsyncState func(classicJSResumeState, Value, bool)
+	resumeAsyncState = func(state classicJSResumeState, resumeValue Value, hasResumeValue bool) {
 		if state == nil {
 			resultPromise.resolve(UndefinedValue())
 			return
 		}
 		asyncParser := *p
 		asyncParser.allowAwait = true
-		asyncParser.allowYield = false
+		asyncParser.allowYield = true
 		asyncParser.allowReturn = fn.allowReturn
 		asyncParser.privateClass = fn.privateClass
 		asyncParser.privateFieldPrefix = fn.privateFieldPrefix
+		if hasResumeValue {
+			asyncParser.generatorNextValue = resumeValue
+			asyncParser.hasGeneratorNextValue = true
+		}
 
 		value, nextState, err := asyncParser.resumeClassicJSState(state)
 		if err != nil {
@@ -12337,19 +12428,27 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 						resultPromise.reject(next)
 						return
 					}
-					resumeAsyncState(resumeState)
+					resumeAsyncState(resumeState, next, true)
 				})
+				return
+			}
+			if yieldedValue, resumeState, ok := classicJSYieldSignalDetails(err); ok {
+				if resumeState != nil {
+					resumeAsyncState(resumeState, yieldedValue, true)
+					return
+				}
+				resultPromise.resolve(yieldedValue)
 				return
 			}
 			if returnedValue, ok := classicJSReturnSignalValue(err); ok {
 				resolveAsyncResult(returnedValue)
 				return
 			}
-			resultPromise.resolve(UndefinedValue())
+			resultPromise.reject(rejectionReasonFromError(err))
 			return
 		}
 		if nextState != nil {
-			resumeAsyncState(nextState)
+			resumeAsyncState(nextState, value, true)
 			return
 		}
 		resolveAsyncResult(value)
@@ -12364,7 +12463,7 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 						resultPromise.reject(next)
 						return
 					}
-					resumeAsyncState(resumeState)
+					resumeAsyncState(resumeState, next, true)
 				})
 				return asyncResultValue(), nil
 			}
@@ -12392,7 +12491,7 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 					resultPromise.reject(next)
 					return
 				}
-				resumeAsyncState(resumeState)
+				resumeAsyncState(resumeState, next, true)
 			})
 			return asyncResultValue(), nil
 		}

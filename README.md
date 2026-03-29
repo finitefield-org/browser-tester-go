@@ -89,10 +89,10 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `after()` / `append()` / `prepend()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
   `normalize()` mutation), `location` (including `assign()` / `replace()` / `reload()` and property setters with browser-style string coercion and runtime rejection of `Symbol` inputs), `history`, `navigator`, `URL` /
   `URLSearchParams`, `Blob`, `URL.createObjectURL()` / `revokeObjectURL()`, `DOMParser.parseFromString()` for
-  `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `element.scrollIntoView()` as a bounded no-op scroll helper, `Intl.NumberFormat` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
+  `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `element.scrollIntoView()` as a bounded no-op scroll helper, `Intl.NumberFormat` / `Intl.NumberFormat.prototype.resolvedOptions()` / `Intl.NumberFormat.prototype.formatToParts()` / `Intl.NumberFormat.supportedLocalesOf()` / `Intl.Collator.supportedLocalesOf()` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
   `matchMedia`, `fetch()`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
   `window.crypto` / `window.hashApi`, and
-  bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Uint8Array` element checks, plus inline-script `toggleAttribute(name, force)` and `classList.toggle(token, force)` calls that use browser-style truthiness coercion for the optional force argument, and
+  bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Image` / `HTMLImageElement` / `HTMLCanvasElement` / `Uint8Array` element checks, plus inline-script `toggleAttribute(name, force)` and `classList.toggle(token, force)` calls that use browser-style truthiness coercion for the optional force argument, plus blob-backed `Image` / `HTMLImageElement` `load` / `error` callbacks and bounded `canvas.getContext("2d")` / `drawImage()` / `toBlob()` / `toDataURL()` PNG export, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
   stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Map` / `Set` / `Number` / `String`
@@ -100,7 +100,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `Array.isArray()`,
   `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.parseInt()` / `Number.parseFloat()` / global `parseInt()` / global `parseFloat()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
-  `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.Collator()`, `String.fromCharCode()` /
+  `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.DateTimeFormat.supportedLocalesOf()` / `Intl.Collator()`, `String.fromCharCode()` /
   `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
   `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
   `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
@@ -113,12 +113,12 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `Array.prototype.reduce()` / `Array.prototype.reduceRight()` / `Array.prototype.reverse()` /
   `Array.prototype.sort()` / `flatMap()` / `splice()` / `unshift()`,
   `Number.prototype.toPrecision()` /
-  `toExponential()` / `Date.prototype.toLocaleDateString()`, and the bounded array/string/number/date prototype helpers used by
+  `toExponential()` / `toLocaleString(locale, options)` / `Date.prototype.toDateString()` / `Date.prototype.toTimeString()` / `Date.prototype.toLocaleString()` / `Date.prototype.toLocaleTimeString()` / `Date.prototype.toLocaleDateString()` / `Date.prototype.toUTCString()` / `Date.parse()` / `Date(string)` / `Date.prototype.getFullYear()` / `Date.prototype.getUTCFullYear()` / `Date.prototype.getMonth()` / `Date.prototype.getUTCMonth()` / `Date.prototype.getDate()` / `Date.prototype.getUTCDate()` / `Date.prototype.getDay()` / `Date.prototype.getUTCDay()` / `Date.prototype.getHours()` / `Date.prototype.getUTCHours()` / `Date.prototype.getMinutes()` / `Date.prototype.getUTCMinutes()` / `Date.prototype.getSeconds()` / `Date.prototype.getUTCSeconds()` / `Date.prototype.getMilliseconds()` / `Date.prototype.getUTCMilliseconds()` / `Date.prototype.getTimezoneOffset()` / `Date.prototype.setTime()` / `Date.prototype.setDate()` / `Date.prototype.setUTCDate()` / `Date.prototype.setMonth()` / `Date.prototype.setUTCMonth()` / `Date.prototype.setFullYear()` / `Date.prototype.setUTCFullYear()` / `Date.prototype.setMilliseconds()` / `Date.prototype.setUTCMilliseconds()` / `Date.prototype.setSeconds()` / `Date.prototype.setUTCSeconds()` / `Date.prototype.setMinutes()` / `Date.prototype.setUTCMinutes()` / `Date.prototype.setHours()` / `Date.prototype.setUTCHours()`, and the bounded array/string/number/date prototype helpers used by
   template-driven bootstrap, plus the live `URL` / `URLSearchParams` query-state bridge
   (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
   `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for template query handling,
   plus `Object.entries()` / `Object.values()` / `Object.fromEntries()` for plain-object enumeration,
-  and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()`, bounded `Uint8Array`
+  and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()` / `formatRange()` / `formatRangeToParts()` / `resolvedOptions()` / `supportedLocalesOf()`, bounded `Uint8Array`
   construction from array-like / buffer values, plus `Uint8Array.from()` with map-function support,
   `JSON.stringify(value, null, space)`, bounded `Promise.resolve()`, and bounded promise-style
   `then()` / `catch()` chains on browser promises such as `clipboard.writeText()` and `fetch()`,
@@ -462,7 +462,8 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
 - typed mock families for:
   - `Fetch`
   - `ExternalJS` (including seeded source loads for `<script src>` and external module `src`
-    dependencies)
+    dependencies; globals defined by seeded classic scripts stay visible to later classic scripts
+    in the same session)
   - `Dialogs`
   - `Clipboard`
   - `Navigator` (including seeded `navigator.language` reads)

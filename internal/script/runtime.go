@@ -1223,11 +1223,13 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string,
 				continuation := &classicJSBlockState{
 					statements: statements,
 					env:        env,
-					index:      i + 1,
+					index:      i,
 					lastValue:  last,
 				}
 				if nextState != nil {
 					continuation.child = nextState
+				} else {
+					continuation.index = i + 1
 				}
 				return UndefinedValue(), classicJSAwaitSignal{
 					promise:     awaitedPromise,

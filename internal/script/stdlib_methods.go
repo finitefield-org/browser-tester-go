@@ -1421,6 +1421,76 @@ func (p *classicJSStatementParser) resolveNumberPrototypeMethod(value Value, nam
 			text := numberToExponentialString(value.Number, fractionDigits)
 			return StringValue(text), nil
 		}), true, nil
+	case "toLocaleString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			locale := "en-US"
+			var options Value
+			hasOptions := false
+
+			switch len(args) {
+			case 0:
+			case 1:
+				if args[0].Kind == ValueKindObject {
+					options = args[0]
+					hasOptions = true
+				} else if args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+					locale = strings.TrimSpace(ToJSString(args[0]))
+				}
+			default:
+				if args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+					locale = strings.TrimSpace(ToJSString(args[0]))
+				}
+				if args[1].Kind != ValueKindObject {
+					return UndefinedValue(), NewError(ErrorKindRuntime, "Number.toLocaleString options argument must be an object")
+				}
+				options = args[1]
+				hasOptions = true
+			}
+
+			if locale == "" {
+				locale = "en-US"
+			}
+
+			minFractionDigits := 0
+			maxFractionDigits := -1
+			maxSignificantDigits := -1
+			style := ""
+			currency := ""
+			if hasOptions {
+				if value, ok := lookupObjectProperty(options.Object, "style"); ok {
+					style = strings.ToLower(strings.TrimSpace(ToJSString(value)))
+				}
+				if value, ok := lookupObjectProperty(options.Object, "currency"); ok {
+					currency = strings.ToUpper(strings.TrimSpace(ToJSString(value)))
+				}
+				if value, ok := lookupObjectProperty(options.Object, "minimumFractionDigits"); ok {
+					digits, err := classicJSNumberLocaleDigits("Number.toLocaleString minimumFractionDigits", value, 0, 100)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					minFractionDigits = digits
+				}
+				if value, ok := lookupObjectProperty(options.Object, "maximumFractionDigits"); ok {
+					digits, err := classicJSNumberLocaleDigits("Number.toLocaleString maximumFractionDigits", value, 0, 100)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					maxFractionDigits = digits
+				}
+				if maxFractionDigits >= 0 && minFractionDigits > maxFractionDigits {
+					return UndefinedValue(), NewError(ErrorKindRuntime, "Number.toLocaleString minimumFractionDigits cannot exceed maximumFractionDigits")
+				}
+				if value, ok := lookupObjectProperty(options.Object, "maximumSignificantDigits"); ok {
+					digits, err := classicJSNumberLocaleDigits("Number.toLocaleString maximumSignificantDigits", value, 1, 100)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					maxSignificantDigits = digits
+				}
+			}
+
+			return StringValue(numberToLocaleStringText(value.Number, locale, minFractionDigits, maxFractionDigits, maxSignificantDigits, style, currency)), nil
+		}), true, nil
 	}
 	return UndefinedValue(), false, nil
 }
@@ -1431,9 +1501,37 @@ func (p *classicJSStatementParser) resolveDatePrototypeMethod(value Value, name 
 		return UndefinedValue(), false, nil
 	}
 	switch name {
+	case "toDateString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(BrowserDateDateString(ms)), nil
+		}), true, nil
+	case "toTimeString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(BrowserDateTimeString(ms)), nil
+		}), true, nil
 	case "toISOString", "toJSON", "toString":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(BrowserDateISOString(ms)), nil
+		}), true, nil
+	case "toUTCString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return StringValue(BrowserDateUTCString(ms)), nil
+		}), true, nil
+	case "toLocaleString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			locale := "en-US"
+			if len(args) > 0 && args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+				locale = strings.TrimSpace(ToJSString(args[0]))
+			}
+			return StringValue(BrowserDateLocaleString(ms, locale)), nil
+		}), true, nil
+	case "toLocaleTimeString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			locale := "en-US"
+			if len(args) > 0 && args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+				locale = strings.TrimSpace(ToJSString(args[0]))
+			}
+			return StringValue(BrowserDateLocaleTimeString(ms, locale)), nil
 		}), true, nil
 	case "toLocaleDateString":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -1443,6 +1541,206 @@ func (p *classicJSStatementParser) resolveDatePrototypeMethod(value Value, name 
 			}
 			return StringValue(BrowserDateLocaleDateString(ms, locale)), nil
 		}), true, nil
+	case "setTime":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.setTime expects 1 argument")
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.setTime requires a finite timestamp")
+			}
+			if !BrowserDateSetTimestamp(&value, int64(number)) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.setTime requires a date receiver")
+			}
+			return NumberValue(float64(int64(number))), nil
+		}), true, nil
+	case "setDate", "setUTCDate":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 argument", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			if !BrowserDateSetDayOfMonth(&value, int64(number)) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setMonth", "setUTCMonth":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 2 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 or 2 arguments", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			var day *int64
+			if len(args) > 1 {
+				dom, ok := classicJSNumberValue(args[1])
+				if !ok || math.IsNaN(dom) || math.IsInf(dom, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				day = new(int64)
+				*day = int64(dom)
+			}
+			if !BrowserDateSetMonth(&value, int64(number), day) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setFullYear", "setUTCFullYear":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 3 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 to 3 arguments", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			var month *int64
+			if len(args) > 1 {
+				mon, ok := classicJSNumberValue(args[1])
+				if !ok || math.IsNaN(mon) || math.IsInf(mon, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				month = new(int64)
+				*month = int64(mon)
+			}
+			var day *int64
+			if len(args) > 2 {
+				dom, ok := classicJSNumberValue(args[2])
+				if !ok || math.IsNaN(dom) || math.IsInf(dom, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				day = new(int64)
+				*day = int64(dom)
+			}
+			if !BrowserDateSetFullYear(&value, int64(number), month, day) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setMilliseconds", "setUTCMilliseconds":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 argument", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			if !BrowserDateSetMilliseconds(&value, int64(number)) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setSeconds", "setUTCSeconds":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 2 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 or 2 arguments", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			var milliseconds *int64
+			if len(args) > 1 {
+				ms, ok := classicJSNumberValue(args[1])
+				if !ok || math.IsNaN(ms) || math.IsInf(ms, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				milliseconds = new(int64)
+				*milliseconds = int64(ms)
+			}
+			if !BrowserDateSetSeconds(&value, int64(number), milliseconds) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setMinutes", "setUTCMinutes":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 3 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 to 3 arguments", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			var seconds *int64
+			if len(args) > 1 {
+				sec, ok := classicJSNumberValue(args[1])
+				if !ok || math.IsNaN(sec) || math.IsInf(sec, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				seconds = new(int64)
+				*seconds = int64(sec)
+			}
+			var milliseconds *int64
+			if len(args) > 2 {
+				ms, ok := classicJSNumberValue(args[2])
+				if !ok || math.IsNaN(ms) || math.IsInf(ms, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				milliseconds = new(int64)
+				*milliseconds = int64(ms)
+			}
+			if !BrowserDateSetMinutes(&value, int64(number), seconds, milliseconds) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
+	case "setHours", "setUTCHours":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 4 {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s expects 1 to 4 arguments", name)
+			}
+			number, ok := classicJSNumberValue(args[0])
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+			}
+			var minutes *int64
+			if len(args) > 1 {
+				min, ok := classicJSNumberValue(args[1])
+				if !ok || math.IsNaN(min) || math.IsInf(min, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				minutes = new(int64)
+				*minutes = int64(min)
+			}
+			var seconds *int64
+			if len(args) > 2 {
+				sec, ok := classicJSNumberValue(args[2])
+				if !ok || math.IsNaN(sec) || math.IsInf(sec, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				seconds = new(int64)
+				*seconds = int64(sec)
+			}
+			var milliseconds *int64
+			if len(args) > 3 {
+				ms, ok := classicJSNumberValue(args[3])
+				if !ok || math.IsNaN(ms) || math.IsInf(ms, 0) {
+					return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a finite timestamp", name)
+				}
+				milliseconds = new(int64)
+				*milliseconds = int64(ms)
+			}
+			if !BrowserDateSetHours(&value, int64(number), minutes, seconds, milliseconds) {
+				return UndefinedValue(), fmt.Errorf("Date.prototype.%s requires a date receiver", name)
+			}
+			ms, _ := BrowserDateTimestamp(value)
+			return NumberValue(float64(ms)), nil
+		}), true, nil
 	case "valueOf", "getTime":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return NumberValue(float64(ms)), nil
@@ -1450,6 +1748,46 @@ func (p *classicJSStatementParser) resolveDatePrototypeMethod(value Value, name 
 	case "getFullYear":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return NumberValue(float64(BrowserDateYear(ms))), nil
+		}), true, nil
+	case "getUTCFullYear":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateYear(ms))), nil
+		}), true, nil
+	case "getMonth":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateMonth(ms))), nil
+		}), true, nil
+	case "getUTCMonth":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateUTCMonth(ms))), nil
+		}), true, nil
+	case "getDate", "getUTCDate":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateDayOfMonth(ms))), nil
+		}), true, nil
+	case "getDay", "getUTCDay":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateDayOfWeek(ms))), nil
+		}), true, nil
+	case "getHours", "getUTCHours":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateHour(ms))), nil
+		}), true, nil
+	case "getMinutes", "getUTCMinutes":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateMinute(ms))), nil
+		}), true, nil
+	case "getSeconds", "getUTCSeconds":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateSecond(ms))), nil
+		}), true, nil
+	case "getMilliseconds", "getUTCMilliseconds":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateMillisecond(ms))), nil
+		}), true, nil
+	case "getTimezoneOffset":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			return NumberValue(float64(BrowserDateTimezoneOffset(ms))), nil
 		}), true, nil
 	}
 	return UndefinedValue(), false, nil
@@ -1672,11 +2010,12 @@ func classicJSRegExpValue(value Value) (*regexp.Regexp, string, bool, error) {
 }
 
 func replaceFirstRegexp(compiled *regexp.Regexp, input string, replacement string) string {
-	loc := compiled.FindStringIndex(input)
+	loc := compiled.FindStringSubmatchIndex(input)
 	if loc == nil {
 		return input
 	}
-	return input[:loc[0]] + replacement + input[loc[1]:]
+	expanded := compiled.ExpandString(nil, replacement, input, loc)
+	return input[:loc[0]] + string(expanded) + input[loc[1]:]
 }
 
 func replaceStringWithCallback(host HostBindings, input, search string, replacer Value) (string, error) {
@@ -1963,4 +2302,189 @@ func normalizeExponentDigits(text string) string {
 		trimmed = "0"
 	}
 	return text[:ePos+2] + trimmed
+}
+
+func classicJSNumberLocaleDigits(method string, value Value, min, max int) (int, error) {
+	if value.Kind != ValueKindNumber && value.Kind != ValueKindBigInt {
+		return 0, NewError(ErrorKindRuntime, method+" must be numeric")
+	}
+	number, ok := classicJSNumberValue(value)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, NewError(ErrorKindRuntime, method+" must be numeric")
+	}
+	digits := int(math.Trunc(number))
+	if digits < min || digits > max {
+		return 0, NewError(ErrorKindRuntime, fmt.Sprintf("%s must be between %d and %d", method, min, max))
+	}
+	return digits, nil
+}
+
+func numberToLocaleStringText(number float64, locale string, minFractionDigits, maxFractionDigits, maxSignificantDigits int, style, currency string) string {
+	switch {
+	case math.IsNaN(number):
+		return "NaN"
+	case math.IsInf(number, 1):
+		return "Infinity"
+	case math.IsInf(number, -1):
+		return "-Infinity"
+	}
+	if maxSignificantDigits > 0 {
+		formatted := numberToLocaleStringWithSignificantDigits(number, maxSignificantDigits)
+		if style == "currency" {
+			formatted = numberToLocaleCurrencyFormat(formatted, currency, locale)
+		}
+		return formatted
+	}
+
+	var formatted string
+	if maxFractionDigits < 0 {
+		formatted = numberToLocaleGroupDecimalIntegerPart(numberToLocaleStringWithMinimumFractionDigits(strconv.FormatFloat(number, 'f', -1, 64), minFractionDigits))
+	} else {
+		pow := math.Pow10(maxFractionDigits)
+		rounded := math.Round(number*pow) / pow
+		text := strconv.FormatFloat(rounded, 'f', maxFractionDigits, 64)
+		if strings.Contains(text, ".") {
+			text = strings.TrimRight(text, "0")
+			text = strings.TrimRight(text, ".")
+		}
+		if text == "" || text == "-0" {
+			text = "0"
+		}
+		formatted = numberToLocaleGroupDecimalIntegerPart(numberToLocaleStringWithMinimumFractionDigits(text, minFractionDigits))
+	}
+	if style == "currency" {
+		formatted = numberToLocaleCurrencyFormat(formatted, currency, locale)
+	}
+	return formatted
+}
+
+func numberToLocaleStringWithMinimumFractionDigits(text string, minFractionDigits int) string {
+	if minFractionDigits <= 0 || text == "" {
+		return text
+	}
+	sign := ""
+	if text[0] == '+' || text[0] == '-' {
+		sign = text[:1]
+		text = text[1:]
+	}
+	if text == "" || strings.ContainsAny(text, "eE") {
+		return sign + text
+	}
+	parts := strings.SplitN(text, ".", 2)
+	if len(parts) == 1 {
+		return sign + parts[0] + "." + strings.Repeat("0", minFractionDigits)
+	}
+	if len(parts[1]) < minFractionDigits {
+		parts[1] += strings.Repeat("0", minFractionDigits-len(parts[1]))
+	}
+	return sign + parts[0] + "." + parts[1]
+}
+
+func numberToLocaleStringWithSignificantDigits(value float64, maxSignificantDigits int) string {
+	switch {
+	case math.IsNaN(value):
+		return "NaN"
+	case math.IsInf(value, 1):
+		return "Infinity"
+	case math.IsInf(value, -1):
+		return "-Infinity"
+	}
+	if value == 0 {
+		return "0"
+	}
+	if maxSignificantDigits <= 0 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+
+	absValue := math.Abs(value)
+	if absValue == 0 {
+		return "0"
+	}
+	exponent := math.Floor(math.Log10(absValue))
+	decimalPlaces := maxSignificantDigits - 1 - int(exponent)
+	if decimalPlaces >= 0 {
+		pow := math.Pow10(decimalPlaces)
+		rounded := math.Round(value*pow) / pow
+		text := strconv.FormatFloat(rounded, 'f', decimalPlaces, 64)
+		if strings.Contains(text, ".") {
+			text = strings.TrimRight(text, "0")
+			text = strings.TrimRight(text, ".")
+		}
+		if text == "" || text == "-0" {
+			return "0"
+		}
+		return text
+	}
+
+	pow := math.Pow10(-decimalPlaces)
+	rounded := math.Round(value/pow) * pow
+	text := strconv.FormatFloat(rounded, 'f', 0, 64)
+	if text == "" || text == "-0" {
+		return "0"
+	}
+	return numberToLocaleGroupDecimalIntegerPart(text)
+}
+
+func numberToLocaleGroupDecimalIntegerPart(text string) string {
+	if text == "" {
+		return text
+	}
+	sign := ""
+	if text[0] == '+' || text[0] == '-' {
+		sign = text[:1]
+		text = text[1:]
+	}
+	if text == "" || strings.ContainsAny(text, "eE") {
+		return sign + text
+	}
+	parts := strings.SplitN(text, ".", 2)
+	integer := parts[0]
+	if len(integer) <= 3 {
+		if len(parts) == 2 {
+			return sign + integer + "." + parts[1]
+		}
+		return sign + integer
+	}
+	var b strings.Builder
+	for i, r := range integer {
+		if i > 0 && (len(integer)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(r)
+	}
+	if len(parts) == 2 {
+		return sign + b.String() + "." + parts[1]
+	}
+	return sign + b.String()
+}
+
+func numberToLocaleCurrencyFormat(formatted, currency, locale string) string {
+	symbol := numberToLocaleCurrencySymbol(currency, locale)
+	if symbol == "" {
+		symbol = currency
+	}
+	if symbol == "" {
+		return formatted
+	}
+	if strings.HasPrefix(formatted, "-") {
+		return "-" + symbol + strings.TrimPrefix(formatted, "-")
+	}
+	return symbol + formatted
+}
+
+func numberToLocaleCurrencySymbol(currency, locale string) string {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "JPY":
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "ja") {
+			return "￥"
+		}
+		return "¥"
+	case "USD":
+		return "$"
+	case "EUR":
+		return "€"
+	case "GBP":
+		return "£"
+	}
+	return ""
 }

@@ -178,6 +178,38 @@ func NativeConstructibleFunctionValue(callFn, constructFn NativeFunction) Value 
 	}
 }
 
+func NativeConstructibleNamedFunctionValue(name string, callFn, constructFn NativeFunction) Value {
+	value := NativeConstructibleFunctionValue(callFn, constructFn)
+	value.Function = &classicJSArrowFunction{
+		name:          name,
+		constructible: true,
+		env:           newClassicJSEnvironment(),
+	}
+	if value.Function != nil {
+		value.Function.objectProps = []ObjectEntry{
+			{Key: "length", Value: NumberValue(0)},
+			{Key: "name", Value: StringValue(name)},
+			{Key: "prototype", Value: ObjectValue([]ObjectEntry{
+				{Key: "constructor", Value: value},
+			})},
+		}
+	}
+	return value
+}
+
+func SetFunctionOwnProperty(value Value, name string, next Value) bool {
+	if value.Kind != ValueKindFunction || value.Function == nil {
+		return false
+	}
+	index := findObjectPropertyIndex(value.Function.objectProps, name)
+	if index >= 0 {
+		value.Function.objectProps[index].Value = next
+		return true
+	}
+	value.Function.objectProps = replaceObjectProperty(value.Function.objectProps, name, next)
+	return true
+}
+
 func HostReferenceValue(path string, kind HostReferenceKind) Value {
 	if kind == "" {
 		kind = HostReferenceKindObject
@@ -366,6 +398,11 @@ func promiseSettlement(value Value) (settled bool, rejected bool, settlement Val
 		return false, false, UndefinedValue()
 	}
 	return true, false, *value.Promise
+}
+
+func IsPendingPromise(value Value) bool {
+	_, ok := pendingPromiseState(value)
+	return ok
 }
 
 func promiseValueFromState(state *classicJSPromiseState) Value {

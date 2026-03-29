@@ -217,7 +217,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevListeners := append([]eventListenerRecord(nil), s.eventListeners...)
 	prevNextEventListenerID := s.nextEventListenerID
 	prevDispatch := s.eventDispatch
-	prevMicrotasks := append([]string(nil), s.microtasks...)
+	prevMicrotasks := cloneMicrotaskQueue(s.microtasks)
 	prevTimers := cloneTimerMap(s.timers)
 	prevFrames := cloneAnimationFrameMap(s.animationFrames)
 	prevBlobStates := cloneBrowserBlobStateMap(s.blobStates)
@@ -239,6 +239,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevIntlOverride := s.intlOverride
 	prevHasIntlOverride := s.hasIntlOverride
 	prevWindowProperties := cloneScriptValueMap(s.windowProperties)
+	prevElementEventHandlers := cloneElementEventHandlerMap(s.elementEventHandlers)
 	storage := s.Registry().Storage()
 	prevStorageLocal := storage.Local()
 	prevStorageSession := storage.Session()
@@ -269,7 +270,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.eventListeners = prevListeners
 			s.nextEventListenerID = prevNextEventListenerID
 			s.eventDispatch = prevDispatch
-			s.microtasks = prevMicrotasks
+			s.microtasks = cloneMicrotaskQueue(prevMicrotasks)
 			s.timers = prevTimers
 			s.animationFrames = prevFrames
 			s.blobStates = prevBlobStates
@@ -287,6 +288,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.intlOverride = prevIntlOverride
 			s.hasIntlOverride = prevHasIntlOverride
 			s.windowProperties = prevWindowProperties
+			s.elementEventHandlers = prevElementEventHandlers
 			s.cookieJar = prevCookieJar
 			s.historyEntries = prevHistoryEntries
 			s.historyIndex = prevHistoryIndex
@@ -317,6 +319,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	s.scrollY = 0
 	s.hasIntlOverride = false
 	s.windowProperties = nil
+	s.elementEventHandlers = nil
 	s.syncDocumentState(s.URL())
 
 	if err = s.executeInlineScripts(store); err != nil {

@@ -16,7 +16,22 @@ import (
 func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 	session := NewSession(SessionConfig{})
 	session.SetNowMs(1700000000000)
-	wantLocaleDate := time.UnixMilli(1700000000000).UTC().Format("1/2/2006")
+	dt := time.UnixMilli(1700000000000).UTC()
+	wantDateString := dt.Format("Mon Jan _2 2006")
+	wantTimeString := dt.Format("15:04:05 GMT")
+	wantLocaleString := dt.Format("1/2/2006, 3:04:05 PM")
+	wantLocaleTimeString := dt.Format("3:04:05 PM")
+	wantLocaleDate := dt.Format("1/2/2006")
+	wantUTCString := dt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+	wantTimezoneOffset := "0"
+	wantYear := strconv.Itoa(dt.Year())
+	wantMonth := strconv.Itoa(int(dt.Month()) - 1)
+	wantDay := strconv.Itoa(dt.Day())
+	wantWeekday := strconv.Itoa(int(dt.Weekday()))
+	wantHour := strconv.Itoa(dt.Hour())
+	wantMinute := strconv.Itoa(dt.Minute())
+	wantSecond := strconv.Itoa(dt.Second())
+	wantMillisecond := strconv.Itoa(dt.Nanosecond() / int(time.Millisecond))
 
 	result, err := session.runScriptOnStore(dom.NewStore(), `
 		let date = new Date(Date.now());
@@ -39,7 +54,36 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 			JSON.stringify(parsed),
 			JSON.stringify(date),
 			date.toISOString(),
+			date.toDateString(),
+			date.toTimeString(),
+			date.toUTCString(),
+			date.toLocaleString("en-US"),
+			date.toLocaleTimeString("en-US"),
 			date.toLocaleDateString("en-US"),
+			date.getFullYear(),
+			date.getUTCFullYear(),
+			date.getMonth(),
+			date.getUTCMonth(),
+			date.getDate(),
+			date.getUTCDate(),
+			date.getDay(),
+			date.getUTCDay(),
+			date.getHours(),
+			date.getUTCHours(),
+			date.getMinutes(),
+			date.getUTCMinutes(),
+			date.getSeconds(),
+			date.getUTCSeconds(),
+			date.getMilliseconds(),
+			date.getUTCMilliseconds(),
+			date.getTimezoneOffset(),
+			date.setTime(1700000004567),
+			date.setSeconds(5, 7),
+			date.setUTCSeconds(59, 8),
+			date.setMinutes(4, 5, 6),
+			date.setUTCMinutes(59, 58, 57),
+			date.setHours(4, 5, 6, 7),
+			date.setUTCHours(23, 58, 57, 56),
 			Math.abs(-4) + "|" + Math.pow(2, 3) + "|" + Math.min(3, 1, 2) + "|" + Math.max(3, 1, 2) + "|" + Math.ceil(1.1) + "|" + Math.ceil(-1.1) + "|" + Math.ceil(-0.1) + "|" + Math.floor(1.9) + "|" + Math.floor(-1.1) + "|" + Math.trunc(1.9) + "|" + Math.trunc(-1.9),
 			Number.isFinite(1) + "|" + Number.isFinite(Number.NaN) + "|" + Number.isNaN(Number.NaN),
 			encodeURI("https://example.com/A B?x=春&y=1#frag") + "|" + decodeURI("https://example.com/%3F%23%26%20x") + "|" + encodeURIComponent("A&B 春") + "|" + decodeURIComponent("A%26B%20%E6%98%A5"),
@@ -72,7 +116,36 @@ func TestRunScriptSupportsBrowserStdlibSlice(t *testing.T) {
 		`{"a":1,"b":[2,3]}`,
 		strconv.Quote(wantDate),
 		wantDate,
+		wantDateString,
+		wantTimeString,
+		wantUTCString,
+		wantLocaleString,
+		wantLocaleTimeString,
 		wantLocaleDate,
+		wantYear,
+		wantYear,
+		wantMonth,
+		wantMonth,
+		wantDay,
+		wantDay,
+		wantWeekday,
+		wantWeekday,
+		wantHour,
+		wantHour,
+		wantMinute,
+		wantMinute,
+		wantSecond,
+		wantSecond,
+		wantMillisecond,
+		wantMillisecond,
+		wantTimezoneOffset,
+		"1700000004567",
+		"1699999985007",
+		"1700000039008",
+		"1699999445006",
+		"1700002798057",
+		"1699934706007",
+		"1700006337056",
 		"4|8|1|3|2|-1|0|1|-2|1|-1",
 		"true|false|true",
 		"https://example.com/A%20B?x=%E6%98%A5&y=1#frag|https://example.com/%3F%23%26 x|A%26B%20%E6%98%A5|A&B 春",
@@ -207,6 +280,56 @@ func TestRunScriptSupportsNumberIsNaN(t *testing.T) {
 	}
 	if got, want := result.String, "true|false|false|false"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsBrowserDateSetMonth(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const date = new Date(1700000000123); const first = [date.setMonth(0), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCMonth(11, 31), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	wantFirst := time.Date(2023, time.January, 14, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	wantSecond := time.Date(2023, time.December, 31, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.String != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", result.String, want)
+	}
+}
+
+func TestRunScriptSupportsBrowserDateSetFullYear(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const date = new Date(1700000000123); const first = [date.setFullYear(2024), date.getTime(), date.toISOString()].join("|"); const second = [date.setUTCFullYear(2025, 0, 15), date.getTime(), date.toISOString()].join("|"); [first, second].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	wantFirst := time.Date(2024, time.November, 14, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	wantSecond := time.Date(2025, time.January, 15, 22, 13, 20, 123*int(time.Millisecond), time.UTC).UnixMilli()
+	want := strings.Join([]string{
+		strconv.FormatInt(wantFirst, 10),
+		strconv.FormatInt(wantFirst, 10),
+		time.UnixMilli(wantFirst).UTC().Format("2006-01-02T15:04:05.000Z"),
+		strconv.FormatInt(wantSecond, 10),
+		strconv.FormatInt(wantSecond, 10),
+		time.UnixMilli(wantSecond).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if result.String != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", result.String, want)
 	}
 }
 
@@ -543,6 +666,87 @@ func TestRunScriptSupportsIntlNumberFormatCurrencyStyleWithExplicitZeroDigits(t 
 	}
 }
 
+func TestRunScriptSupportsIntlNumberFormatResolvedOptions(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `(() => { const options = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", minimumFractionDigits: 0, maximumFractionDigits: 0 }).resolvedOptions(); return [options.locale, options.style, options.currency, String(options.minimumFractionDigits), String(options.maximumFractionDigits), String(options.useGrouping)].join("|"); })()`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "ja-JP|currency|JPY|0|0|true"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlNumberFormatFormatToParts(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `(() => { const parts = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).formatToParts(1200.5); return parts.map((part) => part.type + ":" + part.value).join("|"); })()`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "integer:1|group:,|integer:200|decimal:.|fraction:5"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlNumberFormatSupportedLocalesOf(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `Intl.NumberFormat.supportedLocalesOf(["en-US", "", "sv", "en-US"]).join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "en-US|sv"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsIntlNumberFormatResolvedOptionsArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Intl.NumberFormat("en-US").resolvedOptions(1)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Intl.NumberFormat resolvedOptions arity failure")
+	}
+	if !strings.Contains(err.Error(), "resolvedOptions expects no arguments") {
+		t.Fatalf("runScriptOnStore() error = %v, want resolvedOptions arity error", err)
+	}
+}
+
+func TestRunScriptRejectsIntlNumberFormatFormatToPartsArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Intl.NumberFormat("en-US").formatToParts(1, 2)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Intl.NumberFormat formatToParts arity failure")
+	}
+	if !strings.Contains(err.Error(), "formatToParts expects 1 argument") {
+		t.Fatalf("runScriptOnStore() error = %v, want formatToParts arity error", err)
+	}
+}
+
+func TestRunScriptRejectsIntlNumberFormatSupportedLocalesOfOptionsTypeMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Intl.NumberFormat.supportedLocalesOf(["en-US"], "true")`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want supportedLocalesOf options type failure")
+	}
+	if !strings.Contains(err.Error(), "options argument must be an object") {
+		t.Fatalf("runScriptOnStore() error = %v, want supportedLocalesOf options failure message", err)
+	}
+}
+
 func TestRunScriptSupportsIntlCollatorNumericAndSwedishSorting(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -568,6 +772,21 @@ func TestRunScriptSupportsIntlCollatorNumericAndSwedishSorting(t *testing.T) {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
 	if got, want := result.String, "item 1,item 2,item 10|item 10,item 2,item 1|0|true|Zebra,Ål,Äpple,Öga"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlCollatorSupportedLocalesOf(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `Intl.Collator.supportedLocalesOf(["sv", "", "en-US", "sv"]).join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "sv|en-US"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
 	}
 }
@@ -1048,6 +1267,89 @@ func TestRunScriptSupportsIntlDateTimeFormatTimeZoneAndFormatToParts(t *testing.
 	}
 }
 
+func TestRunScriptSupportsIntlDateTimeFormatResolvedOptions(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		(() => {
+			const resolved = new Intl.DateTimeFormat("en-US-u-nu-latn", {
+				timeZone: "America/Chicago",
+				hour12: false,
+			}).resolvedOptions();
+			return [
+				resolved.locale,
+				resolved.timeZone,
+				String(resolved.hour12),
+				resolved.calendar,
+				resolved.numberingSystem,
+				resolved.year,
+				resolved.month,
+				resolved.day,
+				resolved.hour,
+				resolved.minute,
+				resolved.second,
+			].join("|");
+		})()
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "en-US-u-nu-latn|America/Chicago|false|gregory|latn|numeric|numeric|numeric|numeric|numeric|numeric"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlDateTimeFormatSupportedLocalesOf(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `Intl.DateTimeFormat.supportedLocalesOf(["en-US", "", "sv", "en-US"]).join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "en-US|sv"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlDateTimeFormatFormatRangeAndFormatRangeToParts(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		(() => {
+			const formatter = new Intl.DateTimeFormat("en-US-u-nu-latn", {
+				timeZone: "America/Chicago",
+				hour12: false,
+			});
+			const start = new Date(Date.UTC(2026, 0, 21, 8, 45, 0, 0));
+			const end = new Date(Date.UTC(2026, 0, 21, 9, 15, 0, 0));
+			const range = formatter.formatRange(start, end);
+			const parts = formatter.formatRangeToParts(start, end);
+			return [
+				range,
+				parts.map((part) => part.value).join(""),
+				parts[0].source,
+				parts.find((part) => part.type === "literal" && part.value === " – ").source,
+				parts[parts.length - 1].source,
+			].join("|");
+		})()
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "01/21/2026, 02:45 – 01/21/2026, 03:15|01/21/2026, 02:45 – 01/21/2026, 03:15|startRange|shared|endRange"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptRejectsInvalidIntlDateTimeFormatTimeZone(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -1060,6 +1362,56 @@ func TestRunScriptRejectsInvalidIntlDateTimeFormatTimeZone(t *testing.T) {
 	}
 }
 
+func TestRunScriptRejectsIntlDateTimeFormatResolvedOptionsArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Intl.DateTimeFormat("en-US").resolvedOptions(1)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Intl.DateTimeFormat resolvedOptions arity failure")
+	}
+	if !strings.Contains(err.Error(), "resolvedOptions expects no arguments") {
+		t.Fatalf("runScriptOnStore() error = %v, want resolvedOptions arity error", err)
+	}
+}
+
+func TestRunScriptRejectsIntlDateTimeFormatRangeFailures(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "formatRange arity",
+			source: `new Intl.DateTimeFormat("en-US").formatRange(1)`,
+			want:   "expects 2 arguments",
+		},
+		{
+			name:   "formatRange start after end",
+			source: `new Intl.DateTimeFormat("en-US").formatRange(new Date(1), new Date(0))`,
+			want:   "start must not exceed end",
+		},
+		{
+			name:   "formatRangeToParts arity",
+			source: `new Intl.DateTimeFormat("en-US").formatRangeToParts(1)`,
+			want:   "expects 2 arguments",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := session.runScriptOnStore(dom.NewStore(), tc.source)
+			if err == nil {
+				t.Fatalf("runScriptOnStore() error = nil, want %s failure", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("runScriptOnStore() error = %v, want %s message", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunScriptRejectsIntlCollatorNumericTypeMismatch(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -1069,6 +1421,18 @@ func TestRunScriptRejectsIntlCollatorNumericTypeMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Intl.Collator numeric must be a boolean") {
 		t.Fatalf("runScriptOnStore() error = %v, want collator numeric failure message", err)
+	}
+}
+
+func TestRunScriptRejectsIntlCollatorSupportedLocalesOfOptionsTypeMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Intl.Collator.supportedLocalesOf(["en-US"], "true")`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want supportedLocalesOf options type failure")
+	}
+	if !strings.Contains(err.Error(), "options argument must be an object") {
+		t.Fatalf("runScriptOnStore() error = %v, want supportedLocalesOf options failure message", err)
 	}
 }
 
@@ -1097,6 +1461,67 @@ func TestRunScriptSupportsDateUTC(t *testing.T) {
 	want := time.Date(2026, time.January, 21, 8, 45, 0, 0, time.UTC).UnixMilli()
 	if got := int64(result.Number); got != want {
 		t.Fatalf("runScriptOnStore() value = %d, want %d", got, want)
+	}
+}
+
+func TestRunScriptSupportsDateParse(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		String(Date.parse("2026-03-30T12:34:56.789Z")),
+		String(Date.parse("2026-03-30")),
+		String(new Date("2026-03-30T12:34:56.789Z").getTime()),
+		Number.isNaN(Date.parse("not-a-date"))
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	want := strings.Join([]string{
+		strconv.FormatInt(time.Date(2026, time.March, 30, 12, 34, 56, 789000000, time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2026, time.March, 30, 0, 0, 0, 0, time.UTC).UnixMilli(), 10),
+		strconv.FormatInt(time.Date(2026, time.March, 30, 12, 34, 56, 789000000, time.UTC).UnixMilli(), 10),
+		"true",
+	}, "|")
+	if got := result.String; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsDateSetMilliseconds(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `const date = new Date(1700000000123); const first = [String(date.setMilliseconds(567)), String(date.getTime()), date.toISOString()].join("|"); const second = [String(date.setUTCMilliseconds(999)), String(date.getTime()), date.toISOString()].join("|"); [first, second].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	want := strings.Join([]string{
+		"1700000000567",
+		"1700000000567",
+		time.UnixMilli(1700000000567).UTC().Format("2006-01-02T15:04:05.000Z"),
+		"1700000000999",
+		"1700000000999",
+		time.UnixMilli(1700000000999).UTC().Format("2006-01-02T15:04:05.000Z"),
+	}, "|")
+	if got := result.String; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsDateConstructorNumericString(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Date("1700000000123")`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want date string parse failure")
+	}
+	if !strings.Contains(err.Error(), "parsable date string") {
+		t.Fatalf("runScriptOnStore() error = %v, want parsable date string failure", err)
 	}
 }
 

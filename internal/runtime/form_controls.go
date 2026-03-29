@@ -31,6 +31,11 @@ func (s *Session) TypeText(selector, text string) (err error) {
 			s.discardMicrotasks()
 		}
 	}()
+	if store.FocusedNodeID() != nodeID {
+		if err := s.focusNode(store, nodeID, normalized, false); err != nil {
+			return err
+		}
+	}
 	if err := store.SetFormControlValue(nodeID, text); err != nil {
 		return err
 	}

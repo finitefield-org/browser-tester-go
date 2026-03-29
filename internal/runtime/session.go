@@ -53,10 +53,11 @@ type Session struct {
 	writingHTML              bool
 	interactions             []Interaction
 	eventListeners           []eventListenerRecord
+	elementEventHandlers     map[dom.NodeID]map[string]script.Value
 	nextEventListenerID      int64
 	eventDispatch            *eventDispatchContext
 	selectedText             string
-	microtasks               []string
+	microtasks               []microtaskRecord
 	currentScriptHTML        string
 	lastInlineScriptHTML     string
 	moduleBindings           map[string]script.Value

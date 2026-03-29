@@ -1549,6 +1549,34 @@ func TestSessionClickBlursFocusedTextInputBeforeClickHandler(t *testing.T) {
 	}
 }
 
+func TestSessionTypeTextFocusesTargetTextInputBeforeClickHandler(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="reference-date" type="date"><button id="apply">Apply</button><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("apply").addEventListener("click", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,
+	})
+
+	if err := s.TypeText("#reference-date", "2026-03-15"); err != nil {
+		t.Fatalf("TypeText(#reference-date) error = %v", err)
+	}
+	if got, want := s.FocusedSelector(), "#reference-date"; got != want {
+		t.Fatalf("FocusedSelector() after TypeText = %q, want %q", got, want)
+	}
+	if err := s.Click("#apply"); err != nil {
+		t.Fatalf("Click(#apply) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2026-03-15" {
+		t.Fatalf("TextContent(#out) = %q, want 2026-03-15", got)
+	}
+	if got, want := s.FocusedSelector(), ""; got != want {
+		t.Fatalf("FocusedSelector() after Click = %q, want %q", got, want)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after TypeText focus regression", got)
+	}
+}
+
 func TestSessionFocusBlursFocusedTextInputBeforeNextFocusHandler(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="reference-date" type="date"><input id="next"><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("next").addEventListener("focus", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,

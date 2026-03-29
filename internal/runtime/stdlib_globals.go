@@ -968,6 +968,17 @@ func resolveDateReference(session *Session, path string) (script.Value, error) {
 			}
 			return script.NumberValue(float64(session.NowMs())), nil
 		}), nil
+	case "parse":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			text := script.ToJSString(script.UndefinedValue())
+			if len(args) > 0 {
+				text = script.ToJSString(args[0])
+			}
+			if ms, ok := script.BrowserDateParse(text); ok {
+				return script.NumberValue(float64(ms)), nil
+			}
+			return script.NumberValue(math.NaN()), nil
+		}), nil
 	case "UTC":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserDateUTC(args)
@@ -1603,14 +1614,22 @@ func browserDateConstructor(session *Session, args []script.Value) (script.Value
 	}
 	ms := session.NowMs()
 	if len(args) == 1 {
-		value, err := coerceNumber(args[0])
-		if err != nil {
-			return script.UndefinedValue(), err
+		if args[0].Kind == script.ValueKindString {
+			parsed, ok := script.BrowserDateParse(args[0].String)
+			if !ok {
+				return script.UndefinedValue(), fmt.Errorf("Date constructor requires a parsable date string")
+			}
+			ms = parsed
+		} else {
+			value, err := coerceNumber(args[0])
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return script.UndefinedValue(), fmt.Errorf("Date constructor requires a finite timestamp")
+			}
+			ms = int64(value)
 		}
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return script.UndefinedValue(), fmt.Errorf("Date constructor requires a finite timestamp")
-		}
-		ms = int64(value)
 	}
 	return browserDateValue(ms), nil
 }

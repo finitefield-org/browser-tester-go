@@ -2582,6 +2582,29 @@ func TestExternalJSMockSnapshotsReturnCopies(t *testing.T) {
 	}
 }
 
+func TestExternalJSMockPublishesBareGlobalToLaterClassicScripts(t *testing.T) {
+	const scriptURL = "https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"
+	harness, err := FromHTML(`<main><div id="out"></div><script src="` + scriptURL + `"></script><script>lucide.createIcons();</script></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	harness.Mocks().ExternalJS().RespondSource(scriptURL, `var lucide = globalThis.lucide = window.lucide = { createIcons: function () { document.getElementById("out").textContent = "loaded"; } };`)
+	if err := harness.WriteHTML(harness.HTML()); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := harness.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "loaded" {
+		t.Fatalf("TextContent(#out) = %q, want loaded", got)
+	}
+
+	if got := harness.Mocks().ExternalJS().Calls(); len(got) != 1 || got[0].URL != scriptURL {
+		t.Fatalf("ExternalJS().Calls() = %#v, want one loaded script URL", got)
+	}
+}
+
 func TestDebugViewReportsFetchCalls(t *testing.T) {
 	harness, err := FromHTML(`<main></main>`)
 	if err != nil {
