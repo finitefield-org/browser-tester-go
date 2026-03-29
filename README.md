@@ -2,7 +2,7 @@
 
 This directory is the Go implementation track for `browser-tester`. It is intentionally
 conservative: a thin public facade, explicit builder config, typed mock families, and bounded
-runtime slices.
+runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
 
 ## Public Surface
 
@@ -475,108 +475,17 @@ runtime slices.
 
 ## Current Scope
 
-- remaining JS syntax gaps are tracked in `TODO.md`.
-- The `DebugView` readouts also include the configured builder failure seed state via `OpenFailure`,
-  `CloseFailure`, `PrintFailure`, and `ScrollFailure`.
-- `DebugView.HistoryEntries()` exposes the current history stack as a read-only inspection slice.
-- The selector engine also supports a bounded attribute selector slice (`[attr]`, `[attr=value]`,
-  `[attr~=value]`, `[attr|=value]`, `[attr^=value]`, `[attr$=value]`, and `[attr*=value]`, plus
-  bounded `i` / `s` flags on value operators) plus a bounded descendant/child/sibling combinator
-  slice on top of the simple tag/id/class forms, comma-separated selector lists, plus a bounded
-  pseudo-class slice (`:root`, `:scope`, `:defined`, `:state(identifier)`, `:active`, `:hover`,
-  `:empty`, `:checked`, `:indeterminate`, `:autofill`, `:-webkit-autofill`, `:default`, `:enabled`,
-  `:disabled`, `:required`, `:optional`, `:read-only`, `:read-write`, `:valid`, `:invalid`,
-  `:user-valid`, `:user-invalid`, `:in-range`, `:out-of-range`, `:first-child`, `:last-child`,
-  `:first-of-type`, `:last-of-type`, `:only-child`, `:only-of-type`, `:nth-child()` /
-  `:nth-last-child()` with bounded `of selector-list` filters, `:nth-of-type()`,
-  `:nth-last-of-type()`, `:link`, `:any-link`, `:visited`, `:local-link`, `:lang()`, `:dir()`,
-  `:placeholder-shown`, `:blank` (text-like inputs, textareas, unchecked checkable controls, and
-  empty selects), `:heading`, `:heading(integer#)`, `:playing`, `:paused`,
-  `:seeking`, `:buffering`, `:stalled`, `:muted`, `:volume-locked`, `:picture-in-picture`,
-  `:fullscreen`, `:modal`, `:popover-open`,
-  `:open` (details/dialog plus select/input picker approximations), `:focus`, `:focus-visible`,
-  `:focus-within`, `:target`, `:target-within`, `:is()` /
-  `:where()` / `:not()` with forgiving selector lists, and `:has()` with forgiving child-relative
-  and sibling-relative selectors). Document queries treat `:scope` as the document root scope, while
-  element-level `Matches` and `Closest` use the element itself as scope and element-bound
-  `querySelector` / `querySelectorAll` search descendants only; `:blank` is approximated for
-  text-like inputs and textareas with empty or whitespace-only values, unchecked checkable inputs,
-  and selects whose current value is empty; `:local-link` is approximated as a same-document link
-  against the current session URL, `:visited` is approximated against the current session history
-  URLs, and `:enabled` / `:disabled` respect disabled fieldset and optgroup ancestry while disabled
-  controls are ignored by the constraint-validation pseudo-classes; `:active` / `:hover` also
-  include labeled controls via bounded label lookup; `:default` keeps initial checked/selected
-  snapshots for checkable controls and options. Custom
-  element states are approximated through a tokenized `state` attribute on custom elements.
-- `:read-only` / `:read-write` also honor inherited `contenteditable` on non-input/textarea
-  elements.
-- Script DOM query helpers are available through host bindings for `querySelector` /
-  `querySelectorAll` / `matches` / `closest`, accept comma-separated selector lists, and keep
-  element-bound query calls descendant-only; `querySelectorAll` returns a minimal snapshot
-  `NodeList` with bounded `forEach()` / `entries()` / `keys()` / `values()` parity, a minimal live `HTMLCollection` covers `children`, `document.images`,
-  `document.embeds`, `document.forms`, `form.elements`, `fieldset.elements`, `select.options`,
-  `select.selectedOptions`, `datalist.options`, `table.rows`, `table.tBodies`,
-  `HTMLTableSectionElement.rows`, `tr.cells`, `document.scripts`, `document.links`, and
-  `document.anchors`, and bounded live `NodeList` slices cover `childNodes` and
-  `template.content.childNodes`.
-- Inline `<script>` blocks are preserved as raw text and execute during bootstrap through the
-  bounded script host bridge, so HTML source can mutate the live DOM. That bridge also exposes
-  bounded `document` property reads for `title`, `readyState`, `activeElement`, `baseURI`, `URL`,
-  `doctype`, `documentURI`, `defaultView`, `compatMode`, `contentType`, `designMode`, and `dir`,
-  plus bounded `Node` / `Element` tree-navigation reads on `nodeType`, `nodeName`, `nodeValue`,
-  `ownerDocument`, `parentNode`, `parentElement`, `firstChild`, `lastChild`, `firstElementChild`,
-  `lastElementChild`, `nextSibling`, `previousSibling`, `nextElementSibling`,
-  `previousElementSibling`, `childElementCount`, `contains()`, `isConnected()`, `getRootNode()`, `compareDocumentPosition()`, and `hasChildNodes()`, plus text-node
-  `nodeValue` / `data` reads and writes, plus `wholeText` reads, `splitText()` mutation, `before()` /
-  `after()` / `replaceChildren()` / `replaceWith()` / `remove()` node mutation helpers, and
-  `normalize()` mutation, and bounded element reflection reads and writes
-  on `className`, `innerText`, `outerText`, `href` / `download` on `a` / `area`, `style`
-  (including `setProperty()` / `removeProperty()` / `getPropertyPriority()`), `attributes`,
-  `getAttributeNode()`, and `classList` reads including `item()`, and `dataset` reads, writes, and deletes through the same surface,
-  plus direct element text mutations through call-result property chains such as
-  `document.getElementById(...).textContent = ...`, plus bounded low-level node-construction and
-  activation helpers on the `host:` bridge such as `host:createElement()`, `host:createTextNode()`,
-  `host:appendChild()`, `host:insertBefore()`, `host:replaceChild()`,
-  `host:insertAdjacentElement()`, `host:insertAdjacentText()`, `host:removeChild()`, `remove()`,
-  `element.getBoundingClientRect()`, and `element.click()`, plus element and document node mutation helpers
-  such as `append()`, `prepend()`, `replaceChildren()`, `before()`, `after()`, `replaceWith()`, and `remove()`. Inline scripts can also use bounded standard DOM surfaces such as `window` /
-  `document` / `element` `addEventListener`, `details.open`, `element.classList`, `element.dataset`,
-  `input.select()`, `select.value`, `select.selectedIndex`, `document.execCommand("copy")`,
-  `document.createElement()`, `setAttribute()`, `toggleAttribute()`, `click()`, `appendChild()` / `removeChild()`,
-  browser-global locale reads like `navigator.language` (which can be seeded through
-  `Harness.Mocks().Navigator().SeedLanguage("fr-FR")`),
-  browser-global connectivity reads like `navigator.onLine` (which can be seeded through
-  `HarnessBuilder.NavigatorOnLine(false)` for offline bootstrap tests), the live `URL` /
-  `URLSearchParams` query-state bridge, `window.scrollX` / `window.scrollY` read helpers, and
-  `window.confirm()` / `window.prompt()` driven dialog flows through the typed dialog mock family.
-- Bounded attribute reflection helpers are available through `GetAttribute` / `GetAttributeNames` /
-  `GetAttributeNode` / `HasAttribute` / `HasAttributes` / `SetAttribute` / `ToggleAttribute` /
-  `RemoveAttribute`, and public live `ClassList` / `Dataset` views expose the same
-  DOM slice through the facade.
-- Internal bounded `classList` / `dataset` helpers still live in `internal/dom` and remain the
-  source of truth for the live views.
-- The public tree-mutation slice (`InnerHTML`, `TextContent`, `OuterHTML`, `SetInnerHTML`,
-  `ReplaceChildren`, `Before`, `After`, `CloneNode`, `SetTextContent`, `SetOuterHTML`,
-  `InsertAdjacentHTML`, `ReplaceWith`, `RemoveNode`, `WriteHTML`) now delegates into `internal/dom`;
-  on `textarea`, content mutations that change its contents keep the reset default value in sync,
-  `CloneNode()` duplicates the selected node and inserts the clone after the source, and
-  `WriteHTML()` provides the bounded document-write-style replay slice with rollback of DOM and
-  session state on failure.
-- Bounded web-storage helpers for inline scripts are available through `host:localStorageGetItem()`
-  / `host:localStorageSetItem()` / `host:localStorageRemoveItem()` / `host:localStorageClear()` /
-  `host:localStorageLength()` / `host:localStorageKey()` and `host:sessionStorageGetItem()` /
-  `host:sessionStorageSetItem()` / `host:sessionStorageRemoveItem()` / `host:sessionStorageClear()`
-  / `host:sessionStorageLength()` / `host:sessionStorageKey()`, and storage mutations are captured
-  as ordered `Events()` with explicit `seed` / `set` / `remove` / `clear` operations.
-- Phase 5 hardening already includes seeded fuzz/property coverage for the script, selector,
-  timer/scheduler, and location/history boundaries.
-- Phase 5 hardening also includes seeded fuzz/property coverage for the cookie and `window.name`
-  boundaries.
-- Phase 5 hardening also includes seeded fuzz/property coverage for the mock registry boundaries.
-- Phase 5 also has a repeatable release checklist in `doc/release-checklist.md`.
-- Legacy and deprecated spec branches are not implementation targets unless the capability matrix
-  explicitly lists a compatibility exception.
-- Later DOM, script, and event/runtime slices will be added behind the same facade.
+- DOM bootstrap, selector/query, attribute reflection, live collections, and tree mutation are
+  implemented in bounded slices; the detailed support map lives in
+  `doc/capability-matrix.md`.
+- Inline classic scripts and module scripts run through the bounded script slice, with host
+  bindings for browser globals, timers, history/location, storage, clipboard, matchMedia, and
+  other runtime helpers.
+- Event dispatch, focus, form controls, navigation/default actions, download capture, and typed
+  mock families are wired through the public facade.
+- `DebugView` exposes read-only snapshots for DOM, history, timers, microtasks, storage, cookies,
+  matchMedia, listeners, and interaction traces.
+- Remaining gaps are tracked in `TODO.md`.
 
 ## Docs
 
