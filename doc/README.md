@@ -145,7 +145,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   (`search`, `searchParams.set()`, `searchParams.getAll()`, `searchParams.entries()`,
   `searchParams.values()`, `searchParams.sort()`, `searchParams.keys()`, `forEach()`) for query-string handling,
   plus `Object.entries()` / `Object.values()` for plain-object enumeration, and bounded promise-style
-  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`. The `Navigator`
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`, with
+  rejected-promise propagation still tracked in `TODO.md`. The `Navigator`
   mock family seeds locale reads like `navigator.language`. The `FileInput`
   mock family also supports seeded file contents via `SeedFileText(selector, fileName, text)`,
   exposes those contents through `input.files[0].text()`, and accepts empty-string `value`

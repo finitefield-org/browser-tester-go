@@ -121,7 +121,8 @@ runtime slices.
   and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()`, bounded `Uint8Array`
   construction from array-like / buffer values, plus `Uint8Array.from()` with map-function support,
   `JSON.stringify(value, null, space)`, bounded `Promise.resolve()`, and bounded promise-style
-  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`
+  `then()` / `catch()` chains on browser promises such as `clipboard.writeText()`, with
+  rejected-promise propagation still tracked in `TODO.md`
 - bounded event-target helper for inline event listeners:
   - `eventTargetValue`
 - nested expression wrapper for inline scripts:
