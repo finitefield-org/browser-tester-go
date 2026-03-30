@@ -4324,6 +4324,42 @@ func TestSessionBootstrapsMapAndSetIteratorMethods(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsArrayIteratorMethods(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const array = ["left", "right"]; document.getElementById("out").textContent = [[...array.keys()].join(","), [...array.values()].join(","), [...array.entries()].map((pair) => pair.join(":")).join(",")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0,1|left,right|0:left,1:right" {
+		t.Fatalf("TextContent(#out) = %q, want array iterator parity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after array iterator bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsArrayToSorted(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const array = [3, 1, 2]; const sorted = array.toSorted((left, right) => left - right); document.getElementById("out").textContent = [array.join(","), sorted.join(",")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "3,1,2|1,2,3" {
+		t.Fatalf("TextContent(#out) = %q, want array toSorted parity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after array toSorted bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsTemplateObjectEntriesAndValues(t *testing.T) {
 	const rawHTML = `<main><div id="entries"></div><div id="values"></div><script>const assigned = Object.assign({ first: "a" }, { second: "b" }); host:setTextContent("#entries", expr(Object.entries(assigned).map((entry) => entry.join("=")).join(","))); host:setTextContent("#values", expr(Object.values(assigned).join(",")))</script></main>`
 

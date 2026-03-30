@@ -266,6 +266,12 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			return ArrayValue(flattened), nil
 		}), true, nil
+	case "entries":
+		return classicJSArrayIteratorMethodValue("entries", value.Array, classicJSArrayIterationEntries), true, nil
+	case "keys":
+		return classicJSArrayIteratorMethodValue("keys", value.Array, classicJSArrayIterationKeys), true, nil
+	case "values":
+		return classicJSArrayIteratorMethodValue("values", value.Array, classicJSArrayIterationValues), true, nil
 	case "toLocaleString":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			text, err := arrayLocaleStringText(p, value.Array, args)
@@ -554,61 +560,21 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 		}), true, nil
 	case "sort":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
-			updated := append([]Value(nil), value.Array...)
-			compareCallback := UndefinedValue()
-			useComparator := false
-			if len(args) > 0 && args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
-				compareCallback = args[0]
-				useComparator = true
+			updated, err := browserArraySortValues(p, value.Array, args, "sort")
+			if err != nil {
+				return UndefinedValue(), err
 			}
-
-			compareValues := func(left, right Value) (int, error) {
-				if useComparator {
-					result, err := p.invokeCallableValue(compareCallback, []Value{left, right}, UndefinedValue(), false)
-					if err != nil {
-						return 0, err
-					}
-					number, ok := classicJSNumberValue(result)
-					if !ok {
-						return 0, fmt.Errorf("Array.sort comparator must return a number")
-					}
-					switch {
-					case math.IsNaN(number), number == 0:
-						return 0, nil
-					case number < 0:
-						return -1, nil
-					default:
-						return 1, nil
-					}
-				}
-				leftText := ToJSString(left)
-				rightText := ToJSString(right)
-				switch {
-				case leftText < rightText:
-					return -1, nil
-				case leftText > rightText:
-					return 1, nil
-				default:
-					return 0, nil
-				}
-			}
-
-			for i := 1; i < len(updated); i++ {
-				for j := i; j > 0; j-- {
-					cmp, err := compareValues(updated[j-1], updated[j])
-					if err != nil {
-						return UndefinedValue(), err
-					}
-					if cmp <= 0 {
-						break
-					}
-					updated[j-1], updated[j] = updated[j], updated[j-1]
-				}
-			}
-
 			updatedValue := ArrayValue(updated)
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return updatedValue, nil
+		}), true, nil
+	case "toSorted":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			updated, err := browserArraySortValues(p, value.Array, args, "toSorted")
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return ArrayValue(updated), nil
 		}), true, nil
 	case "unshift":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -2047,6 +2013,111 @@ func arrayLocaleStringText(p *classicJSStatementParser, values []Value, args []V
 		b.WriteString(text)
 	}
 	return b.String(), nil
+}
+
+func browserArraySortValues(p *classicJSStatementParser, values []Value, args []Value, method string) ([]Value, error) {
+	updated := append([]Value(nil), values...)
+	compareCallback := UndefinedValue()
+	useComparator := false
+	if len(args) > 0 && args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+		compareCallback = args[0]
+		useComparator = true
+	}
+
+	compareValues := func(left, right Value) (int, error) {
+		if useComparator {
+			result, err := p.invokeCallableValue(compareCallback, []Value{left, right}, UndefinedValue(), false)
+			if err != nil {
+				return 0, err
+			}
+			number, ok := classicJSNumberValue(result)
+			if !ok {
+				return 0, fmt.Errorf("Array.%s comparator must return a number", method)
+			}
+			switch {
+			case math.IsNaN(number), number == 0:
+				return 0, nil
+			case number < 0:
+				return -1, nil
+			default:
+				return 1, nil
+			}
+		}
+		leftText := ToJSString(left)
+		rightText := ToJSString(right)
+		switch {
+		case leftText < rightText:
+			return -1, nil
+		case leftText > rightText:
+			return 1, nil
+		default:
+			return 0, nil
+		}
+	}
+
+	for i := 1; i < len(updated); i++ {
+		for j := i; j > 0; j-- {
+			cmp, err := compareValues(updated[j-1], updated[j])
+			if err != nil {
+				return nil, err
+			}
+			if cmp <= 0 {
+				break
+			}
+			updated[j-1], updated[j] = updated[j], updated[j-1]
+		}
+	}
+
+	return updated, nil
+}
+
+type classicJSArrayIterationMode uint8
+
+const (
+	classicJSArrayIterationValues classicJSArrayIterationMode = iota
+	classicJSArrayIterationKeys
+	classicJSArrayIterationEntries
+)
+
+func classicJSArrayIteratorMethodValue(method string, values []Value, mode classicJSArrayIterationMode) Value {
+	snapshot := append([]Value(nil), values...)
+	return NativeFunctionValue(func(args []Value) (Value, error) {
+		if len(args) != 0 {
+			return UndefinedValue(), fmt.Errorf("Array.%s expects no arguments", method)
+		}
+		return classicJSArrayIteratorValue(snapshot, mode), nil
+	})
+}
+
+func classicJSArrayIteratorValue(values []Value, mode classicJSArrayIterationMode) Value {
+	index := 0
+	return ObjectValue([]ObjectEntry{
+		{
+			Key: "next",
+			Value: NativeFunctionValue(func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return UndefinedValue(), fmt.Errorf("Array iterator next expects no arguments")
+				}
+				if index >= len(values) {
+					return classicJSIteratorResult(UndefinedValue(), true), nil
+				}
+				currentIndex := index
+				current := values[index]
+				index++
+				switch mode {
+				case classicJSArrayIterationKeys:
+					return classicJSIteratorResult(NumberValue(float64(currentIndex)), false), nil
+				case classicJSArrayIterationEntries:
+					return classicJSIteratorResult(ArrayValue([]Value{
+						NumberValue(float64(currentIndex)),
+						current,
+					}), false), nil
+				default:
+					return classicJSIteratorResult(current, false), nil
+				}
+			}),
+		},
+	})
 }
 
 func arrayElementLocaleString(p *classicJSStatementParser, value Value, args []Value) (string, error) {

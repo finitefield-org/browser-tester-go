@@ -826,6 +826,68 @@ func TestDispatchRejectsInvalidArrayToLocaleStringOptions(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsArrayIteratorMethods(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const array = ["left", "right"]; [[...array.keys()].join(","), [...array.values()].join(","), [...array.entries()].map((pair) => pair.join(":")).join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.entries/keys/values) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.entries/keys/values) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "0,1|left,right|0:left,1:right" {
+		t.Fatalf("Dispatch(Array.entries/keys/values) value = %q, want %q", result.Value.String, "0,1|left,right|0:left,1:right")
+	}
+}
+
+func TestDispatchRejectsArrayIteratorMethodsWithArguments(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Source: `["left"].entries(1)`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Array.entries invalid arguments) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Array.entries expects no arguments") {
+		t.Fatalf("Dispatch(Array.entries invalid arguments) error = %q, want argument error", got)
+	}
+}
+
+func TestDispatchSupportsArrayToSorted(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `let a = [3, 1, 2]; let b = a.toSorted((left, right) => left - right); [a.join(","), b.join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.toSorted) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.toSorted) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "3,1,2|1,2,3" {
+		t.Fatalf("Dispatch(Array.toSorted) value = %q, want %q", result.Value.String, "3,1,2|1,2,3")
+	}
+}
+
+func TestDispatchRejectsInvalidArrayToSortedComparator(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Source: `[3, 1, 2].toSorted(() => "bad")`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Array.toSorted invalid comparator) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Array.toSorted comparator must return a number") {
+		t.Fatalf("Dispatch(Array.toSorted invalid comparator) error = %q, want comparator type error", got)
+	}
+}
+
 func TestDispatchSupportsArraySpliceWithoutDeleteCountInNestedHelper(t *testing.T) {
 	runtime := NewRuntime(nil)
 
