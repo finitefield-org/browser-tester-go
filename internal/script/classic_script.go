@@ -4198,6 +4198,9 @@ func (p *classicJSStatementParser) consumeIfStatementSource() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if consequentSource != "" && !strings.HasSuffix(consequentSource, "}") && !strings.HasSuffix(consequentSource, ";") {
+			source += ";"
+		}
 		source += " else " + elseSource
 	}
 

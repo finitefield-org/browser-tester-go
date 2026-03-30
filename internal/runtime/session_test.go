@@ -1577,6 +1577,27 @@ func TestSessionTypeTextFocusesTargetTextInputBeforeClickHandler(t *testing.T) {
 	}
 }
 
+func TestSessionTypeTextWithHelperChainListeners(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><select id="record-mode"><option value="single">single</option><option value="memo">memo</option></select><input id="brix" type="text"><div id="out"></div><script>const state = { settings: { autoSave: true, querySync: true }, rows: [{ id: "row-1", score: 0 }], currentProfile: { autoSort: true }, recordMode: "single" }; let saveTimer = 0; function buildWorkspacePayload() { return { settings: { ...state.settings }, rows: state.rows }; } function saveWorkspaceToStorage() { if (!state.settings.autoSave) return; clearTimeout(saveTimer); saveTimer = window.setTimeout(() => { try { const payload = buildWorkspacePayload(); window.localStorage.setItem("workspace", JSON.stringify(payload)); } catch (error) { return; } }, 300); } function buildQueryParams() { const params = new URLSearchParams(); params.set("qv", "1"); params.set("as", state.settings.autoSave ? "1" : "0"); return params; } function syncUrl() { const url = new URL(window.location.href); const params = buildQueryParams(); url.search = params.toString(); window.history.replaceState(null, "", url.toString()); } function evaluateRow(row) { return { score: row.score + 1 }; } function sortRows(rows) { return rows.slice(); } function renderAll(skipStorage) { const rows = state.currentProfile.autoSort ? sortRows(state.rows.map((row) => { const evaluation = evaluateRow(row); return { ...row, score: evaluation.score }; })) : state.rows.map((row) => { const evaluation = evaluateRow(row); return { ...row, score: evaluation.score }; }); state.rows = rows; if (!skipStorage) { saveWorkspaceToStorage(); syncUrl(); } document.getElementById("out").textContent = String(state.rows[0].score); } document.getElementById("record-mode").addEventListener("change", () => { state.recordMode = document.getElementById("record-mode").value; saveWorkspaceToStorage(); renderAll(); }); document.getElementById("brix").addEventListener("input", () => { saveWorkspaceToStorage(); renderAll(); }); document.getElementById("brix").addEventListener("change", () => { saveWorkspaceToStorage(); renderAll(); });</script></main>`,
+	})
+
+	if err := s.SetSelectValue("#record-mode", "single"); err != nil {
+		t.Fatalf("SetSelectValue(#record-mode, single) error = %v", err)
+	}
+	if err := s.TypeText("#brix", "11.2"); err != nil {
+		t.Fatalf("TypeText(#brix, 11.2) error = %v", err)
+	}
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2" {
+		t.Fatalf("TextContent(#out) = %q, want 2", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after helper-chain TypeText regression", got)
+	}
+}
+
 func TestSessionFocusBlursFocusedTextInputBeforeNextFocusHandler(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="reference-date" type="date"><input id="next"><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("next").addEventListener("focus", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,

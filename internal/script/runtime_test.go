@@ -1930,6 +1930,42 @@ func TestDispatchSupportsIfElseBlocksInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsIfElseIfChainsWithoutBracesInClassicJS(t *testing.T) {
+	tests := []struct {
+		name     string
+		distance int
+		want     int
+	}{
+		{name: "middle branch", distance: 12, want: 40},
+		{name: "final else", distance: 25, want: 10},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &echoHost{}
+			runtime := NewRuntime(host)
+
+			result, err := runtime.Dispatch(DispatchRequest{Source: fmt.Sprintf(`function score(distance, margin) {
+  let value = 0;
+  if (distance <= margin) value = 70;
+  else if (distance <= margin * 2) value = 40;
+  else value = 10;
+  return value;
+}
+host.echo(score(%d, 10))`, tc.distance)})
+			if err != nil {
+				t.Fatalf("Dispatch(if/else-if chains without braces) error = %v", err)
+			}
+			if result.Value.Kind != ValueKindNumber || result.Value.Number != float64(tc.want) {
+				t.Fatalf("Dispatch(if/else-if chains without braces) result = %#v, want number %d", result.Value, tc.want)
+			}
+			if len(host.calls) != 1 {
+				t.Fatalf("host calls = %#v, want one call", host.calls)
+			}
+		})
+	}
+}
+
 func TestDispatchRejectsConstWithoutInitializer(t *testing.T) {
 	host := &fakeHost{
 		values: map[string]Value{

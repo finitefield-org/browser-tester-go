@@ -761,6 +761,71 @@ func TestDispatchSupportsArrayFindIndexSpliceAndUnshift(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsArrayShift(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `let a = [1, 2, 3]; let first = a.shift(); [first, a.join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.shift) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.shift) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|2,3" {
+		t.Fatalf("Dispatch(Array.shift) value = %q, want %q", result.Value.String, "1|2,3")
+	}
+}
+
+func TestDispatchSupportsArrayShiftOnEmptyArray(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `let a = []; let first = a.shift(); [first === undefined, a.length].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.shift empty) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.shift empty) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|0" {
+		t.Fatalf("Dispatch(Array.shift empty) value = %q, want %q", result.Value.String, "true|0")
+	}
+}
+
+func TestDispatchSupportsArrayToLocaleString(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["seed", [1, 2], 600].toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.toLocaleString) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.toLocaleString) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "seed,1.0,2.0,600.0" {
+		t.Fatalf("Dispatch(Array.toLocaleString) value = %q, want %q", result.Value.String, "seed,1.0,2.0,600.0")
+	}
+}
+
+func TestDispatchRejectsInvalidArrayToLocaleStringOptions(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{
+		Source: `["seed", [1, 2], 600].toLocaleString("en-US", "bad")`,
+	})
+	if err == nil {
+		t.Fatalf("Dispatch(Array.toLocaleString invalid options) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "Number.toLocaleString options argument must be an object") {
+		t.Fatalf("Dispatch(Array.toLocaleString invalid options) error = %q, want options type error", got)
+	}
+}
+
 func TestDispatchSupportsArraySpliceWithoutDeleteCountInNestedHelper(t *testing.T) {
 	runtime := NewRuntime(nil)
 

@@ -76,6 +76,17 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return removed, nil
 		}), true, nil
+	case "shift":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(value.Array) == 0 {
+				return UndefinedValue(), nil
+			}
+			removed := value.Array[0]
+			updated := append([]Value(nil), value.Array[1:]...)
+			updatedValue := ArrayValue(updated)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			return removed, nil
+		}), true, nil
 	case "includes":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -254,6 +265,14 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				flattened = append(flattened, result)
 			}
 			return ArrayValue(flattened), nil
+		}), true, nil
+	case "toLocaleString":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			text, err := arrayLocaleStringText(p, value.Array, args)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return StringValue(text), nil
 		}), true, nil
 	case "flat":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -2009,6 +2028,90 @@ func arrayElementString(value Value) string {
 		return ""
 	default:
 		return ToJSString(value)
+	}
+}
+
+func arrayLocaleStringText(p *classicJSStatementParser, values []Value, args []Value) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	for i, element := range values {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		text, err := arrayElementLocaleString(p, element, args)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(text)
+	}
+	return b.String(), nil
+}
+
+func arrayElementLocaleString(p *classicJSStatementParser, value Value, args []Value) (string, error) {
+	switch value.Kind {
+	case ValueKindUndefined, ValueKindNull:
+		return "", nil
+	case ValueKindString:
+		return value.String, nil
+	case ValueKindBool, ValueKindBigInt, ValueKindSymbol:
+		return ToJSString(value), nil
+	case ValueKindArray:
+		return arrayLocaleStringText(p, value.Array, args)
+	case ValueKindNumber:
+		if p != nil {
+			if method, ok, err := p.resolveNumberPrototypeMethod(value, "toLocaleString"); ok || err != nil {
+				if err != nil {
+					return "", err
+				}
+				result, err := p.invokeCallableValue(method, args, value, true)
+				if err != nil {
+					return "", err
+				}
+				return ToJSString(result), nil
+			}
+		}
+		return ToJSString(value), nil
+	case ValueKindObject:
+		if ms, ok := BrowserDateTimestamp(value); ok {
+			if p != nil {
+				if method, ok, err := p.resolveDatePrototypeMethod(value, "toLocaleString"); ok || err != nil {
+					if err != nil {
+						return "", err
+					}
+					result, err := p.invokeCallableValue(method, args, value, true)
+					if err != nil {
+						return "", err
+					}
+					return ToJSString(result), nil
+				}
+			}
+			locale := "en-US"
+			if len(args) > 0 && args[0].Kind != ValueKindUndefined && args[0].Kind != ValueKindNull {
+				locale = strings.TrimSpace(ToJSString(args[0]))
+				if locale == "" {
+					locale = "en-US"
+				}
+			}
+			return BrowserDateLocaleString(ms, locale), nil
+		}
+		if resolved, ok := lookupObjectProperty(value.Object, "toLocaleString"); ok {
+			if resolved.Kind == ValueKindFunction && resolved.Function != nil {
+				if p == nil {
+					return ToJSString(value), nil
+				}
+				result, err := p.invokeCallableValue(resolved, args, value, true)
+				if err != nil {
+					return "", err
+				}
+				return ToJSString(result), nil
+			}
+			return ToJSString(resolved), nil
+		}
+		return ToJSString(value), nil
+	default:
+		return ToJSString(value), nil
 	}
 }
 

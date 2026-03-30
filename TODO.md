@@ -30,7 +30,6 @@ This file tracks only the remaining implementation work.
   - `Array.fromAsync()`
   - `Array.of()`
   - `Array[Symbol.species]`
-  - `Array.prototype.shift()`
   - `Array.prototype.toLocaleString()`
   - `Array.prototype.entries()`
   - `Array.prototype.keys()`
