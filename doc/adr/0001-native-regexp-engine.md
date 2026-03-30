@@ -6,15 +6,14 @@ Target package: `internal/script/jsregex`
 
 ## Summary
 
-browser-tester-go will replace the current RE2/regexp2 hybrid used for classic-JS regex literals
-and regex-aware string methods with a Go-owned ECMAScript regular-expression engine. The public
-surface does not change; only the implementation path does.
+browser-tester-go will use a Go-owned ECMAScript regular-expression engine for classic-JS regex
+literals and regex-aware string methods. The public surface does not change; only the implementation
+path does.
 
 ## Context
 
-- `internal/script/regexp_support.go` currently chooses between `regexp` and `github.com/dlclark/regexp2`.
-- That split keeps browser semantics dependent on a third-party package and forces heuristics such as
-  `classicJSRegexpNeedsRegexp2`.
+- `internal/script/jsregex` owns parsing, compilation, execution, and replacement for the regex
+  surface.
 - The regex surface needs browser-style behavior for lookahead, lookbehind, backreferences,
   named captures, replacement templates, `lastIndex`, zero-width match handling, and UTF-16-aware
   indexing.
@@ -24,8 +23,8 @@ surface does not change; only the implementation path does.
 
 Implement a dedicated `internal/script/jsregex` subsystem that owns parsing, compilation, execution,
 and replacement expansion. All regex literals and all regex-aware `String.*` / future `RegExp.*`
-behavior will route through that subsystem. No production code path will silently fall back to RE2 or
-regexp2.
+behavior will route through that subsystem. Unsupported constructs fail explicitly at the caller
+boundary.
 
 ## Package Layout
 
@@ -116,15 +115,15 @@ The bridge layer in `internal/script/classic_script.go`, `internal/script/stdlib
 - Unsupported syntax or unsupported flags become explicit unsupported errors.
 - Step-budget exhaustion and other execution failures become runtime errors.
 - The bridge must not silently convert an unsupported construct into a plain string match or any
-  other fallback path.
+  other alternate path.
 
 ## Migration Plan
 
 1. Add `internal/script/jsregex` and route regex literals through it first.
 2. Move string-regex helpers onto the same engine so there is one matching path.
 3. Add `RegExp` constructor and prototype behavior on top of the same compiled state.
-4. Remove the stdlib `regexp` and third-party `regexp2` dependencies from the production path.
-5. Delete heuristic fallback detection once the native engine covers the bounded slice.
+4. Keep the production path on the native engine.
+5. Delete heuristic support detection once the native engine covers the bounded slice.
 6. Update the placement docs and roadmap in the same change so the engine stays discoverable.
 
 ## Testing Plan

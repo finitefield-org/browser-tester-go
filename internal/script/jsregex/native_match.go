@@ -397,7 +397,7 @@ func matchNativeLookaheadSpec(spec LookaroundSpec, input []rune, state nativeMat
 			return nil, nil
 		}
 		merged := state.clone()
-		merged.captures = mergeLookaroundCaptures(merged.captures, state.captureOffset+spec.VisibleCaptureStart, matched[0].captures)
+		merged.captures = mergeLookaroundCaptures(merged.captures, state.captureOffset+spec.VisibleCaptureStart, spec.AST.CaptureCount, matched[0].captures)
 		return []nativeMatchState{merged}, nil
 	}
 	if len(matched) > 0 {
@@ -440,7 +440,7 @@ func matchNativeLookbehindSpec(spec LookaroundSpec, input []rune, state nativeMa
 			return nil, nil
 		}
 		merged := state.clone()
-		merged.captures = mergeLookaroundCaptures(merged.captures, state.captureOffset+spec.VisibleCaptureStart, chosen.captures)
+		merged.captures = mergeLookaroundCaptures(merged.captures, state.captureOffset+spec.VisibleCaptureStart, spec.AST.CaptureCount, chosen.captures)
 		return []nativeMatchState{merged}, nil
 	}
 	if found {
@@ -461,18 +461,22 @@ func lookaroundNativeState(outer nativeMatchState, spec LookaroundSpec) nativeMa
 	return clone
 }
 
-func mergeLookaroundCaptures(dst nativeCaptures, start int, src nativeCaptures) nativeCaptures {
-	if start <= 0 || len(src) <= 1 {
+func mergeLookaroundCaptures(dst nativeCaptures, start, count int, src nativeCaptures) nativeCaptures {
+	if start <= 0 || count <= 0 {
 		return dst
 	}
-	need := start + len(src) - 1
+	need := start + count
 	if len(dst) < need {
 		grown := make(nativeCaptures, need)
 		copy(grown, dst)
 		dst = grown
 	}
-	for i := 1; i < len(src); i++ {
-		dst[start+i-1] = src[i]
+	for i := 0; i < count; i++ {
+		srcIndex := start + i
+		if srcIndex >= len(src) {
+			break
+		}
+		dst[start+i] = src[srcIndex]
 	}
 	return dst
 }

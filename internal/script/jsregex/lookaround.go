@@ -8,7 +8,7 @@ import (
 
 const lookaroundPlaceholderPrefix = "__jsregex_lookaround_"
 
-func replaceLookarounds(pattern, flags string, allowBackreferences bool) (string, []LookaroundSpec, error) {
+func replaceLookarounds(pattern, flags string, backreferences []BackreferenceSpec) (string, []LookaroundSpec, error) {
 	if !strings.Contains(pattern, "(?") {
 		return pattern, nil, nil
 	}
@@ -47,7 +47,7 @@ func replaceLookarounds(pattern, flags string, allowBackreferences bool) (string
 				return "", nil, fmt.Errorf("unterminated lookahead in %q", pattern)
 			}
 			body := pattern[i+3 : end]
-			bodyAST, err := parseTranslatedPattern(body, flags, false)
+			bodyAST, err := parseRewrittenPattern(body, flags, backreferences, false)
 			if err != nil {
 				return "", nil, err
 			}
@@ -74,9 +74,12 @@ func replaceLookarounds(pattern, flags string, allowBackreferences bool) (string
 				return "", nil, fmt.Errorf("unterminated lookbehind in %q", pattern)
 			}
 			body := pattern[i+4 : end]
-			bodyAST, err := parseTranslatedPattern(body, flags, false)
+			bodyAST, err := parseRewrittenPattern(body, flags, backreferences, false)
 			if err != nil {
 				return "", nil, err
+			}
+			if containsBackreferencePlaceholder(bodyAST.Root) {
+				return "", nil, ErrNativeUnsupported
 			}
 			width, ok := lookaroundExactWidth(bodyAST.Root)
 			if !ok {
@@ -260,4 +263,19 @@ func lookaroundExactWidth(re *syntax.Regexp) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func containsBackreferencePlaceholder(re *syntax.Regexp) bool {
+	if re == nil {
+		return false
+	}
+	if re.Op == syntax.OpCapture && isBackreferencePlaceholderName(re.Name) {
+		return true
+	}
+	for _, sub := range re.Sub {
+		if containsBackreferencePlaceholder(sub) {
+			return true
+		}
+	}
+	return false
 }

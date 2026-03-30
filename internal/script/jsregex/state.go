@@ -3,8 +3,6 @@ package jsregex
 import (
 	"errors"
 	"regexp/syntax"
-
-	"github.com/dlclark/regexp2"
 )
 
 // ErrNotImplemented is reserved for explicit unsupported entry points.
@@ -61,27 +59,19 @@ type BackreferenceSpec struct {
 }
 
 // CompiledPattern is the immutable compiled form that holds the lowered
-// representation, capture metadata, and backend-specific program.
+// representation and capture metadata.
 type CompiledPattern struct {
 	AST    *AST
 	Source string
 	Flags  string
 	Mode   FlagSet
-
-	re2x *regexp2.Regexp
 }
 
 func (p *CompiledPattern) captureNames() []string {
-	if p == nil {
+	if p == nil || p.AST == nil {
 		return nil
 	}
-	if p.AST != nil && len(p.AST.CaptureNames) > 0 {
-		return p.AST.CaptureNames
-	}
-	if p.re2x != nil {
-		return p.re2x.GetGroupNames()
-	}
-	return nil
+	return p.AST.CaptureNames
 }
 
 func (p *CompiledPattern) visibleCaptureIndex(outer int) (int, bool) {

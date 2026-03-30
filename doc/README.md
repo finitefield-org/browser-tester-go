@@ -43,8 +43,8 @@ The design follows the lessons captured in [`../next.md`](../../next.md) and
   navigator, location, open/close/print/scroll, matchMedia, downloads, file input, and storage.
 - `DebugView` is read-only and exists for DOM, runtime, and trace inspection rather than as an
   action surface.
-- The native RegExp engine design lives in `adr/0001-native-regexp-engine.md`, and the current
-  hybrid matcher is a migration bridge only.
+- The native RegExp engine design lives in `adr/0001-native-regexp-engine.md`, and the native
+  engine is the production path.
 - The detailed capability map is maintained in `capability-matrix.md`, and the remaining
   implementation gaps live in `../TODO.md`.
 

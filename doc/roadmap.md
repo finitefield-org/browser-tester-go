@@ -41,7 +41,6 @@ Exit criteria:
 - Implement the Go-owned ECMAScript regular-expression parser, compiler, VM, and replacement
   expansion.
 - Route regex literals and regex-aware `String.*` methods through that engine.
-- Remove the RE2/regexp2 fallback path from the production regex path.
 - Keep the engine UTF-16 aware and deterministic.
 
 Exit criteria:

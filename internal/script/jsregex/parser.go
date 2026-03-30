@@ -7,7 +7,7 @@ import (
 )
 
 // ErrNativeUnsupported is returned when the native syntax tree cannot express
-// a pattern and the caller should try the fallback engine instead.
+// a pattern and the caller should surface an explicit unsupported error.
 var ErrNativeUnsupported = errors.New("jsregex: unsupported syntax for native engine")
 
 // ParseFlags validates and normalizes the ECMAScript flag set.
@@ -50,25 +50,24 @@ func Parse(pattern, flags string) (*AST, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseTranslatedPattern(translated, flags, true)
+	return parsePattern(translated, flags, true)
 }
 
-func parseTranslatedPattern(pattern, flags string, allowBackreferences bool) (*AST, error) {
+func parsePattern(pattern, flags string, resolveBackreferences bool) (*AST, error) {
+	rewritten, backreferences, err := replaceBackreferences(pattern)
+	if err != nil {
+		return nil, err
+	}
+	return parseRewrittenPattern(rewritten, flags, backreferences, resolveBackreferences)
+}
+
+func parseRewrittenPattern(pattern, flags string, backreferences []BackreferenceSpec, resolveBackreferences bool) (*AST, error) {
 	parsed, err := ParseFlags(flags)
 	if err != nil {
 		return nil, err
 	}
 
-	rewritten := pattern
-	var backreferences []BackreferenceSpec
-	if allowBackreferences {
-		rewritten, backreferences, err = replaceBackreferences(rewritten)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	rewritten, lookarounds, err := replaceLookarounds(rewritten, flags, allowBackreferences)
+	rewritten, lookarounds, err := replaceLookarounds(pattern, flags, backreferences)
 	if err != nil {
 		return nil, err
 	}
@@ -86,20 +85,17 @@ func parseTranslatedPattern(pattern, flags string, allowBackreferences bool) (*A
 
 	tree, err := syntax.Parse(rewritten, syntaxFlags)
 	if err != nil {
-		if regexpNeedsRegexp2(pattern) {
-			return nil, ErrNativeUnsupported
-		}
 		return nil, err
 	}
 	tree = tree.Simplify()
 	if !nativeRegexpSupported(tree) {
 		return nil, ErrNativeUnsupported
 	}
-	captureNames, captureIndexMap, backreferences, err := buildCaptureLayout(tree.CapNames(), lookarounds, backreferences, allowBackreferences)
+	captureNames, captureIndexMap, err := buildCaptureLayout(tree.CapNames(), lookarounds, backreferences)
 	if err != nil {
 		return nil, err
 	}
-	return &AST{
+	ast := &AST{
 		Source:          pattern,
 		Flags:           parsed,
 		Root:            tree,
@@ -108,10 +104,16 @@ func parseTranslatedPattern(pattern, flags string, allowBackreferences bool) (*A
 		CaptureIndexMap: captureIndexMap,
 		Lookarounds:     lookarounds,
 		Backreferences:  backreferences,
-	}, nil
+	}
+	if resolveBackreferences {
+		if err := resolveBackreferenceTargets(ast, captureNames); err != nil {
+			return nil, err
+		}
+	}
+	return ast, nil
 }
 
-func buildCaptureLayout(names []string, lookarounds []LookaroundSpec, backreferences []BackreferenceSpec, allowBackreferences bool) ([]string, []int, []BackreferenceSpec, error) {
+func buildCaptureLayout(names []string, lookarounds []LookaroundSpec, backreferences []BackreferenceSpec) ([]string, []int, error) {
 	visibleNames := make([]string, 1, len(names))
 	visibleNames[0] = ""
 	captureIndexMap := make([]int, len(names))
@@ -124,11 +126,11 @@ func buildCaptureLayout(names []string, lookarounds []LookaroundSpec, backrefere
 		if isLookaroundPlaceholderName(name) {
 			index, ok := lookaroundPlaceholderIndex(name)
 			if !ok || index < 0 || index >= len(lookarounds) {
-				return nil, nil, nil, ErrNativeUnsupported
+				return nil, nil, ErrNativeUnsupported
 			}
 			spec := &lookarounds[index]
 			if spec.AST == nil {
-				return nil, nil, nil, ErrNativeUnsupported
+				return nil, nil, ErrNativeUnsupported
 			}
 			spec.VisibleCaptureStart = visibleCount + 1
 			innerCount := spec.AST.CaptureCount
@@ -144,12 +146,9 @@ func buildCaptureLayout(names []string, lookarounds []LookaroundSpec, backrefere
 			continue
 		}
 		if isBackreferencePlaceholderName(name) {
-			if !allowBackreferences {
-				return nil, nil, nil, ErrNativeUnsupported
-			}
 			index, ok := backreferencePlaceholderIndex(name)
 			if !ok || index < 0 || index >= len(backreferences) {
-				return nil, nil, nil, ErrNativeUnsupported
+				return nil, nil, ErrNativeUnsupported
 			}
 			captureIndexMap[outer] = -1
 			continue
@@ -158,30 +157,49 @@ func buildCaptureLayout(names []string, lookarounds []LookaroundSpec, backrefere
 		visibleNames = append(visibleNames, name)
 		captureIndexMap[outer] = visibleCount
 	}
-	if allowBackreferences {
-		for i := range backreferences {
-			spec := &backreferences[i]
-			if spec.TargetName != "" {
-				target := -1
-				for visible := 1; visible < len(visibleNames); visible++ {
-					if visibleNames[visible] == spec.TargetName {
-						target = visible
-						break
-					}
-				}
-				if target < 0 {
-					return nil, nil, nil, fmt.Errorf("undefined named backreference %q", spec.TargetName)
-				}
-				spec.TargetCapture = target
-				continue
-			}
-			if spec.TargetNumber <= 0 || spec.TargetNumber >= len(visibleNames) {
-				return nil, nil, nil, fmt.Errorf("invalid backreference %d", spec.TargetNumber)
-			}
-			spec.TargetCapture = spec.TargetNumber
+	return visibleNames, captureIndexMap, nil
+}
+
+func resolveBackreferenceTargets(ast *AST, visibleNames []string) error {
+	if ast == nil {
+		return nil
+	}
+	for i := range ast.Backreferences {
+		if err := resolveBackreferenceSpec(&ast.Backreferences[i], visibleNames); err != nil {
+			return err
 		}
 	}
-	return visibleNames, captureIndexMap, backreferences, nil
+	for i := range ast.Lookarounds {
+		if err := resolveBackreferenceTargets(ast.Lookarounds[i].AST, visibleNames); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resolveBackreferenceSpec(spec *BackreferenceSpec, visibleNames []string) error {
+	if spec == nil {
+		return nil
+	}
+	if spec.TargetName != "" {
+		target := -1
+		for visible := 1; visible < len(visibleNames); visible++ {
+			if visibleNames[visible] == spec.TargetName {
+				target = visible
+				break
+			}
+		}
+		if target < 0 {
+			return fmt.Errorf("undefined named backreference %q", spec.TargetName)
+		}
+		spec.TargetCapture = target
+		return nil
+	}
+	if spec.TargetNumber <= 0 || spec.TargetNumber >= len(visibleNames) {
+		return fmt.Errorf("invalid backreference %d", spec.TargetNumber)
+	}
+	spec.TargetCapture = spec.TargetNumber
+	return nil
 }
 
 func nativeRegexpSupported(re *syntax.Regexp) bool {

@@ -71,8 +71,8 @@ func TestCompileLiteralMatchesUnitSuffixPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for unit suffix pattern: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for unit suffix pattern: %#v", re.Pattern)
 	}
 
 	matches, err := re.FindStringSubmatch("47.2in")
@@ -92,8 +92,8 @@ func TestCompileLiteralMatchesNumericBackreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for numeric backreference: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for numeric backreference: %#v", re.Pattern)
 	}
 
 	matched, err := re.MatchString("aa")
@@ -124,8 +124,8 @@ func TestCompileLiteralMatchesNamedBackreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for named backreference: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for named backreference: %#v", re.Pattern)
 	}
 
 	matched, err := re.MatchString("aba")
@@ -154,13 +154,90 @@ func TestCompileLiteralMatchesNamedBackreference(t *testing.T) {
 	}
 }
 
+func TestCompileLiteralMatchesLookaheadBodyBackreference(t *testing.T) {
+	re, err := CompileLiteral(`(a)(?=b\1)`, "")
+	if err != nil {
+		t.Fatalf("CompileLiteral returned error: %v", err)
+	}
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookahead body backreference: %#v", re.Pattern)
+	}
+
+	matched, err := re.MatchString("aba")
+	if err != nil {
+		t.Fatalf("MatchString returned error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("MatchString returned false, want true")
+	}
+
+	result, err := re.Exec("aba")
+	if err != nil {
+		t.Fatalf("Exec returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatalf("Exec returned nil result")
+	}
+	if result.Full != "a" {
+		t.Fatalf("Exec Full = %q, want %q", result.Full, "a")
+	}
+	if result.Index != 0 {
+		t.Fatalf("Exec Index = %d, want 0", result.Index)
+	}
+	if len(result.Captures) != 2 || result.Captures[0] != "a" || result.Captures[1] != "a" {
+		t.Fatalf("Exec Captures = %#v, want [a a]", result.Captures)
+	}
+}
+
+func TestCompileLiteralMatchesLookaheadBodyInternalBackreference(t *testing.T) {
+	re, err := CompileLiteral(`(?=(a)\1)aa`, "")
+	if err != nil {
+		t.Fatalf("CompileLiteral returned error: %v", err)
+	}
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for internal lookahead backreference: %#v", re.Pattern)
+	}
+
+	matched, err := re.MatchString("aa")
+	if err != nil {
+		t.Fatalf("MatchString returned error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("MatchString returned false, want true")
+	}
+
+	result, err := re.Exec("aa")
+	if err != nil {
+		t.Fatalf("Exec returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatalf("Exec returned nil result")
+	}
+	if result.Full != "aa" {
+		t.Fatalf("Exec Full = %q, want %q", result.Full, "aa")
+	}
+	if len(result.Captures) != 2 || result.Captures[0] != "aa" || result.Captures[1] != "a" {
+		t.Fatalf("Exec Captures = %#v, want [aa a]", result.Captures)
+	}
+}
+
+func TestCompileLiteralRejectsLookbehindBodyBackreference(t *testing.T) {
+	_, err := CompileLiteral(`(a)(?<=\1)b`, "")
+	if err == nil {
+		t.Fatalf("CompileLiteral succeeded, want lookbehind-body-backreference error")
+	}
+	if !strings.Contains(err.Error(), "unsupported") && !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("CompileLiteral error = %v, want unsupported or invalid backreference message", err)
+	}
+}
+
 func TestCompileLiteralMatchesLookbehindBackreference(t *testing.T) {
 	re, err := CompileLiteral(`(?<=(a))\1`, "")
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for lookbehind backreference: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookbehind backreference: %#v", re.Pattern)
 	}
 
 	matched, err := re.MatchString("aa")
@@ -189,6 +266,16 @@ func TestCompileLiteralMatchesLookbehindBackreference(t *testing.T) {
 	}
 }
 
+func TestCompileLiteralRejectsInvalidLookaheadBodyBackreference(t *testing.T) {
+	_, err := CompileLiteral(`(?=(a)\2)aa`, "")
+	if err == nil {
+		t.Fatalf("CompileLiteral succeeded, want invalid-lookahead-backreference error")
+	}
+	if !strings.Contains(err.Error(), "invalid backreference") {
+		t.Fatalf("CompileLiteral error = %v, want invalid backreference message", err)
+	}
+}
+
 func TestCompileLiteralRejectsInvalidBackreference(t *testing.T) {
 	_, err := CompileLiteral(`(a)\2`, "")
 	if err == nil {
@@ -204,8 +291,8 @@ func TestCompileLiteralReplacesZeroWidthLookaheadPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for lookahead pattern: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookahead pattern: %#v", re.Pattern)
 	}
 
 	updated, err := re.ReplaceAllString("1234", ",")
@@ -222,8 +309,8 @@ func TestCompileLiteralMatchesLookbehindPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for lookbehind pattern: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookbehind pattern: %#v", re.Pattern)
 	}
 
 	matched, err := re.MatchString("abc")
@@ -257,8 +344,8 @@ func TestCompileLiteralMatchesNegativeLookbehindPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if re.Pattern == nil || re.Pattern.AST == nil || re.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for negative lookbehind pattern: %#v", re.Pattern)
+	if re.Pattern == nil || re.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for negative lookbehind pattern: %#v", re.Pattern)
 	}
 
 	matched, err := re.MatchString("cbc")
@@ -292,8 +379,8 @@ func TestCompileLiteralPreservesLookaroundCaptures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if lookahead.Pattern == nil || lookahead.Pattern.AST == nil || lookahead.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for lookahead capture pattern: %#v", lookahead.Pattern)
+	if lookahead.Pattern == nil || lookahead.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookahead capture pattern: %#v", lookahead.Pattern)
 	}
 
 	lookaheadResult, err := lookahead.Exec("ab")
@@ -311,8 +398,8 @@ func TestCompileLiteralPreservesLookaroundCaptures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileLiteral returned error: %v", err)
 	}
-	if lookbehind.Pattern == nil || lookbehind.Pattern.AST == nil || lookbehind.Pattern.re2x != nil {
-		t.Fatalf("CompileLiteral used fallback for lookbehind capture pattern: %#v", lookbehind.Pattern)
+	if lookbehind.Pattern == nil || lookbehind.Pattern.AST == nil {
+		t.Fatalf("CompileLiteral did not produce a native pattern for lookbehind capture pattern: %#v", lookbehind.Pattern)
 	}
 
 	lookbehindResult, err := lookbehind.Exec("abc")

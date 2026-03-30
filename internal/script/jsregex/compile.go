@@ -1,12 +1,9 @@
 package jsregex
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/dlclark/regexp2"
 )
 
 // CompilePattern lowers a pattern and flag set into an immutable compiled
@@ -17,35 +14,15 @@ func CompilePattern(pattern, flags string) (*CompiledPattern, error) {
 		return nil, err
 	}
 
-	ast, err := parseTranslatedPattern(translated, flags, true)
-	if err == nil {
-		return &CompiledPattern{
-			AST:    ast,
-			Source: pattern,
-			Flags:  flags,
-			Mode:   ast.Flags,
-		}, nil
-	}
-
-	if !errors.Is(err, ErrNativeUnsupported) {
+	ast, err := parsePattern(translated, flags, true)
+	if err != nil {
 		return nil, err
-	}
-
-	parsedFlags, flagErr := ParseFlags(flags)
-	if flagErr != nil {
-		return nil, flagErr
-	}
-	options := buildRegexp2Options(parsedFlags)
-	compiled2, extErr := regexp2.Compile(translated, options|regexp2.ECMAScript)
-	if extErr != nil {
-		return nil, fmt.Errorf("%v; regexp2 fallback failed: %v", err, extErr)
 	}
 	return &CompiledPattern{
 		AST:    ast,
 		Source: pattern,
 		Flags:  flags,
-		Mode:   parsedFlags,
-		re2x:   compiled2,
+		Mode:   ast.Flags,
 	}, nil
 }
 
@@ -57,24 +34,6 @@ func CompileLiteral(pattern, flags string) (*RegexpState, error) {
 		return nil, err
 	}
 	return compiled.NewState(), nil
-}
-
-func buildRegexp2Options(flags FlagSet) regexp2.RegexOptions {
-	var options regexp2.RegexOptions
-
-	if flags.IgnoreCase {
-		options |= regexp2.IgnoreCase
-	}
-	if flags.Multiline {
-		options |= regexp2.Multiline
-	}
-	if flags.DotAll {
-		options |= regexp2.Singleline
-	}
-	if flags.Unicode {
-		options |= regexp2.Unicode
-	}
-	return options
 }
 
 func expandRegExpUnicodeEscapes(pattern string) (string, error) {
@@ -108,50 +67,6 @@ func expandRegExpUnicodeEscapes(pattern string) (string, error) {
 		i += 6
 	}
 	return b.String(), nil
-}
-
-func regexpNeedsRegexp2(pattern string) bool {
-	inClass := false
-	escaped := false
-	for i := 0; i < len(pattern); i++ {
-		ch := pattern[i]
-		if escaped {
-			escaped = false
-			continue
-		}
-		switch ch {
-		case '\\':
-			if !inClass && i+2 < len(pattern) {
-				next := pattern[i+1]
-				switch {
-				case next >= '1' && next <= '9':
-					return true
-				case next == 'k' && pattern[i+2] == '<':
-					return true
-				}
-			}
-			escaped = true
-		case '[':
-			if !inClass {
-				inClass = true
-			}
-		case ']':
-			if inClass {
-				inClass = false
-			}
-		case '(':
-			if inClass || i+1 >= len(pattern) || pattern[i+1] != '?' || i+2 >= len(pattern) {
-				continue
-			}
-			if pattern[i+2] == '<' && i+3 < len(pattern) {
-				switch pattern[i+3] {
-				case '=', '!':
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func isHexDigit(ch byte) bool {

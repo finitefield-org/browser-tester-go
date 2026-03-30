@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -1139,7 +1138,7 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				}
 				return matches, nil
 			}
-			quoted, err := jsregex.CompileLiteral(regexp.QuoteMeta(ToJSString(args[0])), "")
+			quoted, err := jsregex.CompileLiteral(quoteRegexMeta(ToJSString(args[0])), "")
 			if err != nil {
 				return UndefinedValue(), err
 			}
@@ -2559,6 +2558,22 @@ func replaceStringAllWithCallback(host HostBindings, input, search string, repla
 	}
 	b.WriteString(input[last:])
 	return b.String(), nil
+}
+
+func quoteRegexMeta(text string) string {
+	if text == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(text) * 2)
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '\\', '.', '+', '*', '?', '(', ')', '|', '[', ']', '{', '}', '^', '$':
+			b.WriteByte('\\')
+		}
+		b.WriteByte(text[i])
+	}
+	return b.String()
 }
 
 func replaceRegexpWithCallback(host HostBindings, compiled *jsregex.RegexpState, input string, replacer Value, global bool) (string, error) {
