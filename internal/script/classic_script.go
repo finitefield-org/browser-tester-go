@@ -153,6 +153,8 @@ func (h skipHostBindings) DeleteHostReference(path string) error {
 
 func isSkippedHostReferencePreserved(path string) bool {
 	switch {
+	case path == "Array" || strings.HasPrefix(path, "Array."):
+		return true
 	case path == "String" || strings.HasPrefix(path, "String."):
 		return true
 	case path == "Number" || strings.HasPrefix(path, "Number."):
@@ -171,6 +173,8 @@ func isSkippedHostReferencePreserved(path string) bool {
 		return false
 	}
 }
+
+const browserArrayConstructorMarkerKey = "\x00browser-array-constructor"
 
 func sanitizeSkippedValue(value Value) Value {
 	switch value.Kind {
@@ -4167,6 +4171,52 @@ func (p *classicJSStatementParser) consumeIfBodySource() (string, error) {
 	if p.peekByte() == '{' {
 		return p.consumeBlockSource()
 	}
+	if keyword, ok := p.peekKeyword("if"); ok {
+		p.pos += len(keyword)
+		return p.consumeIfStatementSource()
+	}
+	return p.consumeStatementSource()
+}
+
+func (p *classicJSStatementParser) consumeIfStatementSource() (string, error) {
+	conditionSource, err := p.consumeParenthesizedSource("if")
+	if err != nil {
+		return "", err
+	}
+
+	consequentSource, err := p.consumeIfBranchSource()
+	if err != nil {
+		return "", err
+	}
+
+	source := "if (" + conditionSource + ") " + consequentSource
+
+	p.skipSpaceAndComments()
+	if keyword, ok := p.peekKeyword("else"); ok {
+		p.pos += len(keyword)
+		elseSource, err := p.consumeIfBranchSource()
+		if err != nil {
+			return "", err
+		}
+		source += " else " + elseSource
+	}
+
+	return source, nil
+}
+
+func (p *classicJSStatementParser) consumeIfBranchSource() (string, error) {
+	p.skipSpaceAndComments()
+	if p.peekByte() == '{' {
+		blockSource, err := p.consumeBlockSource()
+		if err != nil {
+			return "", err
+		}
+		return "{" + blockSource + "}", nil
+	}
+	if keyword, ok := p.peekKeyword("if"); ok {
+		p.pos += len(keyword)
+		return p.consumeIfStatementSource()
+	}
 	return p.consumeStatementSource()
 }
 
@@ -7892,7 +7942,7 @@ func scanClassicJSDelimitedExpressionTerminator(scanner *classicJSStatementParse
 	return scanner.pos, nil
 }
 
-func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser, stopAtColon bool) (int, error) {
+func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser, allowEOF bool) (int, error) {
 	var quote byte
 	var escape bool
 	var lineComment bool
@@ -7900,10 +7950,8 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 	var parenDepth int
 	var braceDepth int
 	var bracketDepth int
-	conditionalFrames := make([]classicJSConditionalBranchFrame, 0, 4)
-	if stopAtColon {
-		conditionalFrames = append(conditionalFrames, classicJSConditionalBranchFrame{})
-	}
+	conditionalFrames := make([]classicJSConditionalBranchFrame, 1, 4)
+	conditionalFrames[0] = classicJSConditionalBranchFrame{}
 	canStartRegex := true
 
 	for !scanner.eof() {
@@ -8036,18 +8084,13 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 				top := conditionalFrames[len(conditionalFrames)-1]
 				if top.parenDepth == parenDepth && top.braceDepth == braceDepth && top.bracketDepth == bracketDepth {
 					conditionalFrames = conditionalFrames[:len(conditionalFrames)-1]
-					if stopAtColon && len(conditionalFrames) == 0 {
+					if len(conditionalFrames) == 0 {
 						return scanner.pos, nil
 					}
 					scanner.pos++
 					canStartRegex = true
 					continue
 				}
-			}
-			if stopAtColon {
-				scanner.pos++
-				canStartRegex = true
-				continue
 			}
 			scanner.pos++
 			canStartRegex = true
@@ -8093,7 +8136,10 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 	if blockComment {
 		return scanner.pos, NewError(ErrorKindParse, "unterminated block comment in conditional expression")
 	}
-	if len(conditionalFrames) > 0 {
+	if len(conditionalFrames) > 1 {
+		return scanner.pos, NewError(ErrorKindParse, "unterminated conditional expression in this bounded classic-JS slice")
+	}
+	if len(conditionalFrames) == 1 && !allowEOF {
 		return scanner.pos, NewError(ErrorKindParse, "unterminated conditional expression in this bounded classic-JS slice")
 	}
 	return scanner.pos, nil
@@ -8482,7 +8528,7 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 	branchStart := p.pos
 	skip := *p
 	skip.pos = branchStart
-	if _, err := scanClassicJSConditionalBranchTerminator(&skip, true); err != nil {
+	if _, err := scanClassicJSConditionalBranchTerminator(&skip, false); err != nil {
 		return jsValue{}, err
 	}
 	skip.skipSpaceAndComments()
@@ -8501,7 +8547,7 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 			return jsValue{}, NewError(ErrorKindParse, "conditional expressions require a `:` alternate branch in this bounded classic-JS slice")
 		}
 		skipAlternate := *p
-		if _, err := scanClassicJSConditionalBranchTerminator(&skipAlternate, false); err != nil {
+		if _, err := scanClassicJSConditionalBranchTerminator(&skipAlternate, true); err != nil {
 			return jsValue{}, err
 		}
 		p.pos = skipAlternate.pos
@@ -10332,7 +10378,7 @@ func lookupObjectProperty(entries []ObjectEntry, name string) (Value, bool) {
 }
 
 func classicJSIsInternalObjectKey(name string) bool {
-	return strings.HasPrefix(name, "\x00classic-js-setter:") || strings.HasPrefix(name, "\x00classic-js-instanceof:") || strings.HasPrefix(name, "\x00classic-js-static-prototype:") || strings.HasPrefix(name, classicJSRegExpInternalPrefix) || strings.HasPrefix(name, browserDateInternalPrefix) || strings.HasPrefix(name, browserTypedArrayInternalPrefix)
+	return strings.HasPrefix(name, "\x00classic-js-setter:") || strings.HasPrefix(name, "\x00classic-js-instanceof:") || strings.HasPrefix(name, "\x00classic-js-static-prototype:") || strings.HasPrefix(name, classicJSRegExpInternalPrefix) || strings.HasPrefix(name, browserDateInternalPrefix) || strings.HasPrefix(name, browserTypedArrayInternalPrefix) || name == browserArrayConstructorMarkerKey
 }
 
 func classicJSInstanceMarkerKey(marker string) string {
@@ -10527,21 +10573,17 @@ func (p *classicJSStatementParser) replaceObjectBindings(oldValue Value, newValu
 	if p.env != nil {
 		replaced += p.env.replaceObjectBindings(oldValue, newValue)
 	}
-	if p.moduleExports == nil {
-		return replaced
-	}
 	oldPtr := reflect.ValueOf(oldValue.Object).Pointer()
-	if oldPtr == 0 {
-		return replaced
-	}
-	replacement := newValue.value
-	for name, value := range p.moduleExports {
-		updated, changed := replaceObjectReferencesInValue(value, oldPtr, replacement)
-		if !changed {
-			continue
+	if oldPtr != 0 && p.moduleExports != nil {
+		replacement := newValue.value
+		for name, value := range p.moduleExports {
+			updated, changed := replaceObjectReferencesInValue(value, oldPtr, replacement)
+			if !changed {
+				continue
+			}
+			p.moduleExports[name] = updated
+			replaced++
 		}
-		p.moduleExports[name] = updated
-		replaced++
 	}
 	if p.bindingUpdateParent != nil {
 		replaced += p.bindingUpdateParent.ReplaceObjectBindings(oldValue, newValue.value)
@@ -10568,16 +10610,18 @@ func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue
 	if p.env != nil {
 		replaced += p.env.replaceArrayBindings(oldValue, newValue)
 	}
-	if p.moduleExports == nil {
-		return replaced
-	}
-	for name, value := range p.moduleExports {
-		updated, changed := replaceArrayReferencesInValue(value, oldPtr, newValue.value)
-		if !changed {
-			continue
+	if p.moduleExports != nil {
+		for name, value := range p.moduleExports {
+			updated, changed := replaceArrayReferencesInValue(value, oldPtr, newValue.value)
+			if !changed {
+				continue
+			}
+			p.moduleExports[name] = updated
+			replaced++
 		}
-		p.moduleExports[name] = updated
-		replaced++
+	}
+	if p.bindingUpdateParent != nil {
+		replaced += p.bindingUpdateParent.ReplaceArrayBindings(oldValue, newValue.value)
 	}
 	return replaced
 }
@@ -10592,6 +10636,8 @@ func (p *classicJSStatementParser) ReplaceArrayBindings(oldValue Value, newValue
 func classicJSInstanceOf(left Value, right Value) (bool, error) {
 	if right.Kind == ValueKindHostReference && right.HostReferenceKind == HostReferenceKindConstructor {
 		switch right.HostReferencePath {
+		case "Array":
+			return left.Kind == ValueKindArray, nil
 		case "Date":
 			if _, ok := BrowserDateTimestamp(left); ok {
 				return true, nil
@@ -10637,6 +10683,11 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 	}
 	if right.Kind != ValueKindObject {
 		if right.Kind == ValueKindFunction {
+			if right.Function != nil {
+				if _, ok := lookupObjectProperty(right.Function.objectProps, browserArrayConstructorMarkerKey); ok {
+					return left.Kind == ValueKindArray, nil
+				}
+			}
 			if right.Function == nil || !right.Function.constructible {
 				return false, NewError(ErrorKindRuntime, "relational `instanceof` requires a class object or constructible function value on the right in this bounded classic-JS slice")
 			}
@@ -12144,6 +12195,15 @@ func (p *classicJSStatementParser) parseMemberAccessName() (string, error) {
 }
 
 func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue, error) {
+	if p == nil {
+		return jsValue{}, NewError(ErrorKindRuntime, "classic-JS parser is unavailable")
+	}
+	frame := *p
+	frame.bindingUpdateParent = p
+	return frame.invokeFrame(callee, args)
+}
+
+func (p *classicJSStatementParser) invokeFrame(callee jsValue, args []Value) (jsValue, error) {
 	restoreHost := setCurrentInvokeHost(p.host)
 	defer restoreHost()
 
@@ -12184,9 +12244,6 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 			if callee.value.Function == nil {
 				return jsValue{}, NewError(ErrorKindRuntime, "cannot call non-callable value in this bounded classic-JS slice")
 			}
-			if p.bindingUpdateParent != nil {
-				return p.invokeDetached(callee, args)
-			}
 			return p.invokeArrowFunction(callee.value.Function, args, callee)
 		case ValueKindHostReference:
 			if p.host == nil {
@@ -12213,9 +12270,6 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 			if resolved.Function == nil {
 				return jsValue{}, NewError(ErrorKindRuntime, fmt.Sprintf("cannot call non-callable browser surface %q in this bounded classic-JS slice", callee.value.HostReferencePath))
 			}
-			if p.bindingUpdateParent != nil {
-				return p.invokeDetached(callee, args)
-			}
 			return p.invokeArrowFunction(resolved.Function, args, callee)
 		default:
 			return jsValue{}, NewError(ErrorKindRuntime, "cannot call non-callable value in this bounded classic-JS slice")
@@ -12241,22 +12295,6 @@ func (p *classicJSStatementParser) invoke(callee jsValue, args []Value) (jsValue
 	default:
 		return jsValue{}, NewError(ErrorKindUnsupported, "unsupported call expression in this bounded classic-JS slice")
 	}
-}
-
-func (p *classicJSStatementParser) invokeDetached(callee jsValue, args []Value) (jsValue, error) {
-	fresh := &classicJSStatementParser{
-		host:                    p.host,
-		privateClass:            p.privateClass,
-		privateFieldPrefix:      p.privateFieldPrefix,
-		newTarget:               p.newTarget,
-		hasNewTarget:            p.hasNewTarget,
-		allowUnknownIdentifiers: p.allowUnknownIdentifiers,
-		allowAwait:              p.allowAwait,
-		allowYield:              p.allowYield,
-		allowReturn:             p.allowReturn,
-		stepLimit:               p.stepLimit,
-	}
-	return fresh.invoke(callee, args)
 }
 
 func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *classicJSEnvironment, params []classicJSFunctionParameter, restName string, args []Value, allowAwait bool, privateClass *classicJSClassDefinition) error {
@@ -12349,9 +12387,6 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	}()
 
 	callEnv := fn.env.clone()
-	if p.bindingUpdateParent != nil {
-		callEnv = fn.env.cloneDetached()
-	}
 	if fn.name != "" {
 		if err := callEnv.initializeBinding(fn.name, scalarJSValue(FunctionValue(fn)), false); err != nil {
 			return jsValue{}, err

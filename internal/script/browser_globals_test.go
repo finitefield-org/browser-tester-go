@@ -2,6 +2,7 @@ package script
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -150,6 +151,30 @@ func (h *browserBootstrapHost) ResolveHostReference(path string) (Value, error) 
 					return StringValue("1.23"), nil
 				})},
 			}), nil
+		}), nil
+	case "Number.EPSILON":
+		return NumberValue(2.220446049250313e-16), nil
+	case "Number.MAX_VALUE":
+		return NumberValue(1.7976931348623157e308), nil
+	case "Number.MIN_VALUE":
+		return NumberValue(5e-324), nil
+	case "Number.MAX_SAFE_INTEGER":
+		return NumberValue(9007199254740991), nil
+	case "Number.MIN_SAFE_INTEGER":
+		return NumberValue(-9007199254740991), nil
+	case "Number.isSafeInteger":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return UndefinedValue(), fmt.Errorf("Number.isSafeInteger expects 1 argument")
+			}
+			if args[0].Kind != ValueKindNumber {
+				return BoolValue(false), nil
+			}
+			value := args[0].Number
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return BoolValue(false), nil
+			}
+			return BoolValue(math.Trunc(value) == value && math.Abs(value) <= 9007199254740991), nil
 		}), nil
 	case "localStorage.setItem":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -357,6 +382,206 @@ func TestDispatchSupportsBuiltinMapForEach(t *testing.T) {
 	}
 	if got, want := strings.Join(host.echoes, "|"), "ctx:sku-1:12:12|ctx:sku-2:5:5"; got != want {
 		t.Fatalf("Dispatch(Map.forEach) host echoes = %q, want %q", got, want)
+	}
+}
+
+func TestDispatchSupportsBuiltinMapAndSetIterators(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+		"Set": BuiltinSetValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const map = new Map([["left", 1], ["right", 2]]);
+			const set = new Set(["alpha", "beta"]);
+			const mapValues = map.values();
+			const mapKeys = map.keys();
+			const mapEntries = map.entries();
+			const setValues = set.values();
+			const setKeys = set.keys();
+			const setEntries = set.entries();
+			[
+				"" + mapValues.next().value,
+				"" + mapValues.next().value,
+				"" + mapKeys.next().value,
+				"" + mapKeys.next().done,
+				mapEntries.next().value.join("="),
+				mapEntries.next().value.join("="),
+				"" + mapEntries.next().done,
+				"" + setValues.next().value,
+				"" + setKeys.next().value,
+				setEntries.next().value.join("="),
+				setEntries.next().value.join("="),
+				"" + setEntries.next().done,
+			].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Map and Set iterators) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Map and Set iterators) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != `1|2|left|false|left=1|right=2|true|alpha|alpha|alpha=alpha|beta=beta|true` {
+		t.Fatalf("Dispatch(Map and Set iterators) value = %q, want Map and Set iterator parity", result.Value.String)
+	}
+}
+
+func TestDispatchSupportsNumberSafeIntegerSurface(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"Number": HostObjectReference("Number"),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			[
+				Number.EPSILON === 2.220446049250313e-16,
+				Number.MAX_VALUE === 1.7976931348623157e308,
+				Number.MIN_VALUE === 5e-324,
+				Number.MAX_SAFE_INTEGER === 9007199254740991,
+				Number.MIN_SAFE_INTEGER === -9007199254740991,
+				Number.isSafeInteger(Number.MAX_SAFE_INTEGER),
+				Number.isSafeInteger(Number.MAX_SAFE_INTEGER + 1),
+				Number.isSafeInteger(1.5),
+				Number.isSafeInteger("42"),
+			].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Number safe-integer surface) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Number safe-integer surface) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "true|true|true|true|true|true|false|false|false" {
+		t.Fatalf("Dispatch(Number safe-integer surface) value = %q, want safe-integer surface parity", result.Value.String)
+	}
+}
+
+func TestDispatchRejectsNumberIsSafeIntegerArityMismatch(t *testing.T) {
+	host := &browserBootstrapHost{}
+	runtime := NewRuntimeWithBindings(host, map[string]Value{
+		"Number": HostObjectReference("Number"),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `Number.isSafeInteger(1, 2)`})
+	if err == nil {
+		t.Fatalf("Dispatch(Number.isSafeInteger(1, 2)) error = nil, want arity failure")
+	}
+	if !strings.Contains(err.Error(), "Number.isSafeInteger expects 1 argument") {
+		t.Fatalf("Dispatch(Number.isSafeInteger(1, 2)) error = %v, want Number.isSafeInteger arity failure", err)
+	}
+}
+
+func TestDispatchSupportsBuiltinMapClear(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const map = new Map([["left", 1], ["right", 2]]);
+			const cleared = map.clear();
+			[map.size, map.has("left"), map.has("right"), typeof cleared].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Map.clear) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Map.clear) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "0|false|false|undefined" {
+		t.Fatalf("Dispatch(Map.clear) value = %q, want %q", result.Value.String, "0|false|false|undefined")
+	}
+}
+
+func TestDispatchSupportsBuiltinSetClear(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Set": BuiltinSetValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const set = new Set(["left", "right"]);
+			const cleared = set.clear();
+			[set.size, set.has("left"), set.has("right"), typeof cleared].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Set.clear) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Set.clear) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "0|false|false|undefined" {
+		t.Fatalf("Dispatch(Set.clear) value = %q, want %q", result.Value.String, "0|false|false|undefined")
+	}
+}
+
+func TestDispatchRejectsBuiltinMapAndSetIteratorsWithArguments(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+		"Set": BuiltinSetValue(),
+	})
+
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "map-values",
+			source: `new Map().values(1)`,
+			want:   "Map.values expects no arguments",
+		},
+		{
+			name:   "set-entries",
+			source: `new Set().entries(1)`,
+			want:   "Set.entries expects no arguments",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runtime.Dispatch(DispatchRequest{Source: tc.source})
+			if err == nil {
+				t.Fatalf("Dispatch(%s) error = nil, want arity failure", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Dispatch(%s) error = %v, want message containing %q", tc.name, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDispatchRejectsBuiltinMapClearWithArguments(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `new Map().clear(1)`})
+	if err == nil {
+		t.Fatalf("Dispatch(new Map().clear(1)) error = nil, want arity failure")
+	}
+	if !strings.Contains(err.Error(), "Map.clear expects no arguments") {
+		t.Fatalf("Dispatch(new Map().clear(1)) error = %v, want clear arity failure", err)
+	}
+}
+
+func TestDispatchRejectsBuiltinSetClearWithArguments(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Set": BuiltinSetValue(),
+	})
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `new Set().clear(1)`})
+	if err == nil {
+		t.Fatalf("Dispatch(new Set().clear(1)) error = nil, want arity failure")
+	}
+	if !strings.Contains(err.Error(), "Set.clear expects no arguments") {
+		t.Fatalf("Dispatch(new Set().clear(1)) error = %v, want clear arity failure", err)
 	}
 }
 

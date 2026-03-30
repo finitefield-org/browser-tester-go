@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"browsertester/internal/collation"
+	"golang.org/x/text/unicode/norm"
 )
 
 func (p *classicJSStatementParser) invokeCallableValue(callee Value, args []Value, receiver Value, hasReceiver bool) (Value, error) {
@@ -459,7 +460,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 
 			removed := append([]Value(nil), value.Array[start:start+deleteCount]...)
-			insert := args[2:]
+			var insert []Value
+			if len(args) > 2 {
+				insert = args[2:]
+			}
 
 			updated := make([]Value, 0, length-deleteCount+len(insert))
 			updated = append(updated, value.Array[:start]...)
@@ -686,6 +690,14 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 	case "trimEnd":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(strings.TrimRightFunc(value.String, unicode.IsSpace)), nil
+		}), true, nil
+	case "normalize":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			normalized, err := browserStringNormalize(value.String, args)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return StringValue(normalized), nil
 		}), true, nil
 	case "toLowerCase":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -1188,6 +1200,29 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 		}), true, nil
 	}
 	return UndefinedValue(), false, nil
+}
+
+func browserStringNormalize(text string, args []Value) (string, error) {
+	form := "NFC"
+	if len(args) > 0 && args[0].Kind != ValueKindUndefined {
+		if args[0].Kind == ValueKindSymbol {
+			return "", NewError(ErrorKindRuntime, "String.normalize form cannot be a Symbol")
+		}
+		form = ToJSString(args[0])
+	}
+
+	switch form {
+	case "NFC":
+		return norm.NFC.String(text), nil
+	case "NFD":
+		return norm.NFD.String(text), nil
+	case "NFKC":
+		return norm.NFKC.String(text), nil
+	case "NFKD":
+		return norm.NFKD.String(text), nil
+	default:
+		return "", NewError(ErrorKindRuntime, "String.normalize form must be NFC, NFD, NFKC, or NFKD")
+	}
 }
 
 func repeatStringToRuneLength(fill string, targetLength int) string {

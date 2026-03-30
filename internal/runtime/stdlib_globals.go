@@ -16,12 +16,21 @@ import (
 	"browsertester/internal/script"
 )
 
+const browserArrayConstructorMarkerKey = "\x00browser-array-constructor"
+
 func resolveStdlibReference(session *Session, store *dom.Store, path string) (script.Value, bool, error) {
 	switch {
 	case path == "Array":
-		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserArrayConstructor(args)
-		}), true, nil
+		value := script.NativeConstructibleNamedFunctionValue("Array",
+			func(args []script.Value) (script.Value, error) {
+				return browserArrayConstructor(args)
+			},
+			func(args []script.Value) (script.Value, error) {
+				return browserArrayConstructor(args)
+			},
+		)
+		script.SetFunctionOwnProperty(value, browserArrayConstructorMarkerKey, script.BoolValue(true))
+		return value, true, nil
 	case strings.HasPrefix(path, "Array."):
 		value, err := resolveArrayReference(session, store, strings.TrimPrefix(path, "Array."))
 		return value, true, err
@@ -145,6 +154,10 @@ func resolveArrayReference(session *Session, store *dom.Store, path string) (scr
 			}
 			return script.BoolValue(args[0].Kind == script.ValueKindArray), nil
 		}), nil
+	case "prototype":
+		return script.HostObjectReference("Array.prototype"), nil
+	case "prototype.constructor":
+		return script.HostConstructorReference("Array"), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "Array."+path))
 }
@@ -301,6 +314,16 @@ func resolveJSONReference(path string) (script.Value, error) {
 
 func resolveNumberReference(path string) (script.Value, error) {
 	switch strings.TrimPrefix(path, ".") {
+	case "EPSILON":
+		return script.NumberValue(math.Ldexp(1, -52)), nil
+	case "MAX_VALUE":
+		return script.NumberValue(math.MaxFloat64), nil
+	case "MIN_VALUE":
+		return script.NumberValue(math.SmallestNonzeroFloat64), nil
+	case "MAX_SAFE_INTEGER":
+		return script.NumberValue(9007199254740991), nil
+	case "MIN_SAFE_INTEGER":
+		return script.NumberValue(-9007199254740991), nil
 	case "parseInt":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserParseInt(args)
@@ -316,6 +339,10 @@ func resolveNumberReference(path string) (script.Value, error) {
 	case "isNaN":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserIsNaN(args)
+		}), nil
+	case "isSafeInteger":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserIsSafeInteger(args)
 		}), nil
 	case "isFinite":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -433,6 +460,20 @@ func browserIsNaN(args []script.Value) (script.Value, error) {
 		return script.BoolValue(false), nil
 	}
 	return script.BoolValue(math.IsNaN(args[0].Number)), nil
+}
+
+func browserIsSafeInteger(args []script.Value) (script.Value, error) {
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("Number.isSafeInteger expects 1 argument")
+	}
+	if args[0].Kind != script.ValueKindNumber {
+		return script.BoolValue(false), nil
+	}
+	value := args[0].Number
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return script.BoolValue(false), nil
+	}
+	return script.BoolValue(math.Trunc(value) == value && math.Abs(value) <= 9007199254740991), nil
 }
 
 func browserEncodeURIComponent(args []script.Value) (script.Value, error) {

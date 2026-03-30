@@ -206,6 +206,24 @@ func TestSessionBootstrapsNumberParseFloatSurface(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsArrayConstructorAndInstanceof(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Array(1, 2).length, new Array(2).length, [] instanceof Array, new Array(3) instanceof Array, Array.prototype.constructor === Array].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "2|2|true|true|true" {
+		t.Fatalf("TextContent(#out) = %q, want 2|2|true|true|true", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Array constructor bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNumberIsIntegerSurface(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Number.isInteger(42), Number.isInteger(1.5), Number.isInteger(Number.NaN), Number.isInteger("42")].join("|")</script></main>`
 
@@ -239,6 +257,24 @@ func TestSessionBootstrapsNumberIsNaNSurface(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Number.isNaN bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsNumberSafeIntegerSurface(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Number.EPSILON === 2.220446049250313e-16, Number.MAX_VALUE === 1.7976931348623157e308, Number.MIN_VALUE === 5e-324, Number.MAX_SAFE_INTEGER === 9007199254740991, Number.MIN_SAFE_INTEGER === -9007199254740991, Number.isSafeInteger(Number.MAX_SAFE_INTEGER), Number.isSafeInteger(Number.MAX_SAFE_INTEGER + 1)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|true|true|true|true|true|false" {
+		t.Fatalf("TextContent(#out) = %q, want Number safe-integer surface", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Number safe-integer bootstrap", got)
 	}
 }
 
@@ -2375,6 +2411,42 @@ func TestSessionBootstrapsClickHandlerCanUseMapForEachHostBindings(t *testing.T)
 	}
 }
 
+func TestSessionBootstrapsMapClearEmptiesEntries(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const map = new Map([["left", 1], ["right", 2]]); const cleared = map.clear(); document.getElementById("out").textContent = [map.size, map.has("left"), map.has("right"), typeof cleared].join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0|false|false|undefined" {
+		t.Fatalf("TextContent(#out) = %q, want 0|false|false|undefined", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Map.clear bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsSetClearEmptiesEntries(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const set = new Set(["left", "right"]); const cleared = set.clear(); document.getElementById("out").textContent = [set.size, set.has("left"), set.has("right"), typeof cleared].join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0|false|false|undefined" {
+		t.Fatalf("TextContent(#out) = %q, want 0|false|false|undefined", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Set.clear bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsClickHandlerWithTimersCanUseStorageAndClassList(t *testing.T) {
 	const rawHTML = `<main><button id="btn" type="button">go</button><div id="toast" class="error"></div><div id="out"></div><script>let saveTimer = null; let toastTimer = null; function saveJson(key, value) { localStorage.setItem(key, JSON.stringify(value)); } function renderAll() { saveJson("ui", { mode: "annual" }); document.getElementById("out").textContent = localStorage.getItem("ui"); } function schedulePersist() { clearTimeout(saveTimer); saveTimer = window.setTimeout(() => { saveJson("workspace", { foo: "bar" }); }, 1); } function showToast(message) { clearTimeout(toastTimer); const toast = document.getElementById("toast"); toast.textContent = message; toast.classList.remove("hidden", "error"); toastTimer = window.setTimeout(() => { toast.classList.add("hidden"); toast.classList.remove("error"); }, 1); } document.getElementById("btn").addEventListener("click", () => { renderAll(); schedulePersist(); showToast("done"); });</script></main>`
 
@@ -2894,6 +2966,24 @@ func TestSessionBootstrapsIntlNumberFormatMinimumFractionDigits(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsIntlNumberFormatFractionDigitRounding(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(97.1259), new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(1.1111)].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "97.13|1.111" {
+		t.Fatalf("TextContent(#out) = %q, want 97.13|1.111", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat fraction rounding bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNumberToLocaleString(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = (600).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })</script></main>`
 
@@ -2909,6 +2999,24 @@ func TestSessionBootstrapsNumberToLocaleString(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Number.toLocaleString bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsNumberToLocaleStringFractionDigitRounding(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [(97.1259).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), (1.1111).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "97.13|1.111" {
+		t.Fatalf("TextContent(#out) = %q, want 97.13|1.111", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Number.toLocaleString fraction rounding bootstrap", got)
 	}
 }
 
@@ -4195,6 +4303,24 @@ func TestSessionBootstrapsTemplateURLSearchParamsMemberParity(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after URLSearchParams member parity bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsMapAndSetIteratorMethods(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const map = new Map([["left", 1], ["right", 2]]); const set = new Set(["alpha", "beta"]); document.getElementById("out").textContent = [JSON.stringify(Array.from(map.values())), JSON.stringify(Array.from(map.keys())), JSON.stringify(Array.from(map.entries())), JSON.stringify(Array.from(set.values())), JSON.stringify(Array.from(set.keys())), JSON.stringify(Array.from(set.entries()))].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `[1,2]|["left","right"]|[["left",1],["right",2]]|["alpha","beta"]|["alpha","beta"]|[["alpha","alpha"],["beta","beta"]]` {
+		t.Fatalf("TextContent(#out) = %q, want Map and Set iterator parity", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Map and Set iterator bootstrap", got)
 	}
 }
 

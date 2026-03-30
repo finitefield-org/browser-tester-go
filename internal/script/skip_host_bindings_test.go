@@ -2,6 +2,7 @@ package script
 
 import (
 	"fmt"
+	"math"
 	"testing"
 )
 
@@ -37,6 +38,12 @@ func (h *skipHostBindingsReproHost) ResolveHostReference(path string) (Value, er
 			}
 			return StringValue(ToJSString(args[0])), nil
 		}), nil
+	case "Array":
+		return NativeConstructibleNamedFunctionValue("Array", func(args []Value) (Value, error) {
+			return skipHostBindingsArrayConstructor(args)
+		}, func(args []Value) (Value, error) {
+			return skipHostBindingsArrayConstructor(args)
+		}), nil
 	case "Intl.NumberFormat":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return ObjectValue([]ObjectEntry{
@@ -56,6 +63,22 @@ func (h *skipHostBindingsReproHost) ResolveHostReference(path string) (Value, er
 	}
 }
 
+func skipHostBindingsArrayConstructor(args []Value) (Value, error) {
+	if len(args) == 1 && args[0].Kind == ValueKindNumber {
+		if math.IsNaN(args[0].Number) || math.IsInf(args[0].Number, 0) {
+			return UndefinedValue(), fmt.Errorf("Array length must be a finite number")
+		}
+		if math.Trunc(args[0].Number) != args[0].Number {
+			return UndefinedValue(), fmt.Errorf("Array length must be an integer")
+		}
+		if args[0].Number < 0 {
+			return UndefinedValue(), fmt.Errorf("Array length must be non-negative")
+		}
+		return ArrayValue(make([]Value, int(args[0].Number))), nil
+	}
+	return ArrayValue(args), nil
+}
+
 func TestSkipHostBindingsPreservePureHostConstructorsInShortCircuit(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -68,6 +91,12 @@ func TestSkipHostBindingsPreservePureHostConstructorsInShortCircuit(t *testing.T
 			source:       `host.echo("yes" || String(null).trim())`,
 			want:         "yes",
 			wantResolved: "String",
+		},
+		{
+			name:         "array-constructor",
+			source:       `host.echo("yes" || Array(1, 2).length)`,
+			want:         "yes",
+			wantResolved: "Array",
 		},
 		{
 			name:         "intl-number-format",

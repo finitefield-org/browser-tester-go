@@ -490,6 +490,14 @@ func classicJSMapVirtualProperty(value Value, name string) (Value, bool, error) 
 			}
 			return BoolValue(value.MapState.delete(key)), nil
 		}), true, nil
+	case "clear":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return UndefinedValue(), fmt.Errorf("Map.clear expects no arguments")
+			}
+			value.MapState.entries = nil
+			return UndefinedValue(), nil
+		}), true, nil
 	case "forEach":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -509,6 +517,12 @@ func classicJSMapVirtualProperty(value Value, name string) (Value, bool, error) 
 			}
 			return UndefinedValue(), nil
 		}), true, nil
+	case "keys":
+		return classicJSMapIteratorMethodValue("keys", value.MapState.entryList(), classicJSMapIterationKeys), true, nil
+	case "values":
+		return classicJSMapIteratorMethodValue("values", value.MapState.entryList(), classicJSMapIterationValues), true, nil
+	case "entries":
+		return classicJSMapIteratorMethodValue("entries", value.MapState.entryList(), classicJSMapIterationEntries), true, nil
 	default:
 		return UndefinedValue(), false, nil
 	}
@@ -516,11 +530,56 @@ func classicJSMapVirtualProperty(value Value, name string) (Value, bool, error) 
 
 func classicJSMapHasVirtualProperty(name string) bool {
 	switch name {
-	case "constructor", "size", "get", "set", "has", "delete", "forEach":
+	case "constructor", "size", "get", "set", "has", "delete", "clear", "forEach", "keys", "values", "entries":
 		return true
 	default:
 		return false
 	}
+}
+
+type classicJSMapIterationMode uint8
+
+const (
+	classicJSMapIterationValues classicJSMapIterationMode = iota
+	classicJSMapIterationKeys
+	classicJSMapIterationEntries
+)
+
+func classicJSMapIteratorMethodValue(method string, entries []classicJSMapEntry, mode classicJSMapIterationMode) Value {
+	snapshot := append([]classicJSMapEntry(nil), entries...)
+	return NativeFunctionValue(func(args []Value) (Value, error) {
+		if len(args) != 0 {
+			return UndefinedValue(), fmt.Errorf("Map.%s expects no arguments", method)
+		}
+		return classicJSMapIteratorValue(snapshot, mode), nil
+	})
+}
+
+func classicJSMapIteratorValue(entries []classicJSMapEntry, mode classicJSMapIterationMode) Value {
+	index := 0
+	return ObjectValue([]ObjectEntry{
+		{
+			Key: "next",
+			Value: NativeFunctionValue(func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return UndefinedValue(), fmt.Errorf("Map iterator next expects no arguments")
+				}
+				if index >= len(entries) {
+					return classicJSIteratorResult(UndefinedValue(), true), nil
+				}
+				current := entries[index]
+				index++
+				switch mode {
+				case classicJSMapIterationKeys:
+					return classicJSIteratorResult(current.key, false), nil
+				case classicJSMapIterationEntries:
+					return classicJSIteratorResult(ArrayValue([]Value{current.key, current.value}), false), nil
+				default:
+					return classicJSIteratorResult(current.value, false), nil
+				}
+			}),
+		},
+	})
 }
 
 func classicJSSetVirtualProperty(value Value, name string) (Value, bool, error) {
@@ -558,6 +617,20 @@ func classicJSSetVirtualProperty(value Value, name string) (Value, bool, error) 
 			}
 			return BoolValue(value.SetState.delete(next)), nil
 		}), true, nil
+	case "clear":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return UndefinedValue(), fmt.Errorf("Set.clear expects no arguments")
+			}
+			value.SetState.entries = nil
+			return UndefinedValue(), nil
+		}), true, nil
+	case "keys":
+		return classicJSSetIteratorMethodValue("keys", value.SetState.entryList(), classicJSSetIterationValues), true, nil
+	case "values":
+		return classicJSSetIteratorMethodValue("values", value.SetState.entryList(), classicJSSetIterationValues), true, nil
+	case "entries":
+		return classicJSSetIteratorMethodValue("entries", value.SetState.entryList(), classicJSSetIterationEntries), true, nil
 	default:
 		return UndefinedValue(), false, nil
 	}
@@ -565,9 +638,65 @@ func classicJSSetVirtualProperty(value Value, name string) (Value, bool, error) 
 
 func classicJSSetHasVirtualProperty(name string) bool {
 	switch name {
-	case "constructor", "size", "add", "has", "delete":
+	case "constructor", "size", "add", "has", "delete", "clear", "keys", "values", "entries":
 		return true
 	default:
 		return false
 	}
+}
+
+type classicJSSetIterationMode uint8
+
+const (
+	classicJSSetIterationValues classicJSSetIterationMode = iota
+	classicJSSetIterationEntries
+)
+
+func (s *classicJSSetState) entryList() []Value {
+	if s == nil || len(s.entries) == 0 {
+		return nil
+	}
+	cloned := make([]Value, len(s.entries))
+	copy(cloned, s.entries)
+	return cloned
+}
+
+func classicJSSetIteratorMethodValue(method string, entries []Value, mode classicJSSetIterationMode) Value {
+	snapshot := append([]Value(nil), entries...)
+	return NativeFunctionValue(func(args []Value) (Value, error) {
+		if len(args) != 0 {
+			return UndefinedValue(), fmt.Errorf("Set.%s expects no arguments", method)
+		}
+		return classicJSSetIteratorValue(snapshot, mode), nil
+	})
+}
+
+func classicJSSetIteratorValue(entries []Value, mode classicJSSetIterationMode) Value {
+	index := 0
+	return ObjectValue([]ObjectEntry{
+		{
+			Key: "next",
+			Value: NativeFunctionValue(func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return UndefinedValue(), fmt.Errorf("Set iterator next expects no arguments")
+				}
+				if index >= len(entries) {
+					return classicJSIteratorResult(UndefinedValue(), true), nil
+				}
+				current := entries[index]
+				index++
+				if mode == classicJSSetIterationEntries {
+					return classicJSIteratorResult(ArrayValue([]Value{current, current}), false), nil
+				}
+				return classicJSIteratorResult(current, false), nil
+			}),
+		},
+	})
+}
+
+func classicJSIteratorResult(value Value, done bool) Value {
+	return ObjectValue([]ObjectEntry{
+		{Key: "value", Value: value},
+		{Key: "done", Value: BoolValue(done)},
+	})
 }

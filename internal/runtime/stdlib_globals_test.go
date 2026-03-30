@@ -224,6 +224,39 @@ func TestRunScriptSupportsObjectKeysSortAndReverse(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsArrayConstructorAndInstanceof(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Array(1, 2).length,
+		new Array(2).length,
+		[] instanceof Array,
+		new Array(3) instanceof Array,
+		Array.prototype.constructor === Array
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "2|2|true|true|true"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsArrayConstructorNegativeLength(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Array(-1)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Array length failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "Array length must be non-negative") {
+		t.Fatalf("runScriptOnStore() error = %q, want Array length failure", got)
+	}
+}
+
 func TestRunScriptSupportsNumberParseInt(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -280,6 +313,43 @@ func TestRunScriptSupportsNumberIsNaN(t *testing.T) {
 	}
 	if got, want := result.String, "true|false|false|false"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsNumberSafeIntegerConstants(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		Number.EPSILON === 2.220446049250313e-16,
+		Number.MAX_VALUE === 1.7976931348623157e308,
+		Number.MIN_VALUE === 5e-324,
+		Number.MAX_SAFE_INTEGER === 9007199254740991,
+		Number.MIN_SAFE_INTEGER === -9007199254740991,
+		Number.isSafeInteger(Number.MAX_SAFE_INTEGER),
+		Number.isSafeInteger(Number.MAX_SAFE_INTEGER + 1),
+		Number.isSafeInteger(1.5),
+		Number.isSafeInteger("42")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|true|true|true|true|true|false|false|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsNumberIsSafeIntegerArityMismatch(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `Number.isSafeInteger(1, 2)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Number.isSafeInteger arity failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "Number.isSafeInteger expects 1 argument") {
+		t.Fatalf("runScriptOnStore() error = %q, want Number.isSafeInteger arity failure", got)
 	}
 }
 
@@ -632,6 +702,26 @@ func TestRunScriptSupportsIntlNumberFormatGrouping(t *testing.T) {
 		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
 	}
 	if got, want := result.String, "1,199"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsIntlNumberFormatFractionDigitRounding(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `(() => {
+		return [
+			new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(97.1259),
+			new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(1.1111)
+		].join("|");
+	})()`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "97.13|1.111"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
 	}
 }

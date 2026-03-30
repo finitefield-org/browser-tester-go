@@ -171,6 +171,42 @@ func TestDispatchSupportsStringTrimStartEnd(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsStringNormalize(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["\uFB01".normalize("NFKC"), "e\u0301".normalize(), "e\u0301".normalize("NFD")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.normalize) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.normalize) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "fi|é|é" {
+		t.Fatalf("Dispatch(String.normalize) value = %q, want %q", result.Value.String, "fi|é|é")
+	}
+}
+
+func TestDispatchRejectsInvalidStringNormalizeForm(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"go".normalize("NFKX")`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.normalize invalid form) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.normalize invalid form) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.normalize invalid form) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if got := scriptErr.Message; !strings.Contains(got, "String.normalize form must be") {
+		t.Fatalf("Dispatch(String.normalize invalid form) error message = %q, want normalization form error", got)
+	}
+}
+
 func TestDispatchSupportsStringCaseConversion(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -725,6 +761,34 @@ func TestDispatchSupportsArrayFindIndexSpliceAndUnshift(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsArraySpliceWithoutDeleteCountInNestedHelper(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			function drainCells() {
+				const rows = [];
+				const cells = ["alpha", "beta"];
+				function flushRow() {
+					rows.push(cells.splice(0));
+				}
+				flushRow();
+				return [rows.length, rows[0].join(","), cells.length].join("|");
+			}
+			drainCells()
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.splice(0) nested helper) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.splice(0) nested helper) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|alpha,beta|0" {
+		t.Fatalf("Dispatch(Array.splice(0) nested helper) value = %q, want %q", result.Value.String, "1|alpha,beta|0")
+	}
+}
+
 func TestDispatchSupportsArrayPop(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -1053,6 +1117,23 @@ func TestDispatchSupportsNumberToLocaleString(t *testing.T) {
 	}
 	if result.Value.String != "600.0|￥1,200" {
 		t.Fatalf("Dispatch(Number.toLocaleString) value = %q, want %q", result.Value.String, "600.0|￥1,200")
+	}
+}
+
+func TestDispatchSupportsNumberToLocaleStringFractionDigitRounding(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `[(97.1259).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), (1.1111).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Number.toLocaleString fraction rounding) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Number.toLocaleString fraction rounding) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "97.13|1.111" {
+		t.Fatalf("Dispatch(Number.toLocaleString fraction rounding) value = %q, want %q", result.Value.String, "97.13|1.111")
 	}
 }
 

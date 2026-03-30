@@ -97,12 +97,14 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
   stdlib slice for inline scripts: `Array` / `Object` / `JSON` / `Map` / `Set` / `Number` / `String`
-  / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the template-facing `Array.from()` /
-  `Array.isArray()`,
+  / `Boolean` / `Math` / `Date` / `Symbol` / `Uint8Array`, including the constructible `Array(...)` /
+  `new Array(...)` / `instanceof Array` shape plus the template-facing `Array.from()` /
+  `Array.isArray()`, and `Map.prototype.clear()` / `Set.prototype.clear()` / `Map.prototype.keys()` / `Map.prototype.values()` / `Map.prototype.entries()`
+  plus `Set.prototype.keys()` / `Set.prototype.values()` / `Set.prototype.entries()`,
   `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
-  `Number.parseInt()` / `Number.parseFloat()` / global `parseInt()` / global `parseFloat()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
+  `Number.parseInt()` / `Number.parseFloat()` / global `parseInt()` / global `parseFloat()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.isSafeInteger()` / `Number.EPSILON` / `Number.MAX_VALUE` / `Number.MIN_VALUE` / `Number.MAX_SAFE_INTEGER` / `Number.MIN_SAFE_INTEGER` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
   `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.DateTimeFormat.supportedLocalesOf()` / `Intl.Collator()`, `String.fromCharCode()` /
-  `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
+  `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.normalize()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
   `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
   `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
   `String.prototype.trimEnd()` / `String.prototype.padStart()` / `String.prototype.padEnd()` /
@@ -143,8 +145,9 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
     values, bounded conditional `?:` operator, bounded exponentiation `**` / `**=` operators,
     bounded bitwise and shift operators, bounded property assignment on local object/array
     bindings, plain function values, and host-reference property chains such as
-    `document.getElementById(...).textContent = ...`, including creating missing plain object
-    properties on write, with getter-only property
+    `document.getElementById(...).textContent = ...`, with nested helper calls preserving array
+    binding updates across invocation frames so mutations like `push()` remain visible to the
+    caller binding, including creating missing plain object properties on write, with getter-only property
     assignments failing with runtime errors, private class
     fields, bounded private `in` operator on bounded class private fields, and bounded `super`
     property assignment, including class field initializers and computed class member names that can

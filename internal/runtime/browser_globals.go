@@ -25,7 +25,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 	clipboardRef := script.HostObjectReference("clipboard")
 
 	return map[string]script.Value{
-		"Array":                 script.HostFunctionReference("Array"),
+		"Array":                 script.HostConstructorReference("Array"),
 		"Object":                script.HostFunctionReference("Object"),
 		"JSON":                  script.HostObjectReference("JSON"),
 		"CSS":                   script.HostObjectReference("CSS"),

@@ -4284,6 +4284,30 @@ host.echo(state.rows.map((row) => row.id).join(","))`})
 	}
 }
 
+func TestDispatchSupportsSingleStatementElseIfChainsInClassicJS(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `function evaluateMetricValue(def, row, profile) {
+  let inside = false;
+  let distance = 5;
+  let margin = 8;
+  let score = 100;
+  if (!inside) {
+    if (distance <= margin) score = 70;
+    else if (distance <= margin * 2) score = 40;
+    else score = 10;
+  }
+  return score;
+}
+evaluateMetricValue()`})
+	if err != nil {
+		t.Fatalf("Dispatch(single-statement else-if chain) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber || result.Value.Number != 70 {
+		t.Fatalf("Dispatch(single-statement else-if chain) result = %#v, want number 70", result.Value)
+	}
+}
+
 func TestDispatchRejectsArrayDestructuringAssignmentWithNonAssignableTargetInClassicJS(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -5778,6 +5802,45 @@ const previewRows = rows.map((row) => {
 	}
 	if result.Value.Kind != ValueKindString || result.Value.String != "1|1|valid:|invalid:bad" {
 		t.Fatalf("Dispatch(array map callback mutations update outer lets) result = %#v, want string 1|1|valid:|invalid:bad", result.Value)
+	}
+}
+
+func TestDispatchSupportsArrayArgumentMutationsInNestedHelpers(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `
+		function addError(errors) {
+			errors.push("too wide");
+			host.echo("inner:" + errors.length);
+		}
+
+		function compute() {
+			const errors = [];
+			addError(errors);
+			host.echo("outer:" + errors.length);
+			return errors.length + "|" + errors.join(",");
+		}
+
+		host.echo(compute());
+	`})
+	if err != nil {
+		t.Fatalf("Dispatch(array argument mutations in nested helpers) error = %v", err)
+	}
+	if len(host.calls) != 3 {
+		t.Fatalf("host calls = %#v, want 3 calls", host.calls)
+	}
+	if host.calls[0].method != "echo" || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "inner:1" {
+		t.Fatalf("host call[0] = %#v, want echo(inner:1)", host.calls[0])
+	}
+	if host.calls[1].method != "echo" || host.calls[1].args[0].Kind != ValueKindString || host.calls[1].args[0].String != "outer:1" {
+		t.Fatalf("host call[1] = %#v, want echo(outer:1)", host.calls[1])
+	}
+	if host.calls[2].method != "echo" || host.calls[2].args[0].Kind != ValueKindString || host.calls[2].args[0].String != "1|too wide" {
+		t.Fatalf("host call[2] = %#v, want echo(1|too wide)", host.calls[2])
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "1|too wide" {
+		t.Fatalf("Dispatch(array argument mutations in nested helpers) result = %#v, want string 1|too wide", result.Value)
 	}
 }
 
@@ -7538,6 +7601,22 @@ func TestDispatchSupportsConditionalOperatorWithObjectLiteralBranchesInClassicJS
 		if arg.Kind != ValueKindBool || arg.Bool {
 			t.Fatalf("host call arg[%d] = %#v, want bool false", i, arg)
 		}
+	}
+}
+
+func TestDispatchSupportsNestedConditionalOperatorInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo(true ? false ? "inner" : "middle" : "outer")`})
+	if err != nil {
+		t.Fatalf("Dispatch(nested conditional operator) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "middle" {
+		t.Fatalf("Dispatch(nested conditional operator) value = %#v, want string middle", result.Value)
+	}
+	if len(host.calls) != 1 || host.calls[0].method != "echo" {
+		t.Fatalf("host calls = %#v, want one echo call", host.calls)
 	}
 }
 

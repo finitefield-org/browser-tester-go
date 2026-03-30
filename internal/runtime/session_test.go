@@ -2063,6 +2063,71 @@ func TestSessionDispatchesInputListenersFromTypeText(t *testing.T) {
 	}
 }
 
+func TestSessionDispatchesClickListenersWithArraySpliceWithoutDeleteCount(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="go" type="button">Go</button><div id="out"></div><script>
+document.getElementById("go").addEventListener("click", () => {
+  function drainCells() {
+    const rows = [];
+    const cells = ["alpha", "beta"];
+    function flushRow() {
+      rows.push(cells.splice(0));
+    }
+    flushRow();
+    document.getElementById("out").textContent = [rows.length, rows[0].join(","), cells.length].join("|");
+  }
+  drainCells();
+});
+</script></main>`,
+	})
+
+	if err := s.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1|alpha,beta|0" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "1|alpha,beta|0")
+	}
+}
+
+func TestSessionDispatchesInputListenersWithSingleStatementElseIfChains(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="days"><div id="out"></div><script>
+function evaluateMetricValue(def, row, profile) {
+  const softMargin = Number(profile.softMargin[def.softKey] ?? 0);
+  let inside = false;
+  let distance = 5;
+  const margin = softMargin > 0 ? softMargin : 1;
+  let score = 100;
+  if (!inside) {
+    if (distance <= margin) score = 70;
+    else if (distance <= margin * 2) score = 40;
+    else score = 10;
+  }
+  return String(score);
+}
+document.getElementById("days").addEventListener("input", () => {
+  const profile = { softMargin: { dab: 8 } };
+  const def = { softKey: "dab" };
+  const row = { daysAfterBloom: document.getElementById("days").value };
+  document.getElementById("out").textContent = evaluateMetricValue(def, row, profile);
+});
+</script></main>`,
+	})
+
+	if err := s.TypeText("#days", "165"); err != nil {
+		t.Fatalf("TypeText(#days) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "70" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "70")
+	}
+}
+
 func TestSessionDispatchesInputListenersWithEventTargetValue(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><section id="wrap"><input id="search"><p id="status">idle</p></section><script>host:addEventListener("#wrap", "input", 'host.setTextContent("#status", host.eventTargetValue())', "capture")</script></main>`,
@@ -2074,6 +2139,20 @@ func TestSessionDispatchesInputListenersWithEventTargetValue(t *testing.T) {
 
 	if got, want := s.DumpDOM(), `<main><section id="wrap"><input id="search" value="Ada"><p id="status">Ada</p></section><script>host:addEventListener("#wrap", "input", 'host.setTextContent("#status", host.eventTargetValue())', "capture")</script></main>`; got != want {
 		t.Fatalf("DumpDOM() after event target value listener = %q, want %q", got, want)
+	}
+}
+
+func TestSessionDispatchesInputListenersWithExprWrappedEventTargetValue(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><section id="search-panel"><input id="search"><p id="search-status">Idle</p></section><script>host:addEventListener("#search-panel", "input", 'host:setTextContent("#search-status", expr(host:eventTargetValue()))', "capture")</script></main>`,
+	})
+
+	if err := s.TypeText("#search", "Ada"); err != nil {
+		t.Fatalf("TypeText(#search) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><section id="search-panel"><input id="search" value="Ada"><p id="search-status">Ada</p></section><script>host:addEventListener("#search-panel", "input", 'host:setTextContent("#search-status", expr(host:eventTargetValue()))', "capture")</script></main>`; got != want {
+		t.Fatalf("DumpDOM() after expr-wrapped input listener = %q, want %q", got, want)
 	}
 }
 
