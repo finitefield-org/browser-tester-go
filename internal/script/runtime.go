@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 const bindingReplacementWalkLimit = 1024
@@ -29,6 +30,13 @@ type BindingUpdateContext interface {
 }
 
 var currentBindingUpdateContext BindingUpdateContext
+
+type splitScriptStatementsCacheEntry struct {
+	statements []string
+	err        error
+}
+
+var splitScriptStatementsCache sync.Map
 
 func CurrentBindingUpdateContext() BindingUpdateContext {
 	return currentBindingUpdateContext
@@ -71,16 +79,22 @@ type Runtime struct {
 }
 
 type classicJSEnvironment struct {
-	parent     *classicJSEnvironment
-	bindings   map[string]classicJSBinding
-	classDefs  map[string]*classicJSClassDefinition
-	withScopes []Value
+	parent      *classicJSEnvironment
+	bindings    map[string]classicJSBinding
+	classDefs   map[string]*classicJSClassDefinition
+	withScopes  []Value
+	lookupCache map[string]classicJSEnvironmentLookupCacheEntry
 }
 
 type classicJSBinding struct {
 	value              jsValue
 	mutable            bool
 	skipBindingUpdates bool
+}
+
+type classicJSEnvironmentLookupCacheEntry struct {
+	value jsValue
+	ok    bool
 }
 
 type classicJSClassFieldDefinition struct {
@@ -116,10 +130,43 @@ func (e *classicJSEnvironment) clone() *classicJSEnvironment {
 	}
 	return &classicJSEnvironment{
 		parent:     e,
-		bindings:   make(map[string]classicJSBinding),
-		classDefs:  make(map[string]*classicJSClassDefinition),
 		withScopes: append([]Value(nil), e.withScopes...),
 	}
+}
+
+func (e *classicJSEnvironment) resetForReuse(parent *classicJSEnvironment) *classicJSEnvironment {
+	if e == nil {
+		if parent == nil {
+			return newClassicJSEnvironment()
+		}
+		return &classicJSEnvironment{
+			parent: parent,
+		}
+	}
+	e.parent = parent
+	if e.bindings == nil {
+		e.bindings = make(map[string]classicJSBinding)
+	} else {
+		for name := range e.bindings {
+			delete(e.bindings, name)
+		}
+	}
+	if e.classDefs == nil {
+		e.classDefs = make(map[string]*classicJSClassDefinition)
+	} else {
+		for name := range e.classDefs {
+			delete(e.classDefs, name)
+		}
+	}
+	if e.withScopes != nil {
+		e.withScopes = e.withScopes[:0]
+	}
+	if e.lookupCache != nil {
+		for name := range e.lookupCache {
+			delete(e.lookupCache, name)
+		}
+	}
+	return e
 }
 
 func (e *classicJSEnvironment) cloneDetached() *classicJSEnvironment {
@@ -425,6 +472,7 @@ func (e *classicJSEnvironment) declare(name string, value jsValue, mutable bool)
 		return NewError(ErrorKindParse, fmt.Sprintf("duplicate lexical declaration for %q in this bounded classic-JS slice", name))
 	}
 	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: mutable}
+	e.clearLookupCache()
 	return nil
 }
 
@@ -439,9 +487,11 @@ func (e *classicJSEnvironment) initializeBinding(name string, value jsValue, mut
 		binding.value = value.withoutAssignTarget()
 		binding.mutable = mutable
 		e.bindings[name] = binding
+		e.clearLookupCache()
 		return nil
 	}
 	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: mutable}
+	e.clearLookupCache()
 	return nil
 }
 
@@ -456,7 +506,31 @@ func cloneBindingsMap(bindings map[string]Value) map[string]Value {
 	return cloned
 }
 
+func (e *classicJSEnvironment) clearLookupCache() {
+	if e == nil {
+		return
+	}
+	e.lookupCache = nil
+}
+
 func (e *classicJSEnvironment) lookup(name string) (jsValue, bool) {
+	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() && e != nil {
+		if e.lookupCache != nil {
+			if cached, ok := e.lookupCache[name]; ok {
+				return cached.value, cached.ok
+			}
+		}
+		value, ok := e.lookupWithoutCache(name)
+		if e.lookupCache == nil {
+			e.lookupCache = make(map[string]classicJSEnvironmentLookupCacheEntry)
+		}
+		e.lookupCache[name] = classicJSEnvironmentLookupCacheEntry{value: value, ok: ok}
+		return value, ok
+	}
+	return e.lookupWithoutCache(name)
+}
+
+func (e *classicJSEnvironment) lookupWithoutCache(name string) (jsValue, bool) {
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
 			if value, ok := current.lookupWithScopes(name); ok {
@@ -521,6 +595,7 @@ func (e *classicJSEnvironment) assign(name string, value jsValue) error {
 		}
 		binding.value = value.withoutAssignTarget()
 		current.bindings[name] = binding
+		current.clearLookupCache()
 		return nil
 	}
 	return NewError(ErrorKindUnsupported, fmt.Sprintf("assignment target %q is not a declared local binding in this bounded classic-JS slice", name))
@@ -555,6 +630,7 @@ func (e *classicJSEnvironment) assignWithScopes(name string, value jsValue) (boo
 			e.replaceArrayBindings(currentScope, scalarJSValue(updated))
 		}
 		e.withScopes[i] = updated
+		e.clearLookupCache()
 		return true, nil
 	}
 	return false, nil
@@ -645,6 +721,7 @@ func (e *classicJSEnvironment) setBindingValue(name string, value jsValue) bool 
 		}
 		binding.value = value.withoutAssignTarget()
 		current.bindings[name] = binding
+		current.clearLookupCache()
 		return true
 	}
 	return false
@@ -690,6 +767,7 @@ func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValu
 			}
 			binding.value = updated
 			current.bindings[name] = binding
+			current.clearLookupCache()
 			replaced++
 		}
 	updateScopes:
@@ -699,6 +777,7 @@ func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValu
 				continue
 			}
 			current.withScopes[i] = updated
+			current.clearLookupCache()
 			replaced++
 		}
 	}
@@ -910,6 +989,7 @@ func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue
 			}
 			binding.value = updated
 			current.bindings[name] = binding
+			current.clearLookupCache()
 			replaced++
 		}
 		for i, scope := range current.withScopes {
@@ -918,6 +998,7 @@ func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue
 				continue
 			}
 			current.withScopes[i] = updated
+			current.clearLookupCache()
 			replaced++
 		}
 	}
@@ -1499,6 +1580,16 @@ func splitScriptStatements(source string) ([]string, error) {
 	if text == "" {
 		return nil, nil
 	}
+	if cached, ok := splitScriptStatementsCache.Load(text); ok {
+		entry := cached.(*splitScriptStatementsCacheEntry)
+		if entry.err != nil {
+			return nil, entry.err
+		}
+		if entry.statements == nil {
+			return nil, nil
+		}
+		return append([]string(nil), entry.statements...), nil
+	}
 
 	statements := make([]string, 0, 4)
 	start := 0
@@ -1869,7 +1960,11 @@ func splitScriptStatements(source string) ([]string, error) {
 	if tail := strings.TrimSpace(text[start:]); tail != "" {
 		statements = append(statements, tail)
 	}
-	return statements, nil
+	cachedStatements := append([]string(nil), statements...)
+	splitScriptStatementsCache.Store(text, &splitScriptStatementsCacheEntry{
+		statements: cachedStatements,
+	})
+	return append([]string(nil), cachedStatements...), nil
 }
 
 func SplitScriptStatementsForRuntime(source string) ([]string, error) {

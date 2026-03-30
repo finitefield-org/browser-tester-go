@@ -910,6 +910,8 @@ type classicJSLoopState struct {
 	parent          *classicJSLoopState
 	kind            classicJSLoopKind
 	loopEnv         *classicJSEnvironment
+	conditionEnv    *classicJSEnvironment
+	updateEnv       *classicJSEnvironment
 	initSource      string
 	conditionSource string
 	updateSource    string
@@ -1385,6 +1387,8 @@ func (s *classicJSLoopState) cloneDetached(mapping map[*classicJSEnvironment]*cl
 	cloned := &classicJSLoopState{
 		label:           s.label,
 		kind:            s.kind,
+		conditionEnv:    cloneDetachedEnvironmentWithMapping(s.conditionEnv, mapping),
+		updateEnv:       cloneDetachedEnvironmentWithMapping(s.updateEnv, mapping),
 		initSource:      s.initSource,
 		conditionSource: s.conditionSource,
 		updateSource:    s.updateSource,
@@ -1432,6 +1436,42 @@ func (s *classicJSLoopState) cloneDetached(mapping map[*classicJSEnvironment]*cl
 		cloned.bodyState = cloneDetachedClassicJSResumeState(s.bodyState, mapping)
 	}
 	return cloned
+}
+
+func cloneDetachedEnvironmentWithMapping(env *classicJSEnvironment, mapping map[*classicJSEnvironment]*classicJSEnvironment) *classicJSEnvironment {
+	if env == nil {
+		return nil
+	}
+	if cloned, ok := mapping[env]; ok {
+		return cloned
+	}
+	return env.cloneDetachedWithMapping(mapping)
+}
+
+func (p *classicJSStatementParser) loopConditionEvalEnv(frame *classicJSLoopState) *classicJSEnvironment {
+	if frame == nil || frame.conditionSource == "" {
+		return nil
+	}
+	if frame.conditionEnv == nil {
+		frame.conditionEnv = frame.loopEnv.clone()
+	} else {
+		frame.conditionEnv.parent = frame.loopEnv
+		frame.conditionEnv.clearLookupCache()
+	}
+	return frame.conditionEnv
+}
+
+func (p *classicJSStatementParser) loopUpdateEvalEnv(frame *classicJSLoopState) *classicJSEnvironment {
+	if frame == nil || frame.updateSource == "" {
+		return nil
+	}
+	if frame.updateEnv == nil {
+		frame.updateEnv = frame.loopEnv.clone()
+	} else {
+		frame.updateEnv.parent = frame.loopEnv
+		frame.updateEnv.clearLookupCache()
+	}
+	return frame.updateEnv
 }
 
 func (p *classicJSStatementParser) cloneForSkipping(host HostBindings) *classicJSStatementParser {
@@ -2634,6 +2674,9 @@ func (p *classicJSStatementParser) parseStatement() (Value, error) {
 		if err != nil {
 			return UndefinedValue(), err
 		}
+		if p.skipEvaluation {
+			return UndefinedValue(), nil
+		}
 		return p.evalProgramWithEnvAllowLoopSignals(bodySource, p.env.clone())
 	}
 	return p.parseExpression()
@@ -3623,7 +3666,11 @@ func (p *classicJSStatementParser) parseVariableDeclarationWithLabel(kind string
 				p.env = newClassicJSEnvironment()
 			}
 			if kind == "var" {
+				if p.env.bindings == nil {
+					p.env.bindings = make(map[string]classicJSBinding)
+				}
 				p.env.bindings[name] = classicJSBinding{value: scalarJSValue(value), mutable: true}
+				p.env.clearLookupCache()
 				if p.moduleExports == nil && p.env.parent == nil {
 					if mutator, ok := p.host.(HostReferenceMutator); ok {
 						_ = mutator.SetHostReference(name, value)
@@ -3928,6 +3975,7 @@ func (p *classicJSStatementParser) bindBindingPattern(pattern classicJSBindingPa
 			value = parsed
 		}
 		p.env.bindings[pattern.name] = classicJSBinding{value: scalarJSValue(value), mutable: mutable}
+		p.env.clearLookupCache()
 		return nil
 	case classicJSBindingPatternHole:
 		return nil
@@ -4507,6 +4555,13 @@ func (p *classicJSStatementParser) consumeArrowFunctionBody() (string, bool, err
 }
 
 func (p *classicJSStatementParser) parseIfStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeIfStatementSource(); err != nil {
+			return UndefinedValue(), err
+		}
+		return UndefinedValue(), nil
+	}
+
 	p.skipSpaceAndComments()
 	if !p.consumeByte('(') {
 		return UndefinedValue(), NewError(ErrorKindParse, "expected `(` after `if`")
@@ -4604,6 +4659,16 @@ func (p *classicJSStatementParser) consumeIfBranchSource() (string, error) {
 }
 
 func (p *classicJSStatementParser) parseWithStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeParenthesizedSource("with"); err != nil {
+			return UndefinedValue(), err
+		}
+		if _, err := p.consumeIfBodySource(); err != nil {
+			return UndefinedValue(), err
+		}
+		return UndefinedValue(), nil
+	}
+
 	p.skipSpaceAndComments()
 	if !p.consumeByte('(') {
 		return UndefinedValue(), NewError(ErrorKindParse, "expected `(` after `with`")
@@ -4863,7 +4928,11 @@ func (p *classicJSStatementParser) resumeClassicJSState(state classicJSResumeSta
 				current.env = newClassicJSEnvironment()
 			}
 			if current.kind == "var" {
+				if current.env.bindings == nil {
+					current.env.bindings = make(map[string]classicJSBinding)
+				}
 				current.env.bindings[current.name] = classicJSBinding{value: scalarJSValue(rhs), mutable: true}
+				current.env.clearLookupCache()
 			} else {
 				if err := current.env.declare(current.name, scalarJSValue(rhs), current.kind == "let"); err != nil {
 					return UndefinedValue(), nil, err
@@ -5262,6 +5331,9 @@ func (p *classicJSStatementParser) resumeLoopFrame(frame *classicJSLoopState) (V
 	if frame == nil {
 		return UndefinedValue(), nil, NewError(ErrorKindRuntime, "loop state is unavailable")
 	}
+	if p.skipEvaluation {
+		return UndefinedValue(), nil, nil
+	}
 
 	loopParser := *p
 	loopParser.resumeState = frame
@@ -5481,7 +5553,7 @@ func (p *classicJSStatementParser) resumeWhileLoopFrame(frame *classicJSLoopStat
 			if frame.iterationCount >= p.stepLimit {
 				return UndefinedValue(), nil, NewError(ErrorKindRuntime, "classic-JS loop step limit exceeded")
 			}
-			condition, err := p.evalExpressionWithEnv(frame.conditionSource, frame.loopEnv.clone())
+			condition, err := p.evalExpressionWithEnv(frame.conditionSource, p.loopConditionEvalEnv(frame))
 			if err != nil {
 				return UndefinedValue(), nil, err
 			}
@@ -5528,7 +5600,7 @@ func (p *classicJSStatementParser) resumeDoWhileLoopFrame(frame *classicJSLoopSt
 			if classicJSContinueSignalMatchesLabel(err, frame.label) {
 				resetClassicJSLoopBody(frame)
 				frame.iterationCount++
-				condition, err := p.evalExpressionWithEnv(frame.conditionSource, frame.loopEnv.clone())
+				condition, err := p.evalExpressionWithEnv(frame.conditionSource, p.loopConditionEvalEnv(frame))
 				if err != nil {
 					return UndefinedValue(), nil, err
 				}
@@ -5547,7 +5619,7 @@ func (p *classicJSStatementParser) resumeDoWhileLoopFrame(frame *classicJSLoopSt
 		}
 		if completed {
 			frame.iterationCount++
-			condition, err := p.evalExpressionWithEnv(frame.conditionSource, frame.loopEnv.clone())
+			condition, err := p.evalExpressionWithEnv(frame.conditionSource, p.loopConditionEvalEnv(frame))
 			if err != nil {
 				return UndefinedValue(), nil, err
 			}
@@ -5584,7 +5656,7 @@ func (p *classicJSStatementParser) resumeForLoopFrame(frame *classicJSLoopState)
 				return UndefinedValue(), nil, NewError(ErrorKindRuntime, "classic-JS loop step limit exceeded")
 			}
 			if frame.conditionSource != "" {
-				condition, err := p.evalExpressionWithEnv(frame.conditionSource, frame.loopEnv.clone())
+				condition, err := p.evalExpressionWithEnv(frame.conditionSource, p.loopConditionEvalEnv(frame))
 				if err != nil {
 					return UndefinedValue(), nil, err
 				}
@@ -5603,7 +5675,7 @@ func (p *classicJSStatementParser) resumeForLoopFrame(frame *classicJSLoopState)
 			if classicJSContinueSignalMatchesLabel(err, frame.label) {
 				resetClassicJSLoopBody(frame)
 				if frame.updateSource != "" {
-					if _, err := p.evalExpressionWithEnv(frame.updateSource, frame.loopEnv.clone()); err != nil {
+					if _, err := p.evalExpressionWithEnv(frame.updateSource, p.loopUpdateEvalEnv(frame)); err != nil {
 						return UndefinedValue(), nil, err
 					}
 				}
@@ -5617,7 +5689,7 @@ func (p *classicJSStatementParser) resumeForLoopFrame(frame *classicJSLoopState)
 		}
 		if completed {
 			if frame.updateSource != "" {
-				if _, err := p.evalExpressionWithEnv(frame.updateSource, frame.loopEnv.clone()); err != nil {
+				if _, err := p.evalExpressionWithEnv(frame.updateSource, p.loopUpdateEvalEnv(frame)); err != nil {
 					return UndefinedValue(), nil, err
 				}
 			}
@@ -5628,6 +5700,16 @@ func (p *classicJSStatementParser) resumeForLoopFrame(frame *classicJSLoopState)
 }
 
 func (p *classicJSStatementParser) parseWhileStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeParenthesizedSource("while"); err != nil {
+			return UndefinedValue(), err
+		}
+		if _, err := p.consumeLoopBodySource(); err != nil {
+			return UndefinedValue(), err
+		}
+		return UndefinedValue(), nil
+	}
+
 	conditionSource, err := p.consumeParenthesizedSource("while")
 	if err != nil {
 		return UndefinedValue(), err
@@ -5655,6 +5737,22 @@ func (p *classicJSStatementParser) parseWhileStatement() (Value, error) {
 }
 
 func (p *classicJSStatementParser) parseDoWhileStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeLoopBodySource(); err != nil {
+			return UndefinedValue(), err
+		}
+		p.skipSpaceAndComments()
+		if keyword, ok := p.peekKeyword("while"); !ok {
+			return UndefinedValue(), NewError(ErrorKindParse, "expected `while` after `do` block")
+		} else {
+			p.pos += len(keyword)
+		}
+		if _, err := p.consumeParenthesizedSource("while"); err != nil {
+			return UndefinedValue(), err
+		}
+		return UndefinedValue(), nil
+	}
+
 	bodySource, err := p.consumeLoopBodySource()
 	if err != nil {
 		return UndefinedValue(), err
@@ -5705,8 +5803,20 @@ func (p *classicJSStatementParser) parseForStatement() (Value, error) {
 	}
 
 	if bindingSource, iterableSource, ok, err := splitClassicJSForOfHeader(headerSource); err != nil {
+		if p.skipEvaluation {
+			return UndefinedValue(), err
+		}
 		return UndefinedValue(), err
 	} else if ok {
+		if p.skipEvaluation {
+			if _, _, err := parseClassicJSForOfBinding(bindingSource, awaitEach); err != nil {
+				return UndefinedValue(), err
+			}
+			if _, err := p.consumeLoopBodySource(); err != nil {
+				return UndefinedValue(), err
+			}
+			return UndefinedValue(), nil
+		}
 		bindingKind, bindingPattern, err := parseClassicJSForOfBinding(bindingSource, awaitEach)
 		if err != nil {
 			return UndefinedValue(), err
@@ -5742,8 +5852,20 @@ func (p *classicJSStatementParser) parseForStatement() (Value, error) {
 	}
 
 	if bindingSource, iterableSource, ok, err := splitClassicJSForInHeader(headerSource); err != nil {
+		if p.skipEvaluation {
+			return UndefinedValue(), err
+		}
 		return UndefinedValue(), err
 	} else if ok {
+		if p.skipEvaluation {
+			if _, _, err := parseClassicJSForInBinding(bindingSource); err != nil {
+				return UndefinedValue(), err
+			}
+			if _, err := p.consumeLoopBodySource(); err != nil {
+				return UndefinedValue(), err
+			}
+			return UndefinedValue(), nil
+		}
 		bindingKind, bindingPattern, err := parseClassicJSForInBinding(bindingSource)
 		if err != nil {
 			return UndefinedValue(), err
@@ -5780,6 +5902,15 @@ func (p *classicJSStatementParser) parseForStatement() (Value, error) {
 	initSource, conditionSource, updateSource, err := splitClassicJSForHeader(headerSource)
 	if err != nil {
 		return UndefinedValue(), err
+	}
+	if p.skipEvaluation {
+		if _, err := p.consumeLoopBodySource(); err != nil {
+			return UndefinedValue(), err
+		}
+		_ = initSource
+		_ = conditionSource
+		_ = updateSource
+		return UndefinedValue(), nil
 	}
 
 	bodySource, err := p.consumeLoopBodySource()
@@ -5982,6 +6113,7 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 				value:   scalarJSValue(currentClassValue),
 				mutable: false,
 			}
+			classEnv.clearLookupCache()
 		}
 	}
 	publishClassValue()
@@ -6259,6 +6391,20 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 }
 
 func (p *classicJSStatementParser) parseSwitchStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeParenthesizedSource("switch"); err != nil {
+			return UndefinedValue(), err
+		}
+		bodySource, err := p.consumeBlockSource()
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		if _, err := splitClassicJSSwitchClauses(bodySource); err != nil {
+			return UndefinedValue(), err
+		}
+		return UndefinedValue(), nil
+	}
+
 	discriminantSource, err := p.consumeParenthesizedSource("switch")
 	if err != nil {
 		return UndefinedValue(), err
@@ -6334,6 +6480,40 @@ func (p *classicJSStatementParser) parseSwitchStatement() (Value, error) {
 }
 
 func (p *classicJSStatementParser) parseTryStatement() (Value, error) {
+	if p.skipEvaluation {
+		if _, err := p.consumeBlockSource(); err != nil {
+			return UndefinedValue(), err
+		}
+
+		hasCatch := false
+		hasFinally := false
+		p.skipSpaceAndComments()
+		if keyword, ok := p.peekKeyword("catch"); ok {
+			hasCatch = true
+			p.pos += len(keyword)
+			if _, _, err := p.parseCatchBinding(); err != nil {
+				return UndefinedValue(), err
+			}
+			if _, err := p.consumeBlockSource(); err != nil {
+				return UndefinedValue(), err
+			}
+		}
+
+		p.skipSpaceAndComments()
+		if keyword, ok := p.peekKeyword("finally"); ok {
+			hasFinally = true
+			p.pos += len(keyword)
+			if _, err := p.consumeBlockSource(); err != nil {
+				return UndefinedValue(), err
+			}
+		}
+
+		if !hasCatch && !hasFinally {
+			return UndefinedValue(), NewError(ErrorKindParse, "expected `catch` or `finally` after `try` block")
+		}
+		return UndefinedValue(), nil
+	}
+
 	trySource, err := p.consumeBlockSource()
 	if err != nil {
 		return UndefinedValue(), err
@@ -12214,23 +12394,28 @@ func (p *classicJSStatementParser) parsePrimary() (jsValue, error) {
 		return scalarJSValue(PrivateNameValue(ident)), nil
 	}
 
-	if value, ok, err := p.tryParseArrowFunction(); err != nil {
-		return jsValue{}, err
-	} else if ok {
-		return value, nil
+	ch := p.peekByte()
+	if ch == '(' || isIdentStart(ch) {
+		if value, ok, err := p.tryParseArrowFunction(); err != nil {
+			return jsValue{}, err
+		} else if ok {
+			return value, nil
+		}
 	}
-	if value, ok, err := p.tryParseGeneratorFunction(); err != nil {
-		return jsValue{}, err
-	} else if ok {
-		return value, nil
-	}
-	if value, ok, err := p.tryParseFunctionExpression(); err != nil {
-		return jsValue{}, err
-	} else if ok {
-		return value, nil
+	if ch == 'a' || ch == 'f' {
+		if value, ok, err := p.tryParseGeneratorFunction(); err != nil {
+			return jsValue{}, err
+		} else if ok {
+			return value, nil
+		}
+		if value, ok, err := p.tryParseFunctionExpression(); err != nil {
+			return jsValue{}, err
+		} else if ok {
+			return value, nil
+		}
 	}
 
-	switch ch := p.peekByte(); ch {
+	switch ch {
 	case '\'', '"':
 		value, err := p.parseStringLiteral()
 		if err != nil {

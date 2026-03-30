@@ -207,3 +207,55 @@ func TestSkipHostBindingsDoNotExecuteSkippedArrowFunctionBodies(t *testing.T) {
 		t.Fatalf("host.calls[0].args = %#v, want one %q string", host.calls[0].args, "keep")
 	}
 }
+
+func TestSkipEvaluationConsumesStructuredStatementsWithoutExecutingBodies(t *testing.T) {
+	cases := []struct {
+		name   string
+		parse  func(*classicJSStatementParser) (Value, error)
+		source string
+	}{
+		{
+			name:   "block",
+			source: `{ host.echo("boom") }`,
+			parse:  func(p *classicJSStatementParser) (Value, error) { return p.parseStatement() },
+		},
+		{
+			name:   "if",
+			source: `(host.echo("cond")) { host.echo("boom") } else if (host.echo("alt")) { host.echo("later") }`,
+			parse:  func(p *classicJSStatementParser) (Value, error) { return p.parseIfStatement() },
+		},
+		{
+			name:   "for",
+			source: `(let i = 0; i < 1; i += 1) { host.echo("boom") }`,
+			parse:  func(p *classicJSStatementParser) (Value, error) { return p.parseForStatement() },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &skipHostBindingsReproHost{}
+			env := newClassicJSEnvironment()
+			if err := env.declare("host", scalarJSValue(HostObjectReference("host")), true); err != nil {
+				t.Fatalf("declare(host) error = %v", err)
+			}
+
+			parser := &classicJSStatementParser{
+				source:         tc.source,
+				host:           host,
+				env:            env,
+				skipEvaluation: true,
+				stepLimit:      1,
+			}
+
+			if _, err := tc.parse(parser); err != nil {
+				t.Fatalf("parse(%s) error = %v", tc.name, err)
+			}
+			if len(host.calls) != 0 {
+				t.Fatalf("parse(%s) host calls = %#v, want none", tc.name, host.calls)
+			}
+			if len(host.resolvedPaths) != 0 {
+				t.Fatalf("parse(%s) resolved paths = %#v, want none", tc.name, host.resolvedPaths)
+			}
+		})
+	}
+}

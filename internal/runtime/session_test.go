@@ -1603,6 +1603,36 @@ func TestSessionTypeTextWithHelperChainListeners(t *testing.T) {
 	}
 }
 
+func TestSessionTypeTextDoesNotCommitPreviousFocusedTextInputChange(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="first" type="text"><input id="second" type="text"><div id="first-status">--</div><div id="second-status">--</div><script>document.getElementById("first").addEventListener("change", () => { document.getElementById("first-status").textContent = "changed"; }); document.getElementById("second").addEventListener("input", (event) => { document.getElementById("second-status").textContent = String(event.target.value || ""); });</script></main>`,
+	})
+
+	if err := s.TypeText("#first", "alpha"); err != nil {
+		t.Fatalf("TypeText(#first, alpha) error = %v", err)
+	}
+	if err := s.TypeText("#second", "beta"); err != nil {
+		t.Fatalf("TypeText(#second, beta) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#first-status"); err != nil {
+		t.Fatalf("TextContent(#first-status) error = %v", err)
+	} else if got != "--" {
+		t.Fatalf("TextContent(#first-status) = %q, want --", got)
+	}
+	if got, err := s.TextContent("#second-status"); err != nil {
+		t.Fatalf("TextContent(#second-status) error = %v", err)
+	} else if got != "beta" {
+		t.Fatalf("TextContent(#second-status) = %q, want beta", got)
+	}
+	if got, want := s.FocusedSelector(), "#second"; got != want {
+		t.Fatalf("FocusedSelector() = %q, want %q", got, want)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after TypeText blur suppression regression", got)
+	}
+}
+
 func TestSessionFocusBlursFocusedTextInputBeforeNextFocusHandler(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="reference-date" type="date"><input id="next"><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("next").addEventListener("focus", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,
