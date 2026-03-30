@@ -15198,7 +15198,7 @@ func hasClassicJSDeclarationKeyword(source string) bool {
 		return false
 	}
 	parser.skipSpaceAndComments()
-	for _, keyword := range []string{"let", "const", "using"} {
+	for _, keyword := range []string{"let", "const", "var", "using"} {
 		if _, ok := parser.peekKeyword(keyword); ok {
 			return true
 		}

@@ -179,6 +179,87 @@ func TestRunScriptSupportsJSONStringifySpaceArgument(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsJSONStringifyFunctionReplacer(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		const seen = [];
+		const source = { keep: 1, drop: 2, nested: [3, 4] };
+		const text = JSON.stringify(source, function(key, value) {
+		  seen.push((key === "" ? "<root>" : key) + ":" + (Array.isArray(this) ? "array" : "object"));
+		  if (key === "drop" || key === "1") return undefined;
+		  return value;
+		});
+		[text, seen.join(",")].join("|")
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, `{"keep":1,"nested":[3,null]}|<root>:object,keep:object,drop:object,nested:object,0:array,1:array`; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsJSONStringifyDateReplacerSeesISOString(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `JSON.stringify(new Date(Date.UTC(2024, 0, 2, 3, 4, 5)), (key, value) => key === "" ? typeof value : value)`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, `"string"`; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsJSONStringifyArrayReplacerPropertyList(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `JSON.stringify({ b: 1, a: 2, c: 3 }, ["c", "a", "c", 1])`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, `{"c":3,"a":2}`; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsJSONStringifyEmptyArrayReplacerOmitsObjectKeys(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `JSON.stringify({ a: 1, b: 2 }, [])`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, `{}`; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsJSONStringifyReplacerBigIntResult(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `JSON.stringify({ a: 1 }, () => 1n)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want BigInt replacer failure")
+	}
+	if !strings.Contains(err.Error(), "BigInt") {
+		t.Fatalf("runScriptOnStore() error = %v, want BigInt replacer failure", err)
+	}
+}
+
 func TestRunScriptSupportsJSONParsePreservesObjectKeyOrder(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 

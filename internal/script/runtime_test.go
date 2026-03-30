@@ -5105,6 +5105,32 @@ func TestDispatchSupportsVarDeclarationsInClassicJS(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsVarDeclarationsInForStatementsInClassicJS(t *testing.T) {
+	host := &fakeHost{
+		values: map[string]Value{
+			"echo": UndefinedValue(),
+		},
+		errs: map[string]error{},
+	}
+	runtime := NewRuntime(host)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `for (var index = 0; index < 3; index += 1) { host.echo(index) }`})
+	if err != nil {
+		t.Fatalf("Dispatch(var declarations in for statement) error = %v", err)
+	}
+	if len(host.calls) != 3 {
+		t.Fatalf("host calls = %#v, want three calls", host.calls)
+	}
+	for i, call := range host.calls {
+		if call.method != "echo" {
+			t.Fatalf("host.calls[%d].method = %q, want echo", i, call.method)
+		}
+		if len(call.args) != 1 || call.args[0].Kind != ValueKindNumber || call.args[0].Number != float64(i) {
+			t.Fatalf("host.calls[%d].args = %#v, want number %d", i, call.args, i)
+		}
+	}
+}
+
 func TestDispatchSupportsUsingDeclarationsInClassicJS(t *testing.T) {
 	runtime := NewRuntime(nil)
 

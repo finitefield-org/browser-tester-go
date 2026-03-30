@@ -251,6 +251,13 @@ func browserURLSearchParamsValueFromState(state *browserURLSearchParamsState) sc
 			}),
 		},
 	})
+	paramsValue.ObjectSize = func() (script.Value, bool) {
+		pairs, err := state.snapshotPairs()
+		if err != nil {
+			return script.UndefinedValue(), false
+		}
+		return script.NumberValue(float64(len(pairs))), true
+	}
 	return paramsValue
 }
 

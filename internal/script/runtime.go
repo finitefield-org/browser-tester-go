@@ -405,6 +405,7 @@ func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*clas
 			cloned.ClassDefinition = value.ClassDefinition
 			cloned.MapState = cloneMapStateDetached(value.MapState, mapping)
 			cloned.SetState = cloneSetStateDetached(value.SetState, mapping)
+			cloned.ObjectSize = value.ObjectSize
 			return cloned
 		}
 		ptr := reflect.ValueOf(value.Object).Pointer()
@@ -417,6 +418,7 @@ func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*clas
 		clonedValue := Value{Kind: ValueKindObject, Object: cloned}
 		clonedValue.ClassKey = value.ClassKey
 		clonedValue.ClassDefinition = value.ClassDefinition
+		clonedValue.ObjectSize = value.ObjectSize
 		if ptr != 0 {
 			clonedObjects[ptr] = clonedValue
 		}

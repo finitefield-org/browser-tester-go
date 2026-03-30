@@ -2426,6 +2426,27 @@ func TestSessionBootstrapsClickHandlerCanUseNestedStorageHelper(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsClickHandlerWithVarForInitializer(t *testing.T) {
+	const rawHTML = `<main><button id="btn" type="button">go</button><div id="out"></div><script>document.getElementById("btn").addEventListener("click", () => { let out = ""; for (var i = 0; i < 3; i += 1) { out += String(i); } document.getElementById("out").textContent = out; });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#btn"); err != nil {
+		t.Fatalf("Click(#btn) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "012" {
+		t.Fatalf("TextContent(#out) = %q, want 012", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after click bootstrap with var for initializer", got)
+	}
+}
+
 func TestSessionBootstrapsClickHandlerCanUseMapForEachHostBindings(t *testing.T) {
 	const rawHTML = `<main><button id="btn" type="button">go</button><div id="out"></div><script>document.getElementById("btn").addEventListener("click", () => { const map = new Map([["alpha", 1], ["beta", 2]]); let seen = ""; map.forEach(function (value, key, mapObject) { seen = seen + (seen === "" ? "" : "|") + key + ":" + value + ":" + mapObject.get(key); document.getElementById("out").textContent = seen; }); });</script></main>`
 

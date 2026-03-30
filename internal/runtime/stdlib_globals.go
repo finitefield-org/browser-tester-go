@@ -1587,6 +1587,12 @@ func browserJSONParse(args []script.Value) (script.Value, error) {
 	return value, nil
 }
 
+type browserJSONStringifyReplacer struct {
+	fn              script.Value
+	keys            []string
+	hasPropertyList bool
+}
+
 func browserJSONStringify(args []script.Value) (script.Value, error) {
 	if len(args) == 0 {
 		return script.UndefinedValue(), nil
@@ -1594,18 +1600,209 @@ func browserJSONStringify(args []script.Value) (script.Value, error) {
 	if len(args) > 3 {
 		return script.UndefinedValue(), fmt.Errorf("JSON.stringify expects at most 3 arguments in this bounded slice")
 	}
-	if len(args) >= 2 && args[1].Kind != script.ValueKindUndefined && args[1].Kind != script.ValueKindNull {
-		return script.UndefinedValue(), fmt.Errorf("JSON.stringify replacer is unavailable in this bounded slice")
+	var replacer *browserJSONStringifyReplacer
+	if len(args) > 1 {
+		replacer = browserJSONStringifyReplacerFromValue(args[1])
 	}
 	indent, err := browserJSONStringifySpace(args)
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
-	text, err := jsonStringifyValueWithIndent(args[0], indent, 0)
+	holder := script.ObjectValue([]script.ObjectEntry{{Key: "", Value: args[0]}})
+	text, included, err := browserJSONStringifySerialize(args[0], holder, "", replacer, indent, 0, false)
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
+	if !included {
+		return script.UndefinedValue(), nil
+	}
 	return script.StringValue(text), nil
+}
+
+func browserJSONStringifyReplacerFromValue(value script.Value) *browserJSONStringifyReplacer {
+	switch {
+	case browserJSONStringifyIsCallableValue(value):
+		return &browserJSONStringifyReplacer{fn: value}
+	case value.Kind == script.ValueKindArray:
+		return &browserJSONStringifyReplacer{
+			keys:            browserJSONStringifyPropertyList(value.Array),
+			hasPropertyList: true,
+		}
+	default:
+		return nil
+	}
+}
+
+func browserJSONStringifyIsCallableValue(value script.Value) bool {
+	switch value.Kind {
+	case script.ValueKindFunction:
+		return value.Function != nil || value.NativeFunction != nil || value.NativeConstructibleFunction != nil
+	case script.ValueKindHostReference:
+		return value.HostReferenceKind == script.HostReferenceKindFunction || value.HostReferenceKind == script.HostReferenceKindConstructor
+	default:
+		return false
+	}
+}
+
+func browserJSONStringifyPropertyList(values []script.Value) []string {
+	seen := make(map[string]struct{}, len(values))
+	keys := make([]string, 0, len(values))
+	for _, value := range values {
+		var key string
+		switch value.Kind {
+		case script.ValueKindString:
+			key = value.String
+		case script.ValueKindNumber:
+			key = script.ToJSString(value)
+		default:
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func browserJSONStringifyApplyReplacer(holder script.Value, key string, value script.Value, replacer script.Value) (script.Value, bool, error) {
+	result, err := script.InvokeCallableValue(script.CurrentInvokeHost(), replacer, []script.Value{
+		script.StringValue(key),
+		value,
+	}, holder, true)
+	if err != nil {
+		return script.UndefinedValue(), false, err
+	}
+	if result.Kind == script.ValueKindUndefined {
+		return script.UndefinedValue(), false, nil
+	}
+	return result, true, nil
+}
+
+func browserJSONStringifySerialize(value script.Value, holder script.Value, key string, replacer *browserJSONStringifyReplacer, indentUnit string, depth int, inArray bool) (string, bool, error) {
+	if ms, ok := script.BrowserDateTimestamp(value); ok {
+		value = script.StringValue(script.BrowserDateISOString(ms))
+	}
+
+	if replacer != nil && browserJSONStringifyIsCallableValue(replacer.fn) {
+		replaced, included, err := browserJSONStringifyApplyReplacer(holder, key, value, replacer.fn)
+		if err != nil {
+			return "", false, err
+		}
+		if !included {
+			if inArray {
+				return "null", true, nil
+			}
+			return "", false, nil
+		}
+		value = replaced
+	}
+
+	switch value.Kind {
+	case script.ValueKindUndefined:
+		if inArray {
+			return "null", true, nil
+		}
+		return "", false, nil
+	case script.ValueKindNull:
+		return "null", true, nil
+	case script.ValueKindBool:
+		if value.Bool {
+			return "true", true, nil
+		}
+		return "false", true, nil
+	case script.ValueKindNumber:
+		if math.IsNaN(value.Number) || math.IsInf(value.Number, 0) {
+			return "null", true, nil
+		}
+		return strconv.FormatFloat(value.Number, 'f', -1, 64), true, nil
+	case script.ValueKindString:
+		encoded, err := json.Marshal(value.String)
+		if err != nil {
+			return "", false, err
+		}
+		return string(encoded), true, nil
+	case script.ValueKindArray:
+		text, err := browserJSONStringifySerializeArray(value, replacer, indentUnit, depth)
+		if err != nil {
+			return "", false, err
+		}
+		return text, true, nil
+	case script.ValueKindObject:
+		text, err := browserJSONStringifySerializeObject(value, replacer, indentUnit, depth)
+		if err != nil {
+			return "", false, err
+		}
+		return text, true, nil
+	case script.ValueKindFunction, script.ValueKindSymbol:
+		if inArray {
+			return "null", true, nil
+		}
+		return "", false, nil
+	case script.ValueKindBigInt:
+		return "", false, fmt.Errorf("JSON.stringify does not support BigInt values in this bounded slice")
+	case script.ValueKindHostReference, script.ValueKindPromise, script.ValueKindInvocation, script.ValueKindPrivateName:
+		return "", false, fmt.Errorf("JSON.stringify does not support %s values in this bounded slice", value.Kind)
+	default:
+		return "", false, fmt.Errorf("JSON.stringify does not support %s values in this bounded slice", value.Kind)
+	}
+}
+
+func browserJSONStringifySerializeArray(value script.Value, replacer *browserJSONStringifyReplacer, indentUnit string, depth int) (string, error) {
+	parts := make([]string, 0, len(value.Array))
+	for i, entry := range value.Array {
+		encoded, _, err := browserJSONStringifySerialize(entry, value, strconv.Itoa(i), replacer, indentUnit, depth+1, true)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, encoded)
+	}
+	if indentUnit == "" {
+		return "[" + strings.Join(parts, ",") + "]", nil
+	}
+	if len(parts) == 0 {
+		return "[]", nil
+	}
+	childIndent := strings.Repeat(indentUnit, depth+1)
+	currentIndent := strings.Repeat(indentUnit, depth)
+	return "[\n" + childIndent + strings.Join(parts, ",\n"+childIndent) + "\n" + currentIndent + "]", nil
+}
+
+func browserJSONStringifySerializeObject(value script.Value, replacer *browserJSONStringifyReplacer, indentUnit string, depth int) (string, error) {
+	keys := uniqueObjectKeys(value.Object)
+	if replacer != nil && replacer.hasPropertyList {
+		keys = replacer.keys
+	}
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		encodedValue, included, err := browserJSONStringifySerialize(objectValueByKey(value.Object, key), value, key, replacer, indentUnit, depth+1, false)
+		if err != nil {
+			return "", err
+		}
+		if !included {
+			continue
+		}
+		encodedKey, err := json.Marshal(key)
+		if err != nil {
+			return "", err
+		}
+		if indentUnit == "" {
+			parts = append(parts, string(encodedKey)+":"+encodedValue)
+		} else {
+			parts = append(parts, string(encodedKey)+": "+encodedValue)
+		}
+	}
+	if indentUnit == "" {
+		return "{" + strings.Join(parts, ",") + "}", nil
+	}
+	if len(parts) == 0 {
+		return "{}", nil
+	}
+	childIndent := strings.Repeat(indentUnit, depth+1)
+	currentIndent := strings.Repeat(indentUnit, depth)
+	return "{\n" + childIndent + strings.Join(parts, ",\n"+childIndent) + "\n" + currentIndent + "}", nil
 }
 
 func browserNumberConstructor(args []script.Value) (script.Value, error) {

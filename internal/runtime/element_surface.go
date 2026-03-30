@@ -105,17 +105,11 @@ func resolveElementTypeValue(session *Session, store *dom.Store, nodeID dom.Node
 	}
 	switch node.TagName {
 	case "button":
-		value, ok := domAttributeValue(store, nodeID, "type")
-		if !ok || strings.TrimSpace(value) == "" {
-			return script.StringValue("submit"), nil
-		}
-		return script.StringValue(strings.ToLower(strings.TrimSpace(value))), nil
+		return script.StringValue(dom.ButtonType(store, node)), nil
 	case "input":
-		value, ok := domAttributeValue(store, nodeID, "type")
-		if !ok || strings.TrimSpace(value) == "" {
-			return script.StringValue("text"), nil
-		}
-		return script.StringValue(strings.ToLower(strings.TrimSpace(value))), nil
+		return script.StringValue(dom.InputType(node)), nil
+	case "select":
+		return script.StringValue(dom.SelectType(node)), nil
 	default:
 		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
 	}

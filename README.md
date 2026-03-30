@@ -101,7 +101,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `new Array(...)` / `instanceof Array` shape plus the template-facing `Array.from()` /
   `Array.isArray()`, and `Map.prototype.clear()` / `Set.prototype.clear()` / `Map.prototype.keys()` / `Map.prototype.values()` / `Map.prototype.entries()`
   plus `Set.prototype.keys()` / `Set.prototype.values()` / `Set.prototype.entries()`,
-  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
+  `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify(value, replacer, space)`,
   `Number.parseInt()` / `Number.parseFloat()` / global `parseInt()` / global `parseFloat()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.isSafeInteger()` / `Number.EPSILON` / `Number.MAX_VALUE` / `Number.MIN_VALUE` / `Number.MAX_SAFE_INTEGER` / `Number.MIN_SAFE_INTEGER` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
   `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()` / `Intl.DateTimeFormat()` / `Intl.DateTimeFormat.supportedLocalesOf()` / `Intl.Collator()`, `String.fromCharCode()` / `String.fromCodePoint()` / `String.raw()` /
   `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.normalize()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
@@ -127,7 +127,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   plus `Object.entries()` / `Object.values()` / `Object.fromEntries()` for plain-object enumeration,
   and bounded `Intl.DateTimeFormat()` time-zone formatting with `formatToParts()` / `formatRange()` / `formatRangeToParts()` / `resolvedOptions()` / `supportedLocalesOf()`, bounded `Uint8Array`
   construction from array-like / buffer values, plus `Uint8Array.from()` with map-function support,
-  `JSON.stringify(value, null, space)`, bounded `Promise.resolve()`, and bounded promise-style
+  `JSON.stringify(value, replacer, space)`, bounded `Promise.resolve()`, and bounded promise-style
   `then()` / `catch()` chains on browser promises such as `clipboard.writeText()` and `fetch()`,
   including executor `reject(...)` paths and rejected-promise propagation
 - bounded event-target helper for inline event listeners:
@@ -452,7 +452,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   - `ToggleAttribute`
   - `RemoveAttribute`
 - form-control reflection helpers:
-  - `type` on `button` / `input`
+  - `type` on `button` / `input` / `select`
 - live class/dataset views:
   - `ClassList` (`Values`, `Contains`, `Item`, `Add`, `Remove`)
   - `Dataset` (`Values`, `Get`, `Set`, `Remove`)

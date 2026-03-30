@@ -405,6 +405,13 @@ func classicJSObjectSizeValue(value Value) (Value, bool) {
 	if value.Kind != ValueKindObject {
 		return UndefinedValue(), false
 	}
+	if value.ObjectSize != nil {
+		size, ok := value.ObjectSize()
+		if !ok {
+			return UndefinedValue(), false
+		}
+		return size, true
+	}
 	if value.MapState != nil {
 		return NumberValue(float64(value.MapState.size())), true
 	}
@@ -418,6 +425,9 @@ func classicJSObjectVirtualProperty(value Value, name string) (Value, bool, erro
 	if value.Kind != ValueKindObject {
 		return UndefinedValue(), false, nil
 	}
+	if sizeValue, ok := classicJSObjectSizeValue(value); ok && name == "size" {
+		return sizeValue, true, nil
+	}
 	if value.MapState != nil {
 		return classicJSMapVirtualProperty(value, name)
 	}
@@ -430,6 +440,9 @@ func classicJSObjectVirtualProperty(value Value, name string) (Value, bool, erro
 func classicJSObjectHasVirtualProperty(value Value, name string) bool {
 	if value.Kind != ValueKindObject {
 		return false
+	}
+	if _, ok := classicJSObjectSizeValue(value); ok && name == "size" {
+		return true
 	}
 	if value.MapState != nil {
 		return classicJSMapHasVirtualProperty(name)

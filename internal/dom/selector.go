@@ -1585,14 +1585,8 @@ func pseudoClassDefault(store *Store, node *Node) bool {
 		case "checkbox", "radio":
 			return defaultHasAttribute(node, "checked")
 		}
-		if !isSubmitControlLike(node) {
-			return false
-		}
 		return isDefaultSubmitControl(store, node)
 	case "button":
-		if !isSubmitControlLike(node) {
-			return false
-		}
 		return isDefaultSubmitControl(store, node)
 	case "option":
 		return defaultHasAttribute(node, "selected")
@@ -3066,16 +3060,14 @@ func boundedFloatAttribute(node *Node, name string) (float64, bool) {
 	return parseBoundedFloat(value)
 }
 
-func isSubmitControlLike(node *Node) bool {
+func isSubmitControlLike(store *Store, node *Node) bool {
 	if node == nil || node.Kind != NodeKindElement {
 		return false
 	}
 
 	switch node.TagName {
 	case "button":
-		typeName, _ := attributeValue(node.Attrs, "type")
-		typeName = strings.ToLower(strings.TrimSpace(typeName))
-		return typeName == "" || typeName == "submit"
+		return IsSubmitButton(store, node)
 	case "input":
 		switch inputType(node) {
 		case "submit", "image":
@@ -3102,7 +3094,7 @@ func isLabelableElement(node *Node) bool {
 }
 
 func isDefaultSubmitControl(store *Store, node *Node) bool {
-	if store == nil || node == nil || node.Kind != NodeKindElement || !isSubmitControlLike(node) {
+	if store == nil || node == nil || node.Kind != NodeKindElement || !isSubmitControlLike(store, node) {
 		return false
 	}
 
@@ -3116,7 +3108,7 @@ func isDefaultSubmitControl(store *Store, node *Node) bool {
 		if firstSubmit != 0 || current == nil || current.ID == formID {
 			return
 		}
-		if isSubmitControlLike(current) && nearestAncestorForm(store, current.ID) == formID {
+		if isSubmitControlLike(store, current) && nearestAncestorForm(store, current.ID) == formID {
 			firstSubmit = current.ID
 		}
 	})

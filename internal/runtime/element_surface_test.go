@@ -118,6 +118,63 @@ func TestSessionInlineScriptsCanReadAndWriteFormControlTypeReflectionSurfaces(t 
 	}
 }
 
+func TestSessionInlineScriptsNormalizeInvalidFormControlTypeReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><input id="field" type="bogus"><button id="btn" type="menu"></button><div id="probe"></div><script>const field = document.querySelector("#field"); const btn = document.querySelector("#btn"); host:setTextContent("#probe", expr([field.type, btn.type, field.getAttribute("type"), btn.getAttribute("type")].join("|")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after invalid form-control type normalization error = %v", err)
+	} else if got != "text|submit|bogus|menu" {
+		t.Fatalf("TextContent(#probe) after invalid form-control type normalization = %q, want %q", got, "text|submit|bogus|menu")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after invalid form-control type normalization", got)
+	}
+}
+
+func TestSessionInlineScriptsCanReadSelectTypeReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><select id="single"><option>one</option></select><select id="multi" multiple><option>one</option></select><div id="probe"></div><script>const single = document.querySelector("#single"); const multi = document.querySelector("#multi"); host:setTextContent("#probe", expr([single.type, multi.type].join("|")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after select.type reflection bridge error = %v", err)
+	} else if got != "select-one|select-multiple" {
+		t.Fatalf("TextContent(#probe) after select.type reflection bridge = %q, want %q", got, "select-one|select-multiple")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after select.type reflection bridge", got)
+	}
+}
+
+func TestSessionBootstrapsFormControlTypeReflectionInHelper(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><input id="field" type="checkbox" checked><div id="out"></div><script>function setValue(elm, value) { if (elm.type === "checkbox") { elm.checked = Boolean(value); return; } elm.value = value === null || value === undefined ? "" : String(value); } setValue(document.getElementById("field"), false); document.getElementById("out").textContent = "done";</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after form-control type bootstrap error = %v", err)
+	} else if got != "done" {
+		t.Fatalf("TextContent(#out) after form-control type bootstrap = %q, want done", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after form-control type bootstrap", got)
+	}
+}
+
 func TestSessionInlineScriptsRejectUnsupportedGenericElementTypeReflection(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<main><div id="box"></div><div id="probe"></div><script>const box = document.querySelector("#box"); host:setTextContent("#probe", expr(String(box.type)))</script></main>`,

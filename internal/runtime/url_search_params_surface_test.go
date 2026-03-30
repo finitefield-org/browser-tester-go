@@ -100,6 +100,29 @@ func TestRunScriptSupportsURLSearchParamsMemberParity(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsURLSearchParamsSize(t *testing.T) {
+	session := NewSession(SessionConfig{})
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `
+		const params = new URLSearchParams("b=3&a=1&a=2");
+		const before = String(params.size);
+		params.append("c", "4");
+		const afterAppend = String(params.size);
+		params.delete("a");
+		const afterDelete = String(params.size);
+		[before, afterAppend, afterDelete].join("|");
+	`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "3|4|2"; got != want {
+		t.Fatalf("URLSearchParams.size = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptURLSearchParamsForEachRejectsArguments(t *testing.T) {
 	session := NewSession(SessionConfig{})
 

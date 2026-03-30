@@ -192,6 +192,25 @@ func TestSelectDefaultPseudoClassUsesInitialControlState(t *testing.T) {
 	}
 }
 
+func TestSelectDefaultPseudoClassTreatsInvalidButtonTypeAsSubmitButton(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<main><form id="profile"><button id="submit" type="menu">Save</button><button id="other" type="button">Cancel</button></form></main>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	submitID := mustSelectSingle(t, store, "#submit")
+	got, err := store.Select("button:default")
+	if err != nil {
+		t.Fatalf("Select(button:default) error = %v", err)
+	}
+	if len(got) != 1 || got[0] != submitID {
+		t.Fatalf("Select(button:default) = %#v, want only invalid submit button", got)
+	}
+	if matched, err := store.Matches(submitID, ":default"); err != nil || !matched {
+		t.Fatalf("Matches(#submit, :default) = (%v, %v), want (true, nil)", matched, err)
+	}
+}
+
 func TestSelectBlankPseudoClassForCheckableAndSelectControls(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main id="root"><input id="checkbox-off" type="checkbox"><input id="checkbox-on" type="checkbox" checked><input id="radio-off" type="radio" name="choice"><input id="radio-on" type="radio" name="choice" checked><select id="empty-select"><option value="a">A</option></select><select id="filled-select"><option value="b" selected>B</option></select></main>`); err != nil {

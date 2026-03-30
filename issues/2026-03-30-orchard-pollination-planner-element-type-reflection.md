@@ -12,7 +12,7 @@ Keep the scope to one capability or one concrete bug when possible.
 
 ## Summary
 
-- Short summary: Classic JS bootstrap still crashes when a helper reads `elm.type` on a form control.
+- Short summary: Classic-JS bootstrap still throws on `elm.type` for standard form controls.
 
 ## Context
 

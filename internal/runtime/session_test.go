@@ -1977,6 +1977,29 @@ func TestSessionClickAppliesDefaultActions(t *testing.T) {
 	}
 }
 
+func TestSessionClickAppliesDefaultActionForInvalidButtonType(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><form id="profile"><button id="submit" type="menu">Save</button></form><div id="out"></div><script>host:addEventListener("#profile", "submit", 'host:setTextContent("#out", expr(document.getElementById("submit").type))')</script></main>`,
+	})
+
+	if err := s.Click("#submit"); err != nil {
+		t.Fatalf("Click(#submit) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after invalid submit-button click error = %v", err)
+	} else if got != "submit" {
+		t.Fatalf("TextContent(#out) after invalid submit-button click = %q, want %q", got, "submit")
+	}
+	log := s.InteractionLog()
+	if len(log) != 2 {
+		t.Fatalf("InteractionLog() len = %d, want 2", len(log))
+	}
+	if log[1].Kind != InteractionKindSubmit || log[1].Selector != "#submit" {
+		t.Fatalf("InteractionLog()[1] = %#v, want submit #submit", log[1])
+	}
+}
+
 func TestSessionClickAppliesHyperlinkDefaultActions(t *testing.T) {
 	s := NewSession(SessionConfig{
 		URL:  "https://example.test/base/",

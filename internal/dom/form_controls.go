@@ -291,12 +291,103 @@ func (s *Store) SplitText(nodeID NodeID, offset int) (NodeID, error) {
 	return newID, nil
 }
 
-func inputType(node *Node) string {
-	if node == nil {
+// InputType returns the bounded HTML input type reflection value for node.
+func InputType(node *Node) string {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "input" {
 		return ""
 	}
-	value, _ := attributeValue(node.Attrs, "type")
-	return strings.ToLower(strings.TrimSpace(value))
+	value, ok := attributeValue(node.Attrs, "type")
+	if !ok {
+		return "text"
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "hidden", "text", "search", "url", "tel", "email", "password", "date", "month", "week", "time", "datetime-local", "number", "range", "color", "checkbox", "radio", "file", "submit", "image", "reset", "button":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "text"
+	}
+}
+
+func inputType(node *Node) string {
+	return InputType(node)
+}
+
+// ButtonType returns the bounded HTML button type reflection value for node.
+func ButtonType(store *Store, node *Node) string {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "button" {
+		return ""
+	}
+	switch buttonTypeState(node) {
+	case "submit":
+		return "submit"
+	case "reset":
+		return "reset"
+	case "button":
+		return "button"
+	case "auto":
+		if IsSubmitButton(store, node) {
+			return "submit"
+		}
+		return "button"
+	default:
+		return "button"
+	}
+}
+
+// SelectType returns the bounded HTML select type reflection value for node.
+func SelectType(node *Node) string {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "select" {
+		return ""
+	}
+	if _, ok := attributeValue(node.Attrs, "multiple"); ok {
+		return "select-multiple"
+	}
+	return "select-one"
+}
+
+// IsSubmitButton reports whether node behaves like a submit button.
+func IsSubmitButton(store *Store, node *Node) bool {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "button" {
+		return false
+	}
+	switch buttonTypeState(node) {
+	case "submit":
+		return true
+	case "auto":
+		if _, ok := attributeValue(node.Attrs, "command"); ok {
+			return false
+		}
+		if _, ok := attributeValue(node.Attrs, "commandfor"); ok {
+			return false
+		}
+		if store == nil {
+			return false
+		}
+		parent := store.Node(node.Parent)
+		return parent == nil || parent.Kind != NodeKindElement || parent.TagName != "select"
+	default:
+		return false
+	}
+}
+
+func buttonTypeState(node *Node) string {
+	if node == nil || node.Kind != NodeKindElement || node.TagName != "button" {
+		return ""
+	}
+	value, ok := attributeValue(node.Attrs, "type")
+	if !ok {
+		return "auto"
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "submit":
+		return "submit"
+	case "reset":
+		return "reset"
+	case "button":
+		return "button"
+	default:
+		return "auto"
+	}
 }
 
 func isFormListedElement(node *Node) bool {

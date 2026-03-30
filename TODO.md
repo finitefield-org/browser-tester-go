@@ -100,11 +100,10 @@ This file tracks only the remaining implementation work.
 ## JSON API Expansion
 
 - Expand the bounded browser stdlib slice to cover the remaining current `JSON` APIs beyond the
-  `parse()` / `stringify()` slice already present in `README.md` and `doc/capability-matrix.md`.
+  `parse()` / `stringify(value, replacer, space)` slice already present in `README.md` and
+  `doc/capability-matrix.md`.
 - Schedule the missing current members explicitly:
   - `JSON.parse(text, reviver)` including reviver traversal and property deletion semantics
-  - `JSON.stringify(value, replacer, space)` including full replacer support for function and array
-    replacers
   - `JSON[Symbol.toStringTag]`
 - Keep legacy and deprecated JSON compatibility branches out of scope for this slice.
 - When this slice is implemented, add the owning-subsystem tests, failure-path coverage, and any

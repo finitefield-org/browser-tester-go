@@ -189,7 +189,7 @@ func (s *Session) applyClickDefaultAction(selector string) error {
 			}
 		}
 	case "button":
-		if isSubmitControl(node) {
+		if isSubmitControl(store, node) {
 			if _, ok := submitTarget(store, nodeID, node); ok {
 				return s.Submit(normalized)
 			}
@@ -277,7 +277,7 @@ func (s *Session) applyClickDefaultActionForNode(store *dom.Store, nodeID dom.No
 			}
 		}
 	case "button":
-		if isSubmitControl(node) {
+		if isSubmitControl(store, node) {
 			if formID, ok := submitTarget(store, nodeID, node); ok {
 				if _, err := s.dispatchEventListeners(store, formID, "submit"); err != nil {
 					return err
@@ -454,7 +454,7 @@ func submitTarget(store *dom.Store, nodeID dom.NodeID, node *dom.Node) (dom.Node
 	if node.TagName == "form" {
 		return nodeID, true
 	}
-	if !isSubmitControl(node) {
+	if !isSubmitControl(store, node) {
 		return 0, false
 	}
 
@@ -474,11 +474,7 @@ func submitTarget(store *dom.Store, nodeID dom.NodeID, node *dom.Node) (dom.Node
 }
 
 func inputType(node *dom.Node) string {
-	if node == nil {
-		return ""
-	}
-	value, _ := attributeValue(node.Attrs, "type")
-	return strings.ToLower(strings.TrimSpace(value))
+	return dom.InputType(node)
 }
 
 func isTextInputType(typeName string) bool {
@@ -499,16 +495,14 @@ func hasAttribute(attrs []dom.Attribute, name string) bool {
 	return false
 }
 
-func isSubmitControl(node *dom.Node) bool {
+func isSubmitControl(store *dom.Store, node *dom.Node) bool {
 	if node == nil || node.Kind != dom.NodeKindElement {
 		return false
 	}
 
 	switch node.TagName {
 	case "button":
-		typeName, _ := attributeValue(node.Attrs, "type")
-		typeName = strings.ToLower(strings.TrimSpace(typeName))
-		return typeName == "" || typeName == "submit"
+		return dom.IsSubmitButton(store, node)
 	case "input":
 		switch inputType(node) {
 		case "submit", "image":

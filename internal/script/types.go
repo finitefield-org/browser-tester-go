@@ -59,6 +59,7 @@ type Value struct {
 	Function                    *classicJSArrowFunction
 	NativeFunction              NativeFunction
 	NativeConstructibleFunction NativeFunction
+	ObjectSize                  func() (Value, bool)
 	HostReferencePath           string
 	HostReferenceKind           HostReferenceKind
 	Promise                     *Value
@@ -161,6 +162,7 @@ func objectValueOwned(base Value, entries []ObjectEntry) Value {
 		ClassDefinition: base.ClassDefinition,
 		MapState:        base.MapState,
 		SetState:        base.SetState,
+		ObjectSize:      base.ObjectSize,
 	}
 }
 
