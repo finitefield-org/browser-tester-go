@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,6 +71,22 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserDecodeURI(args)
 		}), true, nil
+	case path == "atob":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserAtob(args)
+		}), true, nil
+	case path == "btoa":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserBtoa(args)
+		}), true, nil
+	case path == "escape":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserEscape(args)
+		}), true, nil
+	case path == "unescape":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserUnescape(args)
+		}), true, nil
 	case path == "Map":
 		return script.BuiltinMapValue(), true, nil
 	case path == "Set":
@@ -102,6 +119,10 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 	case strings.HasPrefix(path, "Uint8Array."):
 		value, err := resolveUint8ArrayReference(session, store, strings.TrimPrefix(path, "Uint8Array."))
 		return value, true, err
+	case path == "TextEncoder":
+		return browserTextEncoderValue(), true, nil
+	case path == "TextDecoder":
+		return browserTextDecoderValue(), true, nil
 	case path == "Number":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserNumberConstructor(args)
@@ -187,6 +208,10 @@ func resolveObjectReference(session *Session, store *dom.Store, path string) (sc
 	case "assign":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectAssign(session, store, args)
+		}), nil
+	case "create":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectCreate(args)
 		}), nil
 	case "fromEntries":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -530,6 +555,157 @@ func browserDecodeURIWithPreserve(args []script.Value, preserveEscapeSet string)
 		return script.UndefinedValue(), fmt.Errorf("URI malformed")
 	}
 	return script.StringValue(decoded), nil
+}
+
+func browserAtob(args []script.Value) (script.Value, error) {
+	input, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	decoded, err := browserBase64Decode(input)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.StringValue(decoded), nil
+}
+
+func browserBtoa(args []script.Value) (script.Value, error) {
+	input, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	encoded, err := browserBinaryStringToBase64(input)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.StringValue(encoded), nil
+}
+
+func browserEscape(args []script.Value) (script.Value, error) {
+	input, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.StringValue(browserEscapeString(input)), nil
+}
+
+func browserUnescape(args []script.Value) (script.Value, error) {
+	input, err := browserToStringArg(args)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.StringValue(browserUnescapeString(input)), nil
+}
+
+func browserBase64Decode(input string) (string, error) {
+	cleaned := browserStripASCIIWhitespace(input)
+	switch len(cleaned) % 4 {
+	case 1:
+		return "", script.NewError(script.ErrorKindRuntime, "InvalidCharacterError")
+	case 2:
+		cleaned += "=="
+	case 3:
+		cleaned += "="
+	}
+
+	decoded, err := base64.StdEncoding.Strict().DecodeString(cleaned)
+	if err != nil {
+		return "", script.NewError(script.ErrorKindRuntime, "InvalidCharacterError")
+	}
+	return string(decoded), nil
+}
+
+func browserBinaryStringToBase64(input string) (string, error) {
+	raw := make([]byte, 0, len(input))
+	for _, r := range input {
+		if r > 0xff {
+			return "", script.NewError(script.ErrorKindRuntime, "InvalidCharacterError")
+		}
+		raw = append(raw, byte(r))
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func browserEscapeString(input string) string {
+	var b strings.Builder
+	b.Grow(len(input) * 3)
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		if browserIsEscapeUnescaped(ch) {
+			b.WriteByte(ch)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(browserURIComponentHex[ch>>4])
+		b.WriteByte(browserURIComponentHex[ch&0x0F])
+	}
+	return b.String()
+}
+
+func browserUnescapeString(input string) string {
+	var b strings.Builder
+	b.Grow(len(input))
+	for i := 0; i < len(input); {
+		if input[i] != '%' || i+1 >= len(input) {
+			b.WriteByte(input[i])
+			i++
+			continue
+		}
+
+		if (input[i+1] == 'u' || input[i+1] == 'U') && i+6 <= len(input) {
+			code, err := strconv.ParseUint(input[i+2:i+6], 16, 16)
+			if err == nil {
+				b.WriteString(string(rune(code)))
+				i += 6
+				continue
+			}
+		}
+
+		if i+3 <= len(input) {
+			value, err := strconv.ParseUint(input[i+1:i+3], 16, 8)
+			if err == nil {
+				b.WriteByte(byte(value))
+				i += 3
+				continue
+			}
+		}
+
+		b.WriteByte(input[i])
+		i++
+	}
+	return b.String()
+}
+
+func browserStripASCIIWhitespace(input string) string {
+	if input == "" {
+		return input
+	}
+	var b strings.Builder
+	b.Grow(len(input))
+	for i := 0; i < len(input); i++ {
+		switch input[i] {
+		case ' ', '\t', '\n', '\r', '\f':
+			continue
+		default:
+			b.WriteByte(input[i])
+		}
+	}
+	return b.String()
+}
+
+func browserIsEscapeUnescaped(ch byte) bool {
+	switch {
+	case ch >= 'a' && ch <= 'z':
+		return true
+	case ch >= 'A' && ch <= 'Z':
+		return true
+	case ch >= '0' && ch <= '9':
+		return true
+	case ch == '@' || ch == '*' || ch == '_' || ch == '+' || ch == '-' || ch == '.' || ch == '/':
+		return true
+	default:
+		return false
+	}
 }
 
 func browserIsURIComponentUnescaped(ch byte) bool {
@@ -1267,6 +1443,16 @@ func browserObjectConstructor(args []script.Value) (script.Value, error) {
 	switch args[0].Kind {
 	case script.ValueKindObject:
 		return args[0], nil
+	}
+	return script.ObjectValue(nil), nil
+}
+
+func browserObjectCreate(args []script.Value) (script.Value, error) {
+	if len(args) != 1 {
+		return script.UndefinedValue(), fmt.Errorf("Object.create expects 1 argument")
+	}
+	if args[0].Kind != script.ValueKindNull {
+		return script.UndefinedValue(), fmt.Errorf("Object.create supports only a null prototype in this bounded classic-JS slice")
 	}
 	return script.ObjectValue(nil), nil
 }

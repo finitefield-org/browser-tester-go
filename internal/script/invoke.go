@@ -22,9 +22,10 @@ func InvokeCallableValue(host HostBindings, callee Value, args []Value, receiver
 	defer restoreHost()
 
 	parser := &classicJSStatementParser{
-		host:      host,
-		env:       newClassicJSEnvironment(),
-		stepLimit: DefaultRuntimeConfig().StepLimit,
+		host:                host,
+		env:                 newClassicJSEnvironment(),
+		stepLimit:           DefaultRuntimeConfig().StepLimit,
+		bindingUpdateParent: CurrentBindingUpdateContext(),
 	}
 	callable := scalarJSValue(callee)
 	if hasReceiver {

@@ -22,6 +22,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   - `Prompt`
   - `Click`
   - `TypeText`
+  - `SetValue`
   - `SetChecked`
   - `SetSelectValue`
   - `Focus`

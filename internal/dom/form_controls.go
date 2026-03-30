@@ -100,7 +100,7 @@ func (s *Store) SetSelectValue(nodeID NodeID, value string) error {
 	})
 
 	if len(options) == 0 {
-		return fmt.Errorf("select node %d does not contain any options", nodeID)
+		return nil
 	}
 
 	matched := false

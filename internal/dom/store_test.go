@@ -300,6 +300,28 @@ func TestSetSelectValueClearsUnmatchedSelection(t *testing.T) {
 	}
 }
 
+func TestSetSelectValueOnEmptySelectIsNoOp(t *testing.T) {
+	store := NewStore()
+	if err := store.BootstrapHTML(`<select id="mode"></select>`); err != nil {
+		t.Fatalf("BootstrapHTML() error = %v", err)
+	}
+
+	modeID := mustSelectSingle(t, store, "#mode")
+	if err := store.SetSelectValue(modeID, "row_1"); err != nil {
+		t.Fatalf("SetSelectValue(#mode, row_1) error = %v", err)
+	}
+
+	if got, want := store.SelectedIndexForNode(modeID), -1; got != want {
+		t.Fatalf("SelectedIndexForNode(#mode) after empty select update = %d, want %d", got, want)
+	}
+	if got, want := store.ValueForNode(modeID), ""; got != want {
+		t.Fatalf("ValueForNode(#mode) after empty select update = %q, want empty", got)
+	}
+	if got, want := store.DumpDOM(), `<select id="mode"></select>`; got != want {
+		t.Fatalf("DumpDOM() after empty select update = %q, want %q", got, want)
+	}
+}
+
 func TestFormControlMutationHelpersRejectUnsupportedNodes(t *testing.T) {
 	store := NewStore()
 	if err := store.BootstrapHTML(`<main><input id="name"><input id="flag" type="checkbox"><select id="mode"><option>A</option></select></main>`); err != nil {

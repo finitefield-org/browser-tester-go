@@ -668,6 +668,79 @@ func TestRunScriptSupportsURIHelpers(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsBase64Helpers(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		btoa("Man"),
+		atob("TWFu"),
+		atob(" T W F u ")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "TWFu|Man|Man"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsBtoaLatin1RoundTrip(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `btoa("\u0000\u00ff")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "AP8="; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsEscapeUnescape(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `[
+		escape("A&B 春"),
+		unescape("A%26B%20%E6%98%A5"),
+		unescape("%u6625")
+	].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "A%26B%20%E6%98%A5|A&B 春|春"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsBase64HelpersInvalidInput(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	for _, tc := range []struct {
+		name   string
+		source string
+	}{
+		{name: "atob", source: `atob("A")`},
+		{name: "btoa", source: `btoa("春")`},
+	} {
+		if _, err := session.runScriptOnStore(dom.NewStore(), tc.source); err == nil {
+			t.Fatalf("runScriptOnStore(%s) error = nil, want InvalidCharacterError", tc.name)
+		} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+			t.Fatalf("runScriptOnStore(%s) error = %#v, want runtime script error", tc.name, err)
+		} else if !strings.Contains(scriptErr.Message, "InvalidCharacterError") {
+			t.Fatalf("runScriptOnStore(%s) error = %v, want InvalidCharacterError message", tc.name, err)
+		}
+	}
+}
+
 func TestRunScriptRejectsURIHelpersSymbolInput(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -679,6 +752,8 @@ func TestRunScriptRejectsURIHelpersSymbolInput(t *testing.T) {
 		{name: "decodeURIComponent", source: `decodeURIComponent(Symbol("token"))`},
 		{name: "encodeURI", source: `encodeURI(Symbol("token"))`},
 		{name: "decodeURI", source: `decodeURI(Symbol("token"))`},
+		{name: "escape", source: `escape(Symbol("token"))`},
+		{name: "unescape", source: `unescape(Symbol("token"))`},
 	} {
 		if _, err := session.runScriptOnStore(dom.NewStore(), tc.source); err == nil {
 			t.Fatalf("runScriptOnStore(%s) error = nil, want Symbol coercion failure", tc.name)

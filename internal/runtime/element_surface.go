@@ -7,6 +7,7 @@ import (
 
 	"browsertester/internal/dom"
 	"browsertester/internal/script"
+	"browsertester/internal/script/jsregex"
 )
 
 func resolveElementClassNameValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
@@ -203,6 +204,30 @@ func resolveElementSelectedIndexValue(session *Session, store *dom.Store, nodeID
 		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
 	}
 	return script.NumberValue(float64(store.SelectedIndexForNode(nodeID))), nil
+}
+
+func resolveElementSelectionStartValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".selectionStart"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if !supportsTextSelectionNode(node) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	return script.NumberValue(float64(jsregex.UTF16Length(store.ValueForNode(nodeID)))), nil
+}
+
+func resolveElementSelectionEndValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".selectionEnd"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if !supportsTextSelectionNode(node) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	return script.NumberValue(float64(jsregex.UTF16Length(store.ValueForNode(nodeID)))), nil
 }
 
 func resolveElementStylePropertyValue(session *Session, store *dom.Store, nodeID dom.NodeID, property string) (script.Value, error) {
@@ -513,6 +538,20 @@ func resolveElementDatasetPropertyValue(session *Session, store *dom.Store, node
 		return script.UndefinedValue(), nil
 	}
 	return script.StringValue(value), nil
+}
+
+func supportsTextSelectionNode(node *dom.Node) bool {
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return false
+	}
+	switch node.TagName {
+	case "textarea":
+		return true
+	case "input":
+		return isTextInputType(inputType(node))
+	default:
+		return false
+	}
 }
 
 func supportsDisabledAttribute(tagName string) bool {

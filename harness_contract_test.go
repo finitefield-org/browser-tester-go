@@ -4491,6 +4491,28 @@ func TestInteractionSliceSupportsAutofillPseudoClass(t *testing.T) {
 	}
 }
 
+func TestFormControlActionsSetValue(t *testing.T) {
+	harness, err := FromHTML(`<main><input id="name"><textarea id="bio">Base</textarea><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select></main>`)
+	if err != nil {
+		t.Fatalf("FromHTML() error = %v", err)
+	}
+
+	if err := harness.SetValue("#name", "Ada"); err != nil {
+		t.Fatalf("SetValue(#name) error = %v", err)
+	}
+	if err := harness.SetValue("#bio", "Line 1\nLine 2"); err != nil {
+		t.Fatalf("SetValue(#bio) error = %v", err)
+	}
+	if err := harness.SetValue("#mode", "b"); err != nil {
+		t.Fatalf("SetValue(#mode) error = %v", err)
+	}
+
+	if got, want := harness.Debug().DumpDOM(), `<main><input id="name" value="Ada"><textarea id="bio">Line 1
+Line 2</textarea><select id="mode"><option value="a">A</option><option value="b" selected>B</option></select></main>`; got != want {
+		t.Fatalf("Debug().DumpDOM() = %q, want %q", got, want)
+	}
+}
+
 func TestInteractionSliceSupportsActiveHoverPseudoClasses(t *testing.T) {
 	harness, err := FromHTML(`<main id="root"><div id="wrap"><button id="btn" active>Go</button><span id="hovered" hover>Hover</span></div><label id="active-label" for="active-field" active>Field</label><input id="active-field" type="text"><label id="hover-label" hover><input id="hover-field" type="text"></label><label id="secret-label" for="secret" active>Secret</label><input id="secret" type="hidden"><p id="plain">Text</p></main>`)
 	if err != nil {
@@ -6831,6 +6853,11 @@ func TestFormControlActionsRejectUnsupportedTargets(t *testing.T) {
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
 		t.Fatalf("SetSelectValue(#name) error = %#v, want DOM error", err)
 	}
+	if err := harness.SetValue("#flag", "Ada"); err == nil {
+		t.Fatalf("SetValue(#flag) error = nil, want unsupported control error")
+	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
+		t.Fatalf("SetValue(#flag) error = %#v, want DOM error", err)
+	}
 	if err := harness.Submit("#name"); err == nil {
 		t.Fatalf("Submit(#name) error = nil, want unsupported target error")
 	} else if got, ok := err.(Error); !ok || got.Kind != ErrorKindDOM {
@@ -6843,6 +6870,9 @@ func TestNilHarnessFormControlWrappersReturnErrors(t *testing.T) {
 
 	if err := harness.TypeText("#name", "Ada"); err == nil {
 		t.Fatalf("nil Harness.TypeText() error = nil, want DOM error")
+	}
+	if err := harness.SetValue("#name", "Ada"); err == nil {
+		t.Fatalf("nil Harness.SetValue() error = nil, want DOM error")
 	}
 	if err := harness.SetChecked("#flag", true); err == nil {
 		t.Fatalf("nil Harness.SetChecked() error = nil, want DOM error")

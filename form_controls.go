@@ -10,6 +10,16 @@ func (h *Harness) TypeText(selector, text string) error {
 	return nil
 }
 
+func (h *Harness) SetValue(selector, value string) error {
+	if h == nil || h.session == nil {
+		return NewError(ErrorKindDOM, "set value is unavailable")
+	}
+	if err := h.session.SetValue(selector, value); err != nil {
+		return NewError(ErrorKindDOM, err.Error())
+	}
+	return nil
+}
+
 func (h *Harness) SetChecked(selector string, checked bool) error {
 	if h == nil || h.session == nil {
 		return NewError(ErrorKindDOM, "set checked is unavailable")

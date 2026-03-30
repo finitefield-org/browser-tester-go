@@ -33,6 +33,8 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"Set":                   script.BuiltinSetValue(),
 		"Promise":               script.HostConstructorReference("Promise"),
 		"Uint8Array":            script.HostConstructorReference("Uint8Array"),
+		"TextEncoder":           browserTextEncoderValue(),
+		"TextDecoder":           browserTextDecoderValue(),
 		"Symbol":                script.HostFunctionReference("Symbol"),
 		"Number":                script.HostFunctionReference("Number"),
 		"String":                script.HostFunctionReference("String"),
@@ -121,6 +123,12 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 		return value, err
 	}
 
+	if strings.HasPrefix(normalized, browserTextEncoderInstancePath+".") {
+		return resolveTextEncoderInstanceReference(strings.TrimPrefix(normalized, browserTextEncoderInstancePath))
+	}
+	if strings.HasPrefix(normalized, browserTextDecoderInstancePath+".") {
+		return resolveTextDecoderInstanceReference(strings.TrimPrefix(normalized, browserTextDecoderInstancePath))
+	}
 	if strings.HasPrefix(normalized, "url:") {
 		return resolveURLInstanceReference(session, normalized)
 	}
@@ -1273,6 +1281,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementPlaceholderValue(session, store, nodeID)
 	case "type":
 		return resolveElementTypeValue(session, store, nodeID)
+	case "selectionStart":
+		return resolveElementSelectionStartValue(session, store, nodeID)
+	case "selectionEnd":
+		return resolveElementSelectionEndValue(session, store, nodeID)
 	case "lang":
 		return resolveElementLangValue(session, store, nodeID)
 	case "dir":
@@ -1343,15 +1355,9 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	case "files":
 		return resolveElementFilesValue(session, store, nodeID)
 	case "classList":
-		if node.Kind != dom.NodeKindElement {
-			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
-		}
-		return script.HostObjectReference(base + ".classList"), nil
+		return resolveElementClassListPropertyValue(session, store, nodeID, "")
 	case "dataset":
-		if node.Kind != dom.NodeKindElement {
-			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))
-		}
-		return script.HostObjectReference(base + ".dataset"), nil
+		return resolveElementDatasetPropertyValue(session, store, nodeID, "")
 	case "innerText":
 		return resolveElementInnerTextValue(session, store, nodeID)
 	case "outerText":
@@ -1381,6 +1387,10 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 	case "blur":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementBlur(session, store, nodeID, args)
+		}), nil
+	case "setSelectionRange":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserElementSetSelectionRange(session, store, nodeID, args)
 		}), nil
 	case "getContext":
 		if node.TagName != "canvas" {
@@ -1883,6 +1893,9 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 			currency = strings.ToUpper(strings.TrimSpace(script.ToJSString(value)))
 		}
 		if value, ok := objectProperty(options, "minimumFractionDigits"); ok {
+			if value.Kind == script.ValueKindUndefined || value.Kind == script.ValueKindNull {
+				goto afterMinimumFractionDigits
+			}
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
 				return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat minimumFractionDigits must be numeric")
 			}
@@ -1893,7 +1906,11 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 			minFractionDigits = int(parsed)
 			hasMinimumFractionDigits = true
 		}
+	afterMinimumFractionDigits:
 		if value, ok := objectProperty(options, "maximumFractionDigits"); ok {
+			if value.Kind == script.ValueKindUndefined || value.Kind == script.ValueKindNull {
+				goto afterMaximumFractionDigits
+			}
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
 				return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat maximumFractionDigits must be numeric")
 			}
@@ -1904,10 +1921,14 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 			maxFractionDigits = int(parsed)
 			hasMaximumFractionDigits = true
 		}
+	afterMaximumFractionDigits:
 		if maxFractionDigits >= 0 && minFractionDigits > maxFractionDigits {
 			return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat minimumFractionDigits cannot exceed maximumFractionDigits")
 		}
 		if value, ok := objectProperty(options, "maximumSignificantDigits"); ok {
+			if value.Kind == script.ValueKindUndefined || value.Kind == script.ValueKindNull {
+				goto afterMaximumSignificantDigits
+			}
 			if value.Kind != script.ValueKindNumber && value.Kind != script.ValueKindBigInt {
 				return script.UndefinedValue(), fmt.Errorf("Intl.NumberFormat maximumSignificantDigits must be numeric")
 			}
@@ -1918,6 +1939,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 			maxSignificantDigits = int(parsed)
 			hasMaximumSignificantDigits = true
 		}
+	afterMaximumSignificantDigits:
 		if value, ok := objectProperty(options, "useGrouping"); ok && value.Kind == script.ValueKindBool {
 			useGrouping = value.Bool
 		}

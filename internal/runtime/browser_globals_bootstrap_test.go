@@ -332,6 +332,53 @@ func TestSessionBootstrapsURIComponentHelpers(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsBase64Helpers(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [btoa("Man"), atob("TWFu"), window.atob(" T W F u "), window.btoa("Man")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "TWFu|Man|Man|TWFu" {
+		t.Fatalf("TextContent(#out) = %q, want base64 helper round-trip", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after base64 bootstrap", got)
+	}
+}
+
+func TestSessionRejectsBase64HelpersMalformedInput(t *testing.T) {
+	session := NewSession(SessionConfig{HTML: `<main><script>atob("A")</script></main>`})
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want InvalidCharacterError failure")
+	} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindRuntime {
+		t.Fatalf("ensureDOM() error = %#v, want runtime script error", err)
+	} else if !strings.Contains(scriptErr.Message, "InvalidCharacterError") {
+		t.Fatalf("ensureDOM() error = %v, want InvalidCharacterError message", err)
+	}
+}
+
+func TestSessionBootstrapsEscapeUnescapeHelpers(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [escape("A&B 春"), unescape("A%26B%20%E6%98%A5"), unescape("%u6625")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "A%26B%20%E6%98%A5|A&B 春|春" {
+		t.Fatalf("TextContent(#out) = %q, want escape/unescape helper round-trip", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after escape/unescape bootstrap", got)
+	}
+}
+
 func TestSessionRejectsURIComponentHelpersMalformedSequence(t *testing.T) {
 	const rawHTML = `<main><script>decodeURIComponent("%C3%28")</script></main>`
 
@@ -766,6 +813,24 @@ func TestSessionBootstrapsArrayFindLastFamily(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsFunctionApplyOnArrayPush(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const values = []; values.push.apply(values, [1, 2, 3]); document.getElementById("out").textContent = values.join(",")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1,2,3" {
+		t.Fatalf("TextContent(#out) = %q, want 1,2,3", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Function.apply bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsArrayCopyWithin(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const values = [1, 2, 3, 4, 5]; values.copyWithin(0, 3); const mixed = ["a", "b", "c", "d", "e"]; mixed.copyWithin(-2, 1, 3); document.getElementById("out").textContent = [values.join(","), mixed.join(",")].join("|")</script></main>`
 
@@ -951,6 +1016,24 @@ func TestSessionRejectsSelectedIndexAssignmentOnNonSelectElement(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsEmptySelectValueAssignment(t *testing.T) {
+	const rawHTML = `<main><select id="rounding-target"></select><script>const select = document.getElementById("rounding-target"); select.value = "row_1"; const probe = document.createElement("button"); probe.id = "probe"; probe.textContent = "ready"; document.body.appendChild(probe);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if got != "ready" {
+		t.Fatalf("TextContent(#probe) = %q, want ready", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after empty select value bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsTextareaPlaceholderReflection(t *testing.T) {
 	const rawHTML = `<main><textarea id="output"></textarea><script>const output = document.getElementById("output"); output.placeholder = "Sorted output appears here";</script></main>`
 
@@ -1068,6 +1151,37 @@ func TestSessionBootstrapsBlobObjectUrlDownload(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsCsvDownloadClickWithQuotedArrowFunctions(t *testing.T) {
+	const rawHTML = `<main><button id="download">Download</button><div id="out"></div><script>function csvLine(values) { return values.map((value) => { const text = String(value === undefined || value === null ? "" : value); if (/[",\n]/.test(text)) return "\"" + text.replace(/"/g, "\"\"") + "\""; return text; }).join(","); } function buildCsv() { return [["Element", "Count"], ["C", "6"]].map(csvLine).join("\n"); } function downloadCsv() { const blob = new Blob(["\uFEFF" + buildCsv()], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "sample.csv"; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); document.getElementById("out").textContent = "done"; } document.getElementById("download").addEventListener("click", downloadCsv);</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+	if err := session.Click("#download"); err != nil {
+		t.Fatalf("Click(#download) error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "done" {
+		t.Fatalf("TextContent(#out) = %q, want done", got)
+	}
+	downloads := session.Registry().Downloads().Artifacts()
+	if len(downloads) != 1 {
+		t.Fatalf("Downloads().Artifacts() = %#v, want one captured download", downloads)
+	}
+	if downloads[0].FileName != "sample.csv" {
+		t.Fatalf("Downloads()[0].FileName = %q, want sample.csv", downloads[0].FileName)
+	}
+	if got, want := string(downloads[0].Bytes), "\uFEFFElement,Count\nC,6"; got != want {
+		t.Fatalf("Downloads()[0].Bytes = %q, want %q", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after quoted arrow function download bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsXMLSerializerSerializesElementNodes(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const serializer = new XMLSerializer(); if (!(serializer instanceof XMLSerializer)) { throw new Error("XMLSerializer instanceof failed"); } const node = document.createElement("div"); node.setAttribute("data-test", "ok"); document.getElementById("out").textContent = serializer.serializeToString(node);</script></main>`
 
@@ -1101,6 +1215,42 @@ func TestSessionBootstrapsDOMParserParserErrorDocument(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after DOMParser parsererror bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsTextEncoderAndTextDecoderRoundTrip(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const encoder = new TextEncoder(); const decoder = new TextDecoder(); const bytes = encoder.encode("Aé"); const protoBytes = TextEncoder.prototype.encode("B"); document.getElementById("out").textContent = [encoder instanceof TextEncoder, decoder instanceof TextDecoder, encoder.encoding, decoder.encoding, bytes.length, decoder.decode(bytes), protoBytes.length, TextDecoder.prototype.decode(protoBytes)].join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|true|utf-8|utf-8|3|Aé|1|B" {
+		t.Fatalf("TextContent(#out) = %q, want TextEncoder/TextDecoder round-trip output", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after TextEncoder/TextDecoder bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsTextEncoderEncodeResultForEach(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const bytes = new TextEncoder().encode("Aé"); const seen = []; bytes.forEach((byte, index, array) => { seen.push([index, byte, array.length].join(":")); }); document.getElementById("out").textContent = seen.join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0:65:3|1:195:3|2:169:3" {
+		t.Fatalf("TextContent(#out) = %q, want Uint8Array.forEach byte iteration", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Uint8Array.forEach bootstrap", got)
 	}
 }
 
@@ -1954,6 +2104,27 @@ func TestSessionBootstrapsObjectKeysForEachMultiplicationCopyInClickHandler(t *t
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after click bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsObjectCreateNullPrototypeInClickHandler(t *testing.T) {
+	const rawHTML = `<main><button id="go" type="button">go</button><div id="out"></div><script>(() => { document.getElementById("go").addEventListener("click", () => { const out = Object.create(null); out.alpha = 1; document.getElementById("out").textContent = Object.keys(out).join(","); }); })();</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#go"); err != nil {
+		t.Fatalf("Click(#go) error = %v", err)
+	}
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "alpha" {
+		t.Fatalf("TextContent(#out) = %q, want alpha", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Object.create click bootstrap", got)
 	}
 }
 
@@ -2987,6 +3158,24 @@ func TestSessionBootstrapsClosestSelectorVariable(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsDelegatedHistoryActionDataset(t *testing.T) {
+	const rawHTML = `<main><div id="history"><button type="button" data-history-action="load" data-history-id="demo">Load</button></div><div id="out"></div><script>document.getElementById("history").addEventListener("click", (event) => { const button = event.target.closest("[data-history-action]"); if (!button) return; if (button.dataset.historyAction === "load") { document.getElementById("out").textContent = button.dataset.historyId; } });</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if err := session.Click("[data-history-action='load']"); err != nil {
+		t.Fatalf("Click([data-history-action='load']) error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "demo" {
+		t.Fatalf("TextContent(#out) = %q, want demo", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after delegated history action bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsIntlNumberFormatMaximumSignificantDigits(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 }).format(26.72665916760405)</script></main>`
 
@@ -3002,6 +3191,24 @@ func TestSessionBootstrapsIntlNumberFormatMaximumSignificantDigits(t *testing.T)
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat significant digits bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsIntlNumberFormatIgnoresUndefinedSignificantDigits(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, maximumSignificantDigits: undefined }).format(1234.5678)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1,234.57" {
+		t.Fatalf("TextContent(#out) = %q, want 1,234.57", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat undefined option bootstrap", got)
 	}
 }
 
@@ -3856,16 +4063,21 @@ func TestSessionBootstrapsElementFocusAndBlurMethodsWithDomListeners(t *testing.
 	}
 }
 
-func TestSessionRejectsElementFocusAndBlurArguments(t *testing.T) {
+func TestSessionHandlesElementFocusAndBlurArguments(t *testing.T) {
 	t.Run("focus", func(t *testing.T) {
-		const rawHTML = `<main><input id="field"><script>document.getElementById("field").focus("now")</script></main>`
+		const rawHTML = `<main><input id="field"><div id="out"></div><script>const field = document.getElementById("field"); field.focus("now"); document.getElementById("out").textContent = document.activeElement === field ? "true" : "false";</script></main>`
 
 		session := NewSession(SessionConfig{HTML: rawHTML})
-		if _, err := session.ensureDOM(); err == nil {
-			t.Fatalf("ensureDOM() error = nil, want element.focus argument validation failure")
+		if _, err := session.ensureDOM(); err != nil {
+			t.Fatalf("ensureDOM() error = %v", err)
 		}
-		if got := session.DOMError(); !strings.Contains(got, "element.focus accepts no arguments") {
-			t.Fatalf("DOMError() = %q, want element.focus argument validation failure text", got)
+		if got, err := session.TextContent("#out"); err != nil {
+			t.Fatalf("TextContent(#out) error = %v", err)
+		} else if got != "true" {
+			t.Fatalf("TextContent(#out) = %q, want focused field", got)
+		}
+		if got := session.DOMError(); got != "" {
+			t.Fatalf("DOMError() = %q, want empty after focus argument bootstrap", got)
 		}
 	})
 
@@ -4664,5 +4876,41 @@ func TestSessionBootstrapsOptionalCatchBindingInAsyncHelper(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after optional catch binding bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsTextSelectionSurfacesOnTextInputs(t *testing.T) {
+	const rawHTML = `<main><input id="name" value="abc"><div id="out"></div><script>const el = document.getElementById("name"); const before = [typeof el.selectionStart, typeof el.selectionEnd].join("|"); el.setSelectionRange(1, 2); const after = [typeof el.selectionStart, typeof el.selectionEnd].join("|"); document.getElementById("out").textContent = [before, after].join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "number|number|number|number" {
+		t.Fatalf("TextContent(#out) = %q, want number|number|number|number", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after text selection bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsFocusOptionsPreventScroll(t *testing.T) {
+	const rawHTML = `<main><input id="name" value="abc"><div id="out"></div><script>const el = document.getElementById("name"); el.focus({ preventScroll: true }); document.getElementById("out").textContent = document.activeElement === el ? "true" : "false";</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true" {
+		t.Fatalf("TextContent(#out) = %q, want true", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after focus options bootstrap", got)
 	}
 }

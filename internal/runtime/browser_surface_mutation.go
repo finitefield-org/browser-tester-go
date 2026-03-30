@@ -826,8 +826,8 @@ func browserElementFocus(session *Session, store *dom.Store, nodeID dom.NodeID, 
 	if session == nil || store == nil {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.focus is unavailable in this bounded classic-JS slice")
 	}
-	if len(args) > 0 {
-		return script.UndefinedValue(), fmt.Errorf("element.focus accepts no arguments")
+	if len(args) > 1 {
+		return script.UndefinedValue(), fmt.Errorf("element.focus accepts at most 1 argument")
 	}
 	if err := session.focusElementNode(store, nodeID); err != nil {
 		return script.UndefinedValue(), err
@@ -843,6 +843,29 @@ func browserElementBlur(session *Session, store *dom.Store, nodeID dom.NodeID, a
 		return script.UndefinedValue(), fmt.Errorf("element.blur accepts no arguments")
 	}
 	if err := session.blurElementNode(store, nodeID); err != nil {
+		return script.UndefinedValue(), err
+	}
+	return script.UndefinedValue(), nil
+}
+
+func browserElementSetSelectionRange(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
+	if session == nil || store == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.setSelectionRange is unavailable in this bounded classic-JS slice")
+	}
+	if len(args) < 2 {
+		return script.UndefinedValue(), fmt.Errorf("element.setSelectionRange requires 2 arguments")
+	}
+	if len(args) > 3 {
+		return script.UndefinedValue(), fmt.Errorf("element.setSelectionRange accepts at most 3 arguments")
+	}
+	node := nodeFromStore(store, nodeID)
+	if !supportsTextSelectionNode(node) {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.setSelectionRange is unavailable in this bounded classic-JS slice")
+	}
+	if _, err := browserInt64Value("element.setSelectionRange", args[0]); err != nil {
+		return script.UndefinedValue(), err
+	}
+	if _, err := browserInt64Value("element.setSelectionRange", args[1]); err != nil {
 		return script.UndefinedValue(), err
 	}
 	return script.UndefinedValue(), nil

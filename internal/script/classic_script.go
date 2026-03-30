@@ -1166,10 +1166,45 @@ func (f *classicJSArrowFunction) ensureSkipCache() *classicJSSkipCache {
 }
 
 func classicJSFunctionOwnProperty(value Value, name string) (Value, bool) {
-	if value.Kind != ValueKindFunction || value.Function == nil {
+	if value.Kind != ValueKindFunction {
 		return UndefinedValue(), false
 	}
-	return lookupObjectProperty(value.Function.objectProps, name)
+	if value.Function != nil {
+		if resolved, ok := lookupObjectProperty(value.Function.objectProps, name); ok {
+			return resolved, true
+		}
+	}
+	switch name {
+	case "call":
+		return NativeNamedFunctionValue("call", func(args []Value) (Value, error) {
+			thisArg := UndefinedValue()
+			callArgs := args
+			if len(args) > 0 {
+				thisArg = args[0]
+				callArgs = args[1:]
+			}
+			return InvokeCallableValue(CurrentInvokeHost(), value, callArgs, thisArg, true)
+		}), true
+	case "apply":
+		return NativeNamedFunctionValue("apply", func(args []Value) (Value, error) {
+			thisArg := UndefinedValue()
+			if len(args) > 0 {
+				thisArg = args[0]
+			}
+			callArgs := []Value{}
+			if len(args) > 1 {
+				switch args[1].Kind {
+				case ValueKindUndefined, ValueKindNull:
+				case ValueKindArray:
+					callArgs = append(callArgs, args[1].Array...)
+				default:
+					return UndefinedValue(), NewError(ErrorKindUnsupported, "Function.apply expects an array argument list in this bounded classic-JS slice")
+				}
+			}
+			return InvokeCallableValue(CurrentInvokeHost(), value, callArgs, thisArg, true)
+		}), true
+	}
+	return UndefinedValue(), false
 }
 
 func classicJSFunctionSetOwnProperty(value Value, name string, next Value) bool {
@@ -10796,7 +10831,7 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			}
 			return scalarJSValue(resolved), nil
 		}
-		if value.value.Kind == ValueKindFunction && value.value.Function != nil {
+		if value.value.Kind == ValueKindFunction {
 			if resolved, ok := classicJSFunctionOwnProperty(value.value, name); ok {
 				return scalarJSValue(resolved), nil
 			}
@@ -11019,7 +11054,7 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 			}
 			return scalarJSValue(resolved), nil
 		}
-		if value.value.Kind == ValueKindFunction && value.value.Function != nil {
+		if value.value.Kind == ValueKindFunction {
 			if resolved, ok := classicJSFunctionOwnProperty(value.value, keyString); ok {
 				return scalarJSValue(resolved), nil
 			}
@@ -11523,6 +11558,12 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 						return true, nil
 					}
 					return leftTag == expectedTag, nil
+				}
+				switch right.Function.name {
+				case "TextEncoder":
+					return left.HostReferencePath == "textencoder" || strings.HasPrefix(left.HostReferencePath, "textencoder."), nil
+				case "TextDecoder":
+					return left.HostReferencePath == "textdecoder" || strings.HasPrefix(left.HostReferencePath, "textdecoder."), nil
 				}
 			}
 			marker, ok := classicJSConstructibleFunctionMarker(right.Function)

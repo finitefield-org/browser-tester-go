@@ -18,6 +18,45 @@ func (s *Session) DumpDOM() string {
 	return store.DumpDOM()
 }
 
+func (s *Session) SetValue(selector, value string) (err error) {
+	if s == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	store, nodeID, node, normalized, err := s.resolveActionTarget(selector)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.discardMicrotasks()
+		}
+	}()
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return fmt.Errorf("selector `%s` does not reference a supported form control", normalized)
+	}
+
+	switch node.TagName {
+	case "select":
+		return store.SetSelectValue(nodeID, value)
+	case "textarea":
+		return store.SetFormControlValue(nodeID, value)
+	case "input":
+		if inputType(node) == "file" {
+			if value != "" {
+				return fmt.Errorf("set_value is only supported on text-like inputs, textareas, and selects, not <input type=%q>", inputType(node))
+			}
+			if err := store.SetFormControlValue(nodeID, value); err != nil {
+				return err
+			}
+			clearFileInputSelectionForNode(s, store, nodeID)
+			return nil
+		}
+		return store.SetFormControlValue(nodeID, value)
+	default:
+		return fmt.Errorf("selector `%s` does not reference a supported form control", normalized)
+	}
+}
+
 func (s *Session) TypeText(selector, text string) (err error) {
 	if s == nil {
 		return fmt.Errorf("session is unavailable")

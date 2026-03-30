@@ -23,6 +23,7 @@ func browserUint8ArrayConstructor(args []script.Value) (script.Value, error) {
 }
 
 func browserUint8ArrayValue(bytes []byte) script.Value {
+	var arrayValue script.Value
 	elements := make([]script.ObjectEntry, 0, len(bytes)+3)
 	for i, b := range bytes {
 		elements = append(elements, script.ObjectEntry{
@@ -35,8 +36,41 @@ func browserUint8ArrayValue(bytes []byte) script.Value {
 		script.ObjectEntry{Key: "byteLength", Value: script.NumberValue(float64(len(bytes)))},
 		script.ObjectEntry{Key: "buffer", Value: browserUint8ArrayBufferValue(bytes)},
 		script.ObjectEntry{Key: script.BrowserUint8ArrayBytesKey, Value: script.ArrayValue(browserUint8ArrayBytesToValues(bytes))},
+		script.ObjectEntry{
+			Key: "forEach",
+			Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+				if len(args) == 0 {
+					return script.UndefinedValue(), script.ThrowValue(script.StringValue("Uint8Array.forEach expects 1 argument"))
+				}
+				callback := args[0]
+				thisArg := script.UndefinedValue()
+				hasThisArg := false
+				if len(args) > 1 {
+					thisArg = args[1]
+					hasThisArg = true
+				}
+				for i, b := range bytes {
+					_, err := script.InvokeCallableValue(
+						script.CurrentInvokeHost(),
+						callback,
+						[]script.Value{
+							script.NumberValue(float64(b)),
+							script.NumberValue(float64(i)),
+							arrayValue,
+						},
+						thisArg,
+						hasThisArg,
+					)
+					if err != nil {
+						return script.UndefinedValue(), err
+					}
+				}
+				return script.UndefinedValue(), nil
+			}),
+		},
 	)
-	return script.ObjectValue(elements)
+	arrayValue = script.ObjectValue(elements)
+	return arrayValue
 }
 
 func browserUint8ArrayBufferValue(bytes []byte) script.Value {

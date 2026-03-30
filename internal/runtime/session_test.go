@@ -1931,6 +1931,38 @@ func TestSessionFormControlsUpdateLiveDomAndLog(t *testing.T) {
 	}
 }
 
+func TestSessionSetValueSeedsFormControlsWithoutDispatchingEvents(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="name"><input id="flag" type="checkbox"><textarea id="bio">Base</textarea><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select></main>`,
+	})
+
+	if err := s.SetValue("#name", "Ada"); err != nil {
+		t.Fatalf("SetValue(#name) error = %v", err)
+	}
+	if err := s.SetValue("#bio", "Line 1\nLine 2"); err != nil {
+		t.Fatalf("SetValue(#bio) error = %v", err)
+	}
+	if err := s.SetValue("#mode", "b"); err != nil {
+		t.Fatalf("SetValue(#mode) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><input id="name" value="Ada"><input id="flag" type="checkbox"><textarea id="bio">Line 1
+Line 2</textarea><select id="mode"><option value="a">A</option><option value="b" selected>B</option></select></main>`; got != want {
+		t.Fatalf("DumpDOM() = %q, want %q", got, want)
+	}
+	if got := s.InteractionLog(); len(got) != 0 {
+		t.Fatalf("InteractionLog() = %#v, want empty for direct seeding", got)
+	}
+
+	if err := s.SetValue("#flag", "yes"); err == nil {
+		t.Fatalf("SetValue(#flag) error = nil, want unsupported control error")
+	}
+	if got, want := s.DumpDOM(), `<main><input id="name" value="Ada"><input id="flag" type="checkbox"><textarea id="bio">Line 1
+Line 2</textarea><select id="mode"><option value="a">A</option><option value="b" selected>B</option></select></main>`; got != want {
+		t.Fatalf("DumpDOM() after failed SetValue(#flag) = %q, want %q", got, want)
+	}
+}
+
 func TestSessionSelectValueAssignmentUpdatesLiveDom(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><select id="mode"><option value="a" selected>A</option><option value="b">B</option></select><div id="out"></div><script>const select = document.querySelector("#mode"); select.value = "b"; host:setTextContent("#out", expr(select.value))</script></main>`,
