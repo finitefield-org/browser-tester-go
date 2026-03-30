@@ -47,6 +47,14 @@ internal/
     parser.go
     evaluator.go
     bindings.go
+    jsregex/
+      ast.go
+      compile.go
+      parser.go
+      replace.go
+      state.go
+      utf16.go
+      vm.go
   mocks/
     fetch.go
     externaljs.go
@@ -157,6 +165,8 @@ Exit criteria:
   `expr(...)` wrapper for nested host expressions. The inline
   bootstrap slice should accept a bounded classic-JS statement parser that routes `host.method(...)`
   calls into the host bridge.
+- Keep regex literals and regex-aware string methods on one engine path; `internal/script/jsregex`
+  should own parsing, compilation, and matching so later `RegExp` APIs do not fork semantics.
 - Keep the runtime deterministic and explicit about unsupported syntax.
 
 Exit criteria:

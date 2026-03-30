@@ -232,6 +232,13 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "value", script.ToJSString(value))
 		}
 		return store.SetFormControlValue(nodeID, script.ToJSString(value))
+	case rest == "type":
+		switch node.TagName {
+		case "button", "input":
+			return store.SetAttribute(nodeID, "type", strings.ToLower(strings.TrimSpace(script.ToJSString(value))))
+		default:
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
 	case rest == "placeholder":
 		if !supportsPlaceholderAttribute(node) {
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
@@ -258,6 +265,16 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 	case rest == "open":
 		if value.Kind != script.ValueKindBool {
 			return fmt.Errorf("element.open expects a boolean in this bounded classic-JS slice")
+		}
+		if node.TagName == "details" {
+			changed, err := session.setDetailsOpenState(store, nodeID, value.Bool)
+			if err != nil {
+				return err
+			}
+			if changed {
+				return session.dispatchDetailsToggleEvent(store, nodeID)
+			}
+			return nil
 		}
 		if value.Bool {
 			return store.SetAttribute(nodeID, "open", "")
@@ -289,6 +306,8 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		return setElementStyleText(store, nodeID, script.ToJSString(value))
 	case rest == "lang":
 		return store.SetAttribute(nodeID, "lang", script.ToJSString(value))
+	case rest == "dir":
+		return store.SetAttribute(nodeID, "dir", script.ToJSString(value))
 	case strings.HasPrefix(rest, "style."):
 		return setElementStylePropertyValue(store, nodeID, strings.TrimPrefix(rest, "style."), script.ToJSString(value))
 	case rest == "dataset":

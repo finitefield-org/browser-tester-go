@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"browsertester/internal/script"
@@ -134,6 +135,40 @@ func TestSessionAdvanceTimeRunsTimerCallbacksWithArguments(t *testing.T) {
 	}
 	if got, want := len(calls), 3; got != want {
 		t.Fatalf("calls after clearInterval = %#v, want %d entries", calls, want)
+	}
+}
+
+func TestSessionAdvanceTimeSupportsButtonTypeAssignmentInTimerCallback(t *testing.T) {
+	s := NewSession(SessionConfig{})
+
+	if err := s.WriteHTML(`<main><div id="out"></div><script>window.setTimeout(() => { const button = document.createElement("button"); button.type = "button"; document.getElementById("out").appendChild(button); }, 1);</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if err := s.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+
+	if got := s.DumpDOM(); !strings.Contains(got, `<button type="button"></button>`) {
+		t.Fatalf("DumpDOM() after button.type timer = %q, want button element with type=\"button\"", got)
+	}
+}
+
+func TestSessionAdvanceTimeSupportsButtonTypeReadbackInTimerCallback(t *testing.T) {
+	s := NewSession(SessionConfig{})
+
+	if err := s.WriteHTML(`<main><div id="out"></div><script>window.setTimeout(() => { const button = document.createElement("button"); button.type = "button"; document.getElementById("out").textContent = button.type; }, 1);</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if err := s.AdvanceTime(1); err != nil {
+		t.Fatalf("AdvanceTime(1) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) after button.type timer error = %v", err)
+	} else if got != "button" {
+		t.Fatalf("TextContent(#out) after button.type timer = %q, want button", got)
 	}
 }
 

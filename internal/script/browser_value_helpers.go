@@ -2,11 +2,12 @@ package script
 
 import (
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"browsertester/internal/script/jsregex"
 )
 
 const browserDateInternalPrefix = "\x00browser-date:"
@@ -16,6 +17,8 @@ const BrowserUint8ArrayBytesKey = browserTypedArrayInternalPrefix + "bytes"
 const symbolObjectKeyPrefix = "\x00classic-js-symbol:"
 
 var symbolDescriptions sync.Map
+var wellKnownSymbolValues sync.Map
+var wellKnownSymbolIterator = WellKnownSymbolValue("Symbol.iterator")
 
 func IsInternalObjectKey(name string) bool {
 	return classicJSIsInternalObjectKey(name)
@@ -49,6 +52,25 @@ func SymbolObjectKey(value Value) (string, bool) {
 		return "", false
 	}
 	return symbolObjectKeyPrefix + value.SymbolID, true
+}
+
+func WellKnownSymbolValue(name string) Value {
+	if value, ok := wellKnownSymbolValues.Load(name); ok {
+		if symbol, ok := value.(Value); ok {
+			return symbol
+		}
+	}
+	symbol := SymbolValue(name)
+	if value, loaded := wellKnownSymbolValues.LoadOrStore(name, symbol); loaded {
+		if cached, ok := value.(Value); ok {
+			return cached
+		}
+	}
+	return symbol
+}
+
+func isWellKnownSymbolIterator(value Value) bool {
+	return value.Kind == ValueKindSymbol && value.SymbolID == wellKnownSymbolIterator.SymbolID
 }
 
 func SymbolValueFromObjectKey(key string) (Value, bool) {
@@ -480,8 +502,8 @@ func RegExpLiteralParts(value Value) (pattern string, flags string, ok bool) {
 	return patternValue.String, flagsValue.String, true
 }
 
-func CompileRegExpLiteral(pattern, flags string) (*regexp.Regexp, error) {
-	return classicJSCompileRegExpLiteral(pattern, flags)
+func CompileRegExpLiteral(pattern, flags string) (*jsregex.RegexpState, error) {
+	return jsregex.CompileLiteral(pattern, flags)
 }
 
 func BuiltinFunctionValue(name string, params []string, restName string, body string, bodyIsBlock bool) Value {

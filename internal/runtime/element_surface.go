@@ -94,6 +94,33 @@ func resolveElementPlaceholderValue(session *Session, store *dom.Store, nodeID d
 	return script.StringValue(value), nil
 }
 
+func resolveElementTypeValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".type"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	switch node.TagName {
+	case "button":
+		value, ok := domAttributeValue(store, nodeID, "type")
+		if !ok || strings.TrimSpace(value) == "" {
+			return script.StringValue("submit"), nil
+		}
+		return script.StringValue(strings.ToLower(strings.TrimSpace(value))), nil
+	case "input":
+		value, ok := domAttributeValue(store, nodeID, "type")
+		if !ok || strings.TrimSpace(value) == "" {
+			return script.StringValue("text"), nil
+		}
+		return script.StringValue(strings.ToLower(strings.TrimSpace(value))), nil
+	default:
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+}
+
 func resolveElementLangValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
 	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".lang"
 	if session == nil || store == nil {
@@ -108,6 +135,22 @@ func resolveElementLangValue(session *Session, store *dom.Store, nodeID dom.Node
 		return script.StringValue(""), nil
 	}
 	return script.StringValue(value), nil
+}
+
+func resolveElementDirValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".dir"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	value, ok := domAttributeValue(store, nodeID, "dir")
+	if !ok {
+		return script.StringValue(""), nil
+	}
+	return script.StringValue(strings.ToLower(strings.TrimSpace(value))), nil
 }
 
 func resolveElementDisabledValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {

@@ -7,14 +7,6 @@ This file tracks only the remaining implementation work.
 - Expand the bounded browser stdlib slice to cover the remaining current `String` APIs beyond the
   methods already listed in `README.md` and `doc/capability-matrix.md`.
 - Schedule the missing current members explicitly:
-  - `String.fromCodePoint()`
-  - `String.raw()`
-  - `String.prototype.toLocaleLowerCase()`
-  - `String.prototype.toLocaleUpperCase()`
-  - `String.prototype.isWellFormed()`
-  - `String.prototype.toWellFormed()`
-  - `String.prototype[@@iterator]` if the string iterator hook is not already exposed through the
-    runtime bridge
 - Keep legacy and deprecated `String` members out of scope for this slice, including `substr`,
   `trimLeft`, `trimRight`, and the HTML wrapper helpers such as `anchor()`, `big()`, `blink()`,
   `bold()`, `fixed()`, `fontcolor()`, `fontsize()`, `italics()`, `link()`, `small()`, `strike()`,
@@ -28,11 +20,9 @@ This file tracks only the remaining implementation work.
   members already listed in `README.md` and `doc/capability-matrix.md`.
 - Schedule the missing current members explicitly:
   - `Array.fromAsync()`
-  - `Array.of()`
   - `Array[Symbol.species]`
   - `Array.prototype[@@iterator]`
   - `Array.prototype[@@unscopables]`
-  - `Array.prototype.toReversed()`
   - `Array.prototype.toSpliced()`
   - `Array.prototype.with()`
 - Keep legacy and deprecated Array compatibility branches out of scope for this slice.
@@ -151,6 +141,8 @@ This file tracks only the remaining implementation work.
 
 ## RegExp API Expansion
 
+- The native engine design and migration plan live in `doc/adr/0001-native-regexp-engine.md`;
+  implement that engine first so the later API rows share one matcher.
 - Expand the bounded browser stdlib slice to cover the remaining current `RegExp` APIs beyond the
   regular-expression literal support already present in the bounded classic-JS slice.
 - Schedule the missing current members explicitly:

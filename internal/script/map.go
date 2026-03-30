@@ -87,7 +87,7 @@ func classicJSMapInstanceValue(state *classicJSMapState, marker string) Value {
 			Value: BoolValue(true),
 		})
 	}
-	value := ObjectValue(entries)
+	value := objectValueOwned(Value{}, entries)
 	value.MapState = state
 	return value
 }
@@ -100,7 +100,7 @@ func classicJSSetInstanceValue(state *classicJSSetState, marker string) Value {
 			Value: BoolValue(true),
 		})
 	}
-	value := ObjectValue(entries)
+	value := objectValueOwned(Value{}, entries)
 	value.SetState = state
 	return value
 }
@@ -302,7 +302,7 @@ func classicJSSetConstructorValues(source Value) ([]Value, error) {
 		if source.MapState != nil {
 			values := make([]Value, 0, len(source.MapState.entries))
 			for _, entry := range source.MapState.entries {
-				values = append(values, ArrayValue([]Value{entry.key, entry.value}))
+				values = append(values, arrayValueOwned([]Value{entry.key, entry.value}))
 			}
 			return values, nil
 		}
@@ -557,7 +557,7 @@ func classicJSMapIteratorMethodValue(method string, entries []classicJSMapEntry,
 
 func classicJSMapIteratorValue(entries []classicJSMapEntry, mode classicJSMapIterationMode) Value {
 	index := 0
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key: "next",
 			Value: NativeFunctionValue(func(args []Value) (Value, error) {
@@ -573,7 +573,7 @@ func classicJSMapIteratorValue(entries []classicJSMapEntry, mode classicJSMapIte
 				case classicJSMapIterationKeys:
 					return classicJSIteratorResult(current.key, false), nil
 				case classicJSMapIterationEntries:
-					return classicJSIteratorResult(ArrayValue([]Value{current.key, current.value}), false), nil
+					return classicJSIteratorResult(arrayValueOwned([]Value{current.key, current.value}), false), nil
 				default:
 					return classicJSIteratorResult(current.value, false), nil
 				}
@@ -673,7 +673,7 @@ func classicJSSetIteratorMethodValue(method string, entries []Value, mode classi
 
 func classicJSSetIteratorValue(entries []Value, mode classicJSSetIterationMode) Value {
 	index := 0
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key: "next",
 			Value: NativeFunctionValue(func(args []Value) (Value, error) {
@@ -686,7 +686,7 @@ func classicJSSetIteratorValue(entries []Value, mode classicJSSetIterationMode) 
 				current := entries[index]
 				index++
 				if mode == classicJSSetIterationEntries {
-					return classicJSIteratorResult(ArrayValue([]Value{current, current}), false), nil
+					return classicJSIteratorResult(arrayValueOwned([]Value{current, current}), false), nil
 				}
 				return classicJSIteratorResult(current, false), nil
 			}),
@@ -695,7 +695,7 @@ func classicJSSetIteratorValue(entries []Value, mode classicJSSetIterationMode) 
 }
 
 func classicJSIteratorResult(value Value, done bool) Value {
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{Key: "value", Value: value},
 		{Key: "done", Value: BoolValue(done)},
 	})

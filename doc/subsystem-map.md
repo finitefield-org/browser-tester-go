@@ -84,6 +84,8 @@ Owns:
 - evaluator
 - host bindings
 - microtask execution hooks tied to script runtime semantics
+- regular-expression parsing, compilation, execution, replacement expansion, and `lastIndex`
+  handling through a dedicated `jsregex` subpackage
 
 Location:
 
@@ -94,6 +96,28 @@ Choose this layer when the question is:
 - how should this source text parse?
 - how should a script expression evaluate?
 - how does a host object bridge into script?
+- how should a regex pattern parse or execute?
+- how should lookahead, lookbehind, backreferences, and `lastIndex` behave?
+- how do regex-aware string methods share one engine?
+
+## RegExp Engine
+
+Owns:
+
+- ECMAScript regular-expression parsing, ASTs, compilation, execution, and replacement expansion
+- UTF-16 code-unit mapping and capture/index bookkeeping
+- mutable regex-instance state such as `lastIndex`, flag bits, and named-group metadata
+- the shared bridge used by regex literals and regex-aware `String.*` / `RegExp.*` methods
+
+Location:
+
+- `internal/script/jsregex`
+
+Choose this layer when the question is:
+
+- how should a pattern parse or execute?
+- how should lookahead, lookbehind, or backreferences behave?
+- how do `String.match`, `replace`, `search`, `split`, and future `RegExp` APIs share one engine?
 
 ## Mocks
 

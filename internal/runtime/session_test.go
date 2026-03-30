@@ -1235,14 +1235,19 @@ func TestSessionInlineScriptsCanCopySelectedInputValue(t *testing.T) {
 
 func TestSessionInlineScriptsCanMutateDetailsOpenAndClassList(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
-	if err := s.WriteHTML(`<main><details id="panel"><summary>More</summary><div id="out"></div></details><script>const panel = document.querySelector("#panel"); panel.open = true; panel.classList.add("active"); panel.classList.toggle("inactive", false); host.setTextContent("#out", panel.open + ":" + panel.classList.contains("active") + ":" + panel.classList.contains("inactive"))</script></main>`); err != nil {
+	if err := s.WriteHTML(`<main><details id="panel"><summary>More</summary><div id="trace"></div><div id="out"></div></details><script>const panel = document.querySelector("#panel"); panel.addEventListener("toggle", () => { document.getElementById("trace").textContent += "toggle>"; }); panel.open = true; panel.classList.add("active"); panel.classList.toggle("inactive", false); host.setTextContent("#out", panel.open + ":" + panel.classList.contains("active") + ":" + panel.classList.contains("inactive") + ":" + document.getElementById("trace").textContent)</script></main>`); err != nil {
 		t.Fatalf("WriteHTML() error = %v", err)
 	}
 
 	if got, err := s.TextContent("#out"); err != nil {
 		t.Fatalf("TextContent(#out) error = %v", err)
-	} else if got != "true:true:false" {
-		t.Fatalf("TextContent(#out) = %q, want %q", got, "true:true:false")
+	} else if got != "true:true:false:toggle>" {
+		t.Fatalf("TextContent(#out) = %q, want %q", got, "true:true:false:toggle>")
+	}
+	if got, err := s.TextContent("#trace"); err != nil {
+		t.Fatalf("TextContent(#trace) error = %v", err)
+	} else if got != "toggle>" {
+		t.Fatalf("TextContent(#trace) = %q, want %q", got, "toggle>")
 	}
 }
 
@@ -1982,7 +1987,7 @@ func TestSessionClickAppliesHyperlinkDefaultActions(t *testing.T) {
 
 func TestSessionClickAppliesDetailsSummaryDefaultAction(t *testing.T) {
 	s := NewSession(SessionConfig{
-		HTML: `<main><details id="panel"><summary id="toggle">More</summary><div>Body</div></details></main>`,
+		HTML: `<main><details id="panel"><summary id="toggle">More</summary><div id="trace"></div><div>Body</div></details><script>document.getElementById("panel").addEventListener("toggle", () => { document.getElementById("trace").textContent += "toggle>"; });</script></main>`,
 	})
 
 	if err := s.Click("#toggle"); err != nil {
@@ -1993,6 +1998,11 @@ func TestSessionClickAppliesDetailsSummaryDefaultAction(t *testing.T) {
 	} else if !ok {
 		t.Fatalf("HasAttribute(#panel, open) after first click = false, want true")
 	}
+	if got, err := s.TextContent("#trace"); err != nil {
+		t.Fatalf("TextContent(#trace) after first click error = %v", err)
+	} else if got != "toggle>" {
+		t.Fatalf("TextContent(#trace) after first click = %q, want %q", got, "toggle>")
+	}
 
 	if err := s.Click("#toggle"); err != nil {
 		t.Fatalf("Click(#toggle) second error = %v", err)
@@ -2001,6 +2011,11 @@ func TestSessionClickAppliesDetailsSummaryDefaultAction(t *testing.T) {
 		t.Fatalf("HasAttribute(#panel, open) after second click error = %v", err)
 	} else if ok {
 		t.Fatalf("HasAttribute(#panel, open) after second click = true, want false")
+	}
+	if got, err := s.TextContent("#trace"); err != nil {
+		t.Fatalf("TextContent(#trace) after second click error = %v", err)
+	} else if got != "toggle>toggle>" {
+		t.Fatalf("TextContent(#trace) after second click = %q, want %q", got, "toggle>toggle>")
 	}
 }
 
@@ -2081,6 +2096,23 @@ func TestSessionDispatchesInputListenersFromTypeText(t *testing.T) {
 
 	if got, want := s.DumpDOM(), `<main><input id="name" value="Ada"><div id="out">typed</div><script>host:addEventListener("#name", "input", 'host:setInnerHTML("#out", "typed")')</script></main>`; got != want {
 		t.Fatalf("DumpDOM() after input listener = %q, want %q", got, want)
+	}
+}
+
+func TestSessionDispatchesInputListenersWithShortCircuitedHostCall(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="name"><div id="out"></div><div id="trace"></div><script>host:addEventListener("#name", "input", 'host.setTextContent("#out", host.eventTargetValue() || host.setTextContent("#trace", "boom"))')</script></main>`,
+	})
+
+	if err := s.TypeText("#name", "Ada"); err != nil {
+		t.Fatalf("TypeText(#name, Ada) error = %v", err)
+	}
+	if err := s.TypeText("#name", "Zed"); err != nil {
+		t.Fatalf("TypeText(#name, Zed) error = %v", err)
+	}
+
+	if got, want := s.DumpDOM(), `<main><input id="name" value="Zed"><div id="out">Zed</div><div id="trace"></div><script>host:addEventListener("#name", "input", 'host.setTextContent("#out", host.eventTargetValue() || host.setTextContent("#trace", "boom"))')</script></main>`; got != want {
+		t.Fatalf("DumpDOM() after short-circuited input listener = %q, want %q", got, want)
 	}
 }
 

@@ -5,9 +5,11 @@ import (
 	"math"
 	"math/big"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+
+	"browsertester/internal/script/jsregex"
 )
 
 type jsValueKind int
@@ -44,6 +46,87 @@ type classicJSAssignmentTarget struct {
 	steps []classicJSDeleteStep
 }
 
+type classicJSSkipCacheKind string
+
+const (
+	classicJSSkipCacheKindLogicalAssignment classicJSSkipCacheKind = "logical-assignment"
+	classicJSSkipCacheKindLogicalOr         classicJSSkipCacheKind = "logical-or"
+	classicJSSkipCacheKindLogicalAnd        classicJSSkipCacheKind = "logical-and"
+	classicJSSkipCacheKindBitwiseOr         classicJSSkipCacheKind = "bitwise-or"
+	classicJSSkipCacheKindConditionalBranch classicJSSkipCacheKind = "conditional-branch"
+)
+
+type classicJSSkipCacheKey struct {
+	source             string
+	kind               classicJSSkipCacheKind
+	pos                int
+	allowEOF           bool
+	allowAwait         bool
+	allowYield         bool
+	allowReturn        bool
+	privateFieldPrefix string
+}
+
+type classicJSSkipCache struct {
+	mu      sync.RWMutex
+	entries map[classicJSSkipCacheKey]int
+}
+
+func newClassicJSSkipCache() *classicJSSkipCache {
+	return &classicJSSkipCache{
+		entries: make(map[classicJSSkipCacheKey]int),
+	}
+}
+
+var classicJSSkipCacheShared = newClassicJSSkipCache()
+
+func sharedClassicJSSkipCache() *classicJSSkipCache {
+	return classicJSSkipCacheShared
+}
+
+func (c *classicJSSkipCache) lookup(source string, kind classicJSSkipCacheKind, pos int, allowEOF bool, allowAwait bool, allowYield bool, allowReturn bool, privateFieldPrefix string) (int, bool) {
+	if c == nil {
+		return 0, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.entries) == 0 {
+		return 0, false
+	}
+	endPos, ok := c.entries[classicJSSkipCacheKey{
+		source:             source,
+		kind:               kind,
+		pos:                pos,
+		allowEOF:           allowEOF,
+		allowAwait:         allowAwait,
+		allowYield:         allowYield,
+		allowReturn:        allowReturn,
+		privateFieldPrefix: privateFieldPrefix,
+	}]
+	return endPos, ok
+}
+
+func (c *classicJSSkipCache) store(source string, kind classicJSSkipCacheKind, pos int, allowEOF bool, allowAwait bool, allowYield bool, allowReturn bool, privateFieldPrefix string, endPos int) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[classicJSSkipCacheKey]int)
+	}
+	c.entries[classicJSSkipCacheKey{
+		source:             source,
+		kind:               kind,
+		pos:                pos,
+		allowEOF:           allowEOF,
+		allowAwait:         allowAwait,
+		allowYield:         allowYield,
+		allowReturn:        allowReturn,
+		privateFieldPrefix: privateFieldPrefix,
+	}] = endPos
+}
+
 func scalarJSValue(value Value) jsValue {
 	return jsValue{
 		kind:  jsValueScalar,
@@ -64,12 +147,14 @@ func builtinExprJSValue() jsValue {
 }
 
 func builtinSymbolJSValue() jsValue {
-	return scalarJSValue(NativeFunctionValue(func(args []Value) (Value, error) {
+	value := NativeNamedFunctionValue("Symbol", func(args []Value) (Value, error) {
 		if len(args) == 0 || args[0].Kind == ValueKindUndefined {
 			return SymbolValue(""), nil
 		}
 		return SymbolValue(ToJSString(args[0])), nil
-	}))
+	})
+	SetFunctionOwnProperty(value, "iterator", WellKnownSymbolValue("Symbol.iterator"))
+	return scalarJSValue(value)
 }
 
 func hostMethodJSValue(method string) jsValue {
@@ -137,7 +222,7 @@ func (h skipHostBindings) ResolveHostReference(path string) (Value, error) {
 	if isSkippedHostReferencePreserved(path) {
 		return value, nil
 	}
-	return sanitizeSkippedValue(value), nil
+	return sanitizeSkippedValueShallow(value), nil
 }
 
 func (h skipHostBindings) DeleteHostReference(path string) error {
@@ -176,22 +261,181 @@ func isSkippedHostReferencePreserved(path string) bool {
 
 const browserArrayConstructorMarkerKey = "\x00browser-array-constructor"
 
+var skippedNoopFunctionValue = NativeFunctionValue(func(args []Value) (Value, error) {
+	return UndefinedValue(), nil
+})
+
+type skippedValueSanitizer struct {
+	arrays    map[uintptr]Value
+	objects   map[uintptr]Value
+	mapStates map[*classicJSMapState]*classicJSMapState
+	setStates map[*classicJSSetState]*classicJSSetState
+}
+
+func newSkippedValueSanitizer() *skippedValueSanitizer {
+	return &skippedValueSanitizer{
+		arrays:    make(map[uintptr]Value),
+		objects:   make(map[uintptr]Value),
+		mapStates: make(map[*classicJSMapState]*classicJSMapState),
+		setStates: make(map[*classicJSSetState]*classicJSSetState),
+	}
+}
+
+func (s *skippedValueSanitizer) sanitize(value Value) Value {
+	switch value.Kind {
+	case ValueKindArray:
+		if len(value.Array) == 0 {
+			return Value{Kind: ValueKindArray}
+		}
+		ptr := reflect.ValueOf(value.Array).Pointer()
+		if ptr != 0 {
+			if cloned, ok := s.arrays[ptr]; ok {
+				return cloned
+			}
+		}
+		cloned := make([]Value, len(value.Array))
+		clonedValue := Value{Kind: ValueKindArray, Array: cloned}
+		if ptr != 0 {
+			s.arrays[ptr] = clonedValue
+		}
+		for i, element := range value.Array {
+			cloned[i] = s.sanitize(element)
+		}
+		if ptr != 0 {
+			s.arrays[ptr] = clonedValue
+		}
+		return clonedValue
+	case ValueKindObject:
+		ptr := reflect.ValueOf(value.Object).Pointer()
+		if ptr != 0 {
+			if cloned, ok := s.objects[ptr]; ok {
+				return cloned
+			}
+		}
+		cloned := make([]ObjectEntry, len(value.Object))
+		clonedValue := Value{
+			Kind:            ValueKindObject,
+			Object:          cloned,
+			ClassKey:        value.ClassKey,
+			ClassDefinition: value.ClassDefinition,
+		}
+		if ptr != 0 {
+			s.objects[ptr] = clonedValue
+		}
+		for i, entry := range value.Object {
+			cloned[i] = ObjectEntry{Key: entry.Key, Value: s.sanitize(entry.Value)}
+		}
+		clonedValue.MapState = s.sanitizeMapState(value.MapState)
+		clonedValue.SetState = s.sanitizeSetState(value.SetState)
+		if ptr != 0 {
+			s.objects[ptr] = clonedValue
+		}
+		return clonedValue
+	case ValueKindFunction:
+		return skippedNoopFunctionValue
+	case ValueKindPromise:
+		cloned := value
+		if value.Promise != nil {
+			clonedPromise := s.sanitize(*value.Promise)
+			cloned.Promise = &clonedPromise
+		}
+		if value.PromiseState != nil {
+			clonedState := *value.PromiseState
+			if value.PromiseState.resolved {
+				clonedState.value = s.sanitize(value.PromiseState.value)
+			}
+			cloned.PromiseState = &clonedState
+		}
+		return cloned
+	case ValueKindHostReference:
+		if value.HostReferenceKind == HostReferenceKindFunction || value.HostReferenceKind == HostReferenceKindConstructor {
+			if isSkippedHostReferencePreserved(value.HostReferencePath) {
+				return value
+			}
+			return skippedNoopFunctionValue
+		}
+		return value
+	default:
+		return value
+	}
+}
+
+func (s *skippedValueSanitizer) sanitizeJSValue(value jsValue) jsValue {
+	switch value.kind {
+	case jsValueScalar:
+		cloned := scalarJSValue(s.sanitize(value.value))
+		if value.hasReceiver {
+			cloned.receiver = s.sanitize(value.receiver)
+			cloned.hasReceiver = true
+		}
+		if value.hasNewTarget {
+			cloned.newTarget = s.sanitize(value.newTarget)
+			cloned.hasNewTarget = true
+		}
+		return cloned
+	case jsValueSuper:
+		cloned := superJSValue(s.sanitize(value.value), s.sanitize(value.receiver))
+		if value.hasNewTarget {
+			cloned.newTarget = s.sanitize(value.newTarget)
+			cloned.hasNewTarget = true
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func (s *skippedValueSanitizer) sanitizeMapState(state *classicJSMapState) *classicJSMapState {
+	if state == nil {
+		return nil
+	}
+	if cloned, ok := s.mapStates[state]; ok {
+		return cloned
+	}
+	cloned := &classicJSMapState{
+		entries: make([]classicJSMapEntry, len(state.entries)),
+	}
+	s.mapStates[state] = cloned
+	for i, entry := range state.entries {
+		cloned.entries[i] = classicJSMapEntry{
+			key:   s.sanitize(entry.key),
+			value: s.sanitize(entry.value),
+		}
+	}
+	return cloned
+}
+
+func (s *skippedValueSanitizer) sanitizeSetState(state *classicJSSetState) *classicJSSetState {
+	if state == nil {
+		return nil
+	}
+	if cloned, ok := s.setStates[state]; ok {
+		return cloned
+	}
+	cloned := &classicJSSetState{
+		entries: make([]Value, len(state.entries)),
+	}
+	s.setStates[state] = cloned
+	for i, entry := range state.entries {
+		cloned.entries[i] = s.sanitize(entry)
+	}
+	return cloned
+}
+
 func sanitizeSkippedValue(value Value) Value {
 	switch value.Kind {
 	case ValueKindArray:
 		if len(value.Array) == 0 {
-			return ArrayValue(nil)
+			return arrayValueOwned(nil)
 		}
 		cloned := make([]Value, len(value.Array))
 		for i, element := range value.Array {
 			cloned[i] = sanitizeSkippedValue(element)
 		}
-		return ArrayValue(cloned)
+		return arrayValueOwned(cloned)
 	case ValueKindObject:
 		if len(value.Object) == 0 {
-			cloned := ObjectValue(nil)
-			cloned.ClassKey = value.ClassKey
-			cloned.ClassDefinition = value.ClassDefinition
+			cloned := objectValueOwned(value, nil)
 			cloned.MapState = sanitizeSkippedMapState(value.MapState)
 			cloned.SetState = sanitizeSkippedSetState(value.SetState)
 			return cloned
@@ -200,9 +444,7 @@ func sanitizeSkippedValue(value Value) Value {
 		for i, entry := range value.Object {
 			cloned[i] = ObjectEntry{Key: entry.Key, Value: sanitizeSkippedValue(entry.Value)}
 		}
-		clonedValue := ObjectValue(cloned)
-		clonedValue.ClassKey = value.ClassKey
-		clonedValue.ClassDefinition = value.ClassDefinition
+		clonedValue := objectValueOwned(value, cloned)
 		clonedValue.MapState = sanitizeSkippedMapState(value.MapState)
 		clonedValue.SetState = sanitizeSkippedSetState(value.SetState)
 		return clonedValue
@@ -225,15 +467,45 @@ func sanitizeSkippedValue(value Value) Value {
 		}
 		return cloned
 	case ValueKindHostReference:
-		if value.HostReferenceKind == HostReferenceKindFunction || value.HostReferenceKind == HostReferenceKindConstructor {
-			return NativeFunctionValue(func(args []Value) (Value, error) {
-				return UndefinedValue(), nil
-			})
-		}
 		return value
 	default:
 		return value
 	}
+}
+
+func sanitizeSkippedJSValue(value jsValue) jsValue {
+	switch value.kind {
+	case jsValueScalar:
+		cloned := scalarJSValue(sanitizeSkippedValue(value.value))
+		if value.hasReceiver {
+			cloned.receiver = sanitizeSkippedValue(value.receiver)
+			cloned.hasReceiver = true
+		}
+		if value.hasNewTarget {
+			cloned.newTarget = sanitizeSkippedValue(value.newTarget)
+			cloned.hasNewTarget = true
+		}
+		return cloned
+	case jsValueSuper:
+		cloned := superJSValue(sanitizeSkippedValue(value.value), sanitizeSkippedValue(value.receiver))
+		if value.hasNewTarget {
+			cloned.newTarget = sanitizeSkippedValue(value.newTarget)
+			cloned.hasNewTarget = true
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func sanitizeSkippedValueShallow(value Value) Value {
+	sanitizer := newSkippedValueSanitizer()
+	return sanitizer.sanitize(value)
+}
+
+func sanitizeSkippedJSValueShallow(value jsValue) jsValue {
+	sanitizer := newSkippedValueSanitizer()
+	return sanitizer.sanitizeJSValue(value)
 }
 
 func evalClassicJSStatement(source string, host HostBindings) (Value, error) {
@@ -252,7 +524,7 @@ func evalClassicJSStatementWithEnvAndAllowAwait(source string, host HostBindings
 	return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, false, false, nil, UndefinedValue(), false, classDef, nil)
 }
 
-func evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
+func evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, skipCache ...*classicJSSkipCache) (Value, error) {
 	if stepLimit <= 0 {
 		stepLimit = DefaultRuntimeConfig().StepLimit
 	}
@@ -271,6 +543,12 @@ func evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source string,
 		newTarget:           newTarget,
 		hasNewTarget:        hasNewTarget,
 		moduleExports:       moduleExports,
+	}
+	if len(skipCache) > 0 {
+		parser.skipCache = skipCache[0]
+	}
+	if parser.skipCache == nil {
+		parser.skipCache = sharedClassicJSSkipCache()
 	}
 	if privateClass != nil {
 		parser.privateFieldPrefix = privateClass.privateFieldPrefix
@@ -318,7 +596,7 @@ func evalClassicJSExpressionWithEnvAndAllowAwaitAndYield(source string, host Hos
 	return evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, allowYield, UndefinedValue(), false, privateClass, nil)
 }
 
-func evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
+func evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, skipCache ...*classicJSSkipCache) (Value, error) {
 	if stepLimit <= 0 {
 		stepLimit = DefaultRuntimeConfig().StepLimit
 	}
@@ -335,6 +613,12 @@ func evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source string
 		hasNewTarget:        hasNewTarget,
 		bindingUpdateParent: CurrentBindingUpdateContext(),
 		moduleExports:       moduleExports,
+	}
+	if len(skipCache) > 0 {
+		parser.skipCache = skipCache[0]
+	}
+	if parser.skipCache == nil {
+		parser.skipCache = sharedClassicJSSkipCache()
 	}
 	if privateClass != nil {
 		parser.privateFieldPrefix = privateClass.privateFieldPrefix
@@ -358,6 +642,7 @@ type classicJSStatementParser struct {
 	source                  string
 	host                    HostBindings
 	env                     *classicJSEnvironment
+	skipCache               *classicJSSkipCache
 	privateClass            *classicJSClassDefinition
 	privateFieldPrefix      string
 	newTarget               Value
@@ -435,6 +720,7 @@ type classicJSArrowFunction struct {
 	generatorFunction  *classicJSGeneratorFunction
 	generatorState     *classicJSGeneratorState
 	objectProps        []ObjectEntry
+	skipCache          *classicJSSkipCache
 }
 
 type classicJSGeneratorFunction struct {
@@ -448,11 +734,13 @@ type classicJSGeneratorFunction struct {
 	privateFieldPrefix string
 	superTarget        Value
 	hasSuperTarget     bool
+	skipCache          *classicJSSkipCache
 }
 
 type classicJSGeneratorState struct {
 	statements         []string
 	env                *classicJSEnvironment
+	skipCache          *classicJSSkipCache
 	async              bool
 	newTarget          Value
 	hasNewTarget       bool
@@ -800,8 +1088,22 @@ func classicJSContinueSignalMatchesLabel(err error, label string) bool {
 }
 
 func (f *classicJSArrowFunction) cloneDetached(mapping map[*classicJSEnvironment]*classicJSEnvironment) *classicJSArrowFunction {
+	return f.cloneDetachedSeen(
+		mapping,
+		make(map[*classicJSArrowFunction]*classicJSArrowFunction),
+		make(map[uintptr]Value),
+		make(map[uintptr]Value),
+	)
+}
+
+func (f *classicJSArrowFunction) cloneDetachedSeen(mapping map[*classicJSEnvironment]*classicJSEnvironment, clonedFunctions map[*classicJSArrowFunction]*classicJSArrowFunction, clonedArrays map[uintptr]Value, clonedObjects map[uintptr]Value) *classicJSArrowFunction {
 	if f == nil {
 		return nil
+	}
+	if clonedFunctions != nil {
+		if cloned, ok := clonedFunctions[f]; ok {
+			return cloned
+		}
 	}
 	cloned := &classicJSArrowFunction{
 		params:             append([]classicJSFunctionParameter(nil), f.params...),
@@ -824,11 +1126,15 @@ func (f *classicJSArrowFunction) cloneDetached(mapping map[*classicJSEnvironment
 		superTarget:        cloneValueDetached(f.superTarget, mapping),
 		hasSuperTarget:     f.hasSuperTarget,
 		generatorMethod:    f.generatorMethod,
+		skipCache:          f.skipCache,
+	}
+	if clonedFunctions != nil {
+		clonedFunctions[f] = cloned
 	}
 	if len(f.objectProps) != 0 {
 		cloned.objectProps = make([]ObjectEntry, len(f.objectProps))
 		for i, entry := range f.objectProps {
-			cloned.objectProps[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetached(entry.Value, mapping)}
+			cloned.objectProps[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetachedSeen(entry.Value, mapping, clonedFunctions, clonedArrays, clonedObjects)}
 		}
 	}
 	if f.env != nil {
@@ -845,6 +1151,16 @@ func (f *classicJSArrowFunction) cloneDetached(mapping map[*classicJSEnvironment
 		cloned.generatorState = f.generatorState.cloneDetached(mapping)
 	}
 	return cloned
+}
+
+func (f *classicJSArrowFunction) ensureSkipCache() *classicJSSkipCache {
+	if f == nil {
+		return nil
+	}
+	if f.skipCache == nil {
+		f.skipCache = sharedClassicJSSkipCache()
+	}
+	return f.skipCache
 }
 
 func classicJSFunctionOwnProperty(value Value, name string) (Value, bool) {
@@ -893,6 +1209,7 @@ func (f *classicJSGeneratorFunction) cloneDetached(mapping map[*classicJSEnviron
 		privateFieldPrefix: f.privateFieldPrefix,
 		superTarget:        cloneValueDetached(f.superTarget, mapping),
 		hasSuperTarget:     f.hasSuperTarget,
+		skipCache:          f.skipCache,
 	}
 	if f.env != nil {
 		if clonedEnv, ok := mapping[f.env]; ok {
@@ -902,6 +1219,16 @@ func (f *classicJSGeneratorFunction) cloneDetached(mapping map[*classicJSEnviron
 		}
 	}
 	return cloned
+}
+
+func (f *classicJSGeneratorFunction) ensureSkipCache() *classicJSSkipCache {
+	if f == nil {
+		return nil
+	}
+	if f.skipCache == nil {
+		f.skipCache = sharedClassicJSSkipCache()
+	}
+	return f.skipCache
 }
 
 func (s *classicJSGeneratorState) cloneDetached(mapping map[*classicJSEnvironment]*classicJSEnvironment) *classicJSGeneratorState {
@@ -914,6 +1241,7 @@ func (s *classicJSGeneratorState) cloneDetached(mapping map[*classicJSEnvironmen
 		done:               s.done,
 		hasYielded:         s.hasYielded,
 		async:              s.async,
+		skipCache:          s.skipCache,
 		newTarget:          cloneValueDetached(s.newTarget, mapping),
 		hasNewTarget:       s.hasNewTarget,
 		delegateArray:      append([]Value(nil), s.delegateArray...),
@@ -1108,13 +1436,14 @@ func (s *classicJSLoopState) cloneDetached(mapping map[*classicJSEnvironment]*cl
 
 func (p *classicJSStatementParser) cloneForSkipping(host HostBindings) *classicJSStatementParser {
 	env := p.env
-	if env != nil {
-		env = env.cloneDetached()
+	if env != nil && !p.skipEvaluation {
+		env = env.clone()
 	}
 	return &classicJSStatementParser{
 		source:                  p.source,
 		host:                    host,
 		env:                     env,
+		skipCache:               p.skipCache,
 		privateClass:            p.privateClass,
 		privateFieldPrefix:      p.privateFieldPrefix,
 		newTarget:               p.newTarget,
@@ -1145,19 +1474,19 @@ func (p *classicJSStatementParser) cloneForClassEvaluation() *classicJSStatement
 }
 
 func (p *classicJSStatementParser) evalStatementWithEnv(source string, env *classicJSEnvironment) (Value, error) {
-	return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil)
+	return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil, p.skipCache)
 }
 
 func (p *classicJSStatementParser) evalProgramWithEnv(source string, env *classicJSEnvironment) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil)
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil, p.skipCache)
 }
 
 func (p *classicJSStatementParser) evalProgramWithEnvAllowLoopSignals(source string, env *classicJSEnvironment) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsAllowLoopSignals(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil)
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsAllowLoopSignals(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, p.resumeState, p.newTarget, p.hasNewTarget, p.privateClass, nil, p.skipCache)
 }
 
 func (p *classicJSStatementParser) evalExpressionWithEnv(source string, env *classicJSEnvironment) (Value, error) {
-	return evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.newTarget, p.hasNewTarget, p.privateClass, nil)
+	return evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source, p.host, env, p.stepLimit, p.allowAwait, p.allowYield, p.newTarget, p.hasNewTarget, p.privateClass, nil, p.skipCache)
 }
 
 func (p *classicJSStatementParser) eof() bool {
@@ -1288,6 +1617,9 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 		if value.kind != jsValueScalar {
 			return jsValue{}, NewError(ErrorKindUnsupported, "assignment only works on scalar values in this bounded classic-JS slice")
 		}
+		if p.skipEvaluation {
+			return value, nil
+		}
 		if err := p.applyArrayDestructuringAssignment(elementSources, value.value, p.privateFieldPrefix); err != nil {
 			return jsValue{}, err
 		}
@@ -1303,12 +1635,12 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 	}
 	if p.env == nil {
 		if p.allowUnknownIdentifiers {
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = rhsPos
-			if _, err := skip.parseLogicalAssignment(); err != nil {
+			p.pos = rhsPos
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAssignment()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			return scalarJSValue(UndefinedValue()), nil
 		}
 		if len(steps) == 0 {
@@ -1319,12 +1651,12 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 	current, ok := p.env.lookup(name)
 	if !ok {
 		if p.allowUnknownIdentifiers {
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = rhsPos
-			if _, err := skip.parseLogicalAssignment(); err != nil {
+			p.pos = rhsPos
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAssignment()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			return scalarJSValue(UndefinedValue()), nil
 		}
 		return jsValue{}, NewError(ErrorKindUnsupported, fmt.Sprintf("assignment target %q is not a declared local binding in this bounded classic-JS slice", name))
@@ -1405,12 +1737,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 					}
 					return value, nil
 				}
-				skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-				skip.pos = rhsPos
-				if _, err := skip.parseLogicalAssignment(); err != nil {
+				if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+					return skip.parseLogicalAssignment()
+				}); err != nil {
 					return jsValue{}, err
 				}
-				p.pos = skip.pos
 				return scalarJSValue(currentValue), nil
 			case "&&=":
 				if jsTruthy(currentValue) {
@@ -1426,12 +1757,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 					}
 					return value, nil
 				}
-				skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-				skip.pos = rhsPos
-				if _, err := skip.parseLogicalAssignment(); err != nil {
+				if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+					return skip.parseLogicalAssignment()
+				}); err != nil {
 					return jsValue{}, err
 				}
-				p.pos = skip.pos
 				return scalarJSValue(currentValue), nil
 			case "??=":
 				if isNullishJSValue(currentValue) {
@@ -1447,12 +1777,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 					}
 					return value, nil
 				}
-				skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-				skip.pos = rhsPos
-				if _, err := skip.parseLogicalAssignment(); err != nil {
+				if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+					return skip.parseLogicalAssignment()
+				}); err != nil {
 					return jsValue{}, err
 				}
-				p.pos = skip.pos
 				return scalarJSValue(currentValue), nil
 			case "**=":
 				value, err := p.parseLogicalAssignment()
@@ -1542,12 +1871,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 				}
 				return value, nil
 			}
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = rhsPos
-			if _, err := skip.parseLogicalAssignment(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAssignment()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			return scalarJSValue(currentValue), nil
 		case "&&=":
 			if jsTruthy(currentValue) {
@@ -1563,12 +1891,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 				}
 				return value, nil
 			}
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = rhsPos
-			if _, err := skip.parseLogicalAssignment(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAssignment()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			return scalarJSValue(currentValue), nil
 		case "??=":
 			if isNullishJSValue(currentValue) {
@@ -1584,12 +1911,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 				}
 				return value, nil
 			}
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = rhsPos
-			if _, err := skip.parseLogicalAssignment(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAssignment()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			return scalarJSValue(currentValue), nil
 		case "**=":
 			value, err := p.parseLogicalAssignment()
@@ -1657,12 +1983,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 			}
 			return value, nil
 		}
-		skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-		skip.pos = rhsPos
-		if _, err := skip.parseLogicalAssignment(); err != nil {
+		if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+			return skip.parseLogicalAssignment()
+		}); err != nil {
 			return jsValue{}, err
 		}
-		p.pos = skip.pos
 		return current, nil
 	case "&&=":
 		if jsTruthy(current.value) {
@@ -1675,12 +2000,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 			}
 			return value, nil
 		}
-		skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-		skip.pos = rhsPos
-		if _, err := skip.parseLogicalAssignment(); err != nil {
+		if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+			return skip.parseLogicalAssignment()
+		}); err != nil {
 			return jsValue{}, err
 		}
-		p.pos = skip.pos
 		return current, nil
 	case "??=":
 		if isNullishJSValue(current.value) {
@@ -1693,12 +2017,11 @@ func (p *classicJSStatementParser) parseLogicalAssignment() (jsValue, error) {
 			}
 			return value, nil
 		}
-		skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-		skip.pos = rhsPos
-		if _, err := skip.parseLogicalAssignment(); err != nil {
+		if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAssignment, func(skip *classicJSStatementParser) (jsValue, error) {
+			return skip.parseLogicalAssignment()
+		}); err != nil {
 			return jsValue{}, err
 		}
-		p.pos = skip.pos
 		return current, nil
 	case "**=":
 		value, err := p.parseLogicalAssignment()
@@ -1878,6 +2201,15 @@ func (p *classicJSStatementParser) tryParseAssignmentTarget() (string, []classic
 		return "", nil, "", 0, false, nil
 	}
 
+	lookaheadProbe := lookahead
+	ok, err := lookaheadProbe.scanAssignmentAccessStepsFast()
+	if err != nil {
+		return "", nil, "", 0, false, err
+	}
+	if !ok {
+		return "", nil, "", 0, false, nil
+	}
+
 	steps, ok, err := lookahead.scanAssignmentAccessSteps()
 	if err != nil {
 		return "", nil, "", 0, false, err
@@ -1900,6 +2232,51 @@ func (p *classicJSStatementParser) tryParseAssignmentTarget() (string, []classic
 	}
 
 	return "", nil, "", 0, false, nil
+}
+
+func (p *classicJSStatementParser) scanAssignmentAccessStepsFast() (bool, error) {
+	for {
+		p.skipSpaceAndComments()
+		if p.eof() {
+			return false, nil
+		}
+		if p.peekByte() == '?' && p.pos+1 < len(p.source) && p.source[p.pos+1] == '.' {
+			return false, nil
+		}
+
+		if op := p.peekLogicalAssignmentOperator(); op != "" {
+			return true, nil
+		}
+		if p.peekByte() == '=' {
+			if p.pos+1 >= len(p.source) || (p.source[p.pos+1] != '=' && p.source[p.pos+1] != '>') {
+				return true, nil
+			}
+			return false, nil
+		}
+
+		switch {
+		case p.consumeByte('.'):
+			if _, err := p.parseMemberAccessName(); err != nil {
+				return false, err
+			}
+		case p.consumeByte('['):
+			if err := p.skipBalancedExpression(']', "bracket access expression"); err != nil {
+				return false, err
+			}
+		case p.consumeByte('('):
+			if err := p.skipBalancedExpression(')', "call arguments"); err != nil {
+				return false, err
+			}
+		case p.peekByte() == ':':
+			return false, nil
+		case p.pos+1 < len(p.source) && p.source[p.pos] == '+' && p.source[p.pos+1] == '+':
+			return false, nil
+		case p.pos+1 < len(p.source) && p.source[p.pos] == '-' && p.source[p.pos+1] == '-':
+			return false, nil
+		default:
+			return false, nil
+		}
+	}
 }
 
 func (p *classicJSStatementParser) tryParseArrayDestructuringAssignmentTarget() ([]string, int, bool, error) {
@@ -3581,7 +3958,7 @@ func (p *classicJSStatementParser) bindBindingPattern(pattern classicJSBindingPa
 				if sourceIndex < len(values) {
 					restElements = values[sourceIndex:]
 				}
-				if err := p.bindBindingPattern(classicJSBindingPattern{kind: classicJSBindingPatternIdentifier, name: element.name}, ArrayValue(restElements), kind); err != nil {
+				if err := p.bindBindingPattern(classicJSBindingPattern{kind: classicJSBindingPatternIdentifier, name: element.name}, arrayValueOwned(restElements), kind); err != nil {
 					return err
 				}
 				sourceIndex = len(values)
@@ -3624,7 +4001,7 @@ func (p *classicJSStatementParser) bindBindingPattern(pattern classicJSBindingPa
 					}
 					restEntries = append(restEntries, entry)
 				}
-				if err := p.bindBindingPattern(classicJSBindingPattern{kind: classicJSBindingPatternIdentifier, name: property.pattern.name}, ObjectValue(restEntries), kind); err != nil {
+				if err := p.bindBindingPattern(classicJSBindingPattern{kind: classicJSBindingPatternIdentifier, name: property.pattern.name}, objectValueOwned(Value{}, restEntries), kind); err != nil {
 					return err
 				}
 				break
@@ -3692,7 +4069,7 @@ func (p *classicJSStatementParser) collectArrayBindingAssignments(elements []cla
 			if sourceIndex < len(values) {
 				restElements = values[sourceIndex:]
 			}
-			*assignments = append(*assignments, classicJSBindingAssignment{name: element.name, value: ArrayValue(restElements), mutable: mutable})
+			*assignments = append(*assignments, classicJSBindingAssignment{name: element.name, value: arrayValueOwned(restElements), mutable: mutable})
 			sourceIndex = len(values)
 		default:
 			elementValue := UndefinedValue()
@@ -3728,6 +4105,9 @@ func (p *classicJSStatementParser) collectClassicJSArrayLikeValues(value Value, 
 				values[i] = cloneValueDetached(entry, nil)
 			}
 			return values, nil
+		}
+		if p.skipEvaluation {
+			return []Value{}, nil
 		}
 		nextValue, err := p.resolveMemberAccess(scalarJSValue(value), "next")
 		if err != nil {
@@ -3793,7 +4173,7 @@ func (p *classicJSStatementParser) collectObjectBindingAssignments(properties []
 				}
 				restEntries = append(restEntries, entry)
 			}
-			*assignments = append(*assignments, classicJSBindingAssignment{name: property.pattern.name, value: ObjectValue(restEntries), mutable: mutable})
+			*assignments = append(*assignments, classicJSBindingAssignment{name: property.pattern.name, value: objectValueOwned(Value{}, restEntries), mutable: mutable})
 			break
 		}
 
@@ -5065,7 +5445,7 @@ func (p *classicJSStatementParser) resumeLoopBody(frame *classicJSLoopState) (Va
 			continue
 		}
 
-		_, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, frame.bodyEnv, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, frame, p.newTarget, p.hasNewTarget, nil, nil)
+		_, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, frame.bodyEnv, p.stepLimit, p.allowAwait, p.allowYield, p.allowReturn, frame, p.newTarget, p.hasNewTarget, nil, nil, p.skipCache)
 		if err != nil {
 			if yieldedValue, nextState, ok := classicJSYieldSignalDetails(err); ok {
 				if nextState != nil && nextState != classicJSResumeState(frame) {
@@ -5498,10 +5878,10 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 	}
 
 	if name != "" {
-		if err := classEnv.declare(name, scalarJSValue(ObjectValue([]ObjectEntry{
+		if err := classEnv.declare(name, scalarJSValue(objectValueOwned(Value{}, []ObjectEntry{
 			{
 				Key:   "prototype",
-				Value: ObjectValue(nil),
+				Value: objectValueOwned(Value{}, nil),
 			},
 		})), false); err != nil {
 			return "", UndefinedValue(), err
@@ -5569,8 +5949,8 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 	if name != "" {
 		classEnv.setClassDefinition(name, classDef)
 	}
-	prototypeValue := ObjectValue(append([]ObjectEntry(nil), prototypeEntries...))
-	currentClassValue := ObjectValue([]ObjectEntry{
+	prototypeValue := objectValueOwned(Value{}, append([]ObjectEntry(nil), prototypeEntries...))
+	currentClassValue := objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key:   classicJSClassPrototypeKey(classDef.instanceMarker),
 			Value: prototypeValue,
@@ -5583,7 +5963,7 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 	currentClassValue.ClassKey = classDef.instanceMarker
 	currentClassValue.ClassDefinition = classDef
 	publishClassValue := func() {
-		prototypeValue := ObjectValue(append([]ObjectEntry(nil), prototypeEntries...))
+		prototypeValue := objectValueOwned(Value{}, append([]ObjectEntry(nil), prototypeEntries...))
 		entries := make([]ObjectEntry, 0, 2+len(staticEntries))
 		entries = append(entries, ObjectEntry{
 			Key:   classicJSClassPrototypeKey(classDef.instanceMarker),
@@ -5594,7 +5974,7 @@ func (p *classicJSStatementParser) parseClassDeclarationWithBinding(allowAnonymo
 			Value: prototypeValue,
 		})
 		entries = append(entries, staticEntries...)
-		currentClassValue = ObjectValue(entries)
+		currentClassValue = objectValueOwned(Value{}, entries)
 		currentClassValue.ClassKey = classDef.instanceMarker
 		currentClassValue.ClassDefinition = classDef
 		if name != "" {
@@ -6083,7 +6463,7 @@ func (p *classicJSStatementParser) resumeBlockState(state *classicJSBlockState) 
 			continue
 		}
 
-		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, p.allowAwait, true, p.allowReturn, state.owner, p.newTarget, p.hasNewTarget, nil, nil)
+		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, p.allowAwait, true, p.allowReturn, state.owner, p.newTarget, p.hasNewTarget, nil, nil, p.skipCache)
 		if err != nil {
 			if awaitedPromise, nextState, ok := classicJSAwaitSignalDetails(err); ok {
 				if nextState != nil && nextState != state.owner {
@@ -6159,7 +6539,7 @@ func (p *classicJSStatementParser) resumeSwitchState(state *classicJSSwitchState
 				return UndefinedValue(), nil, nil
 			}
 
-			_, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, p.allowAwait, true, p.allowReturn, state, p.newTarget, p.hasNewTarget, nil, nil)
+			_, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, p.allowAwait, true, p.allowReturn, state, p.newTarget, p.hasNewTarget, nil, nil, p.skipCache)
 			if err != nil {
 				if yieldedValue, nextState, ok := classicJSYieldSignalDetails(err); ok {
 					if nextState != nil && nextState != state {
@@ -6758,7 +7138,7 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 			canStartRegex = false
 			p.pos++
 		case '`':
-			if _, _, err := p.consumeTemplateLiteralParts(); err != nil {
+			if _, _, _, err := p.consumeTemplateLiteralParts(); err != nil {
 				return "", err
 			}
 			canStartRegex = false
@@ -8004,7 +8384,7 @@ func scanClassicJSConditionalBranchTerminator(scanner *classicJSStatementParser,
 			scanner.pos++
 			canStartRegex = false
 		case '`':
-			if _, _, err := scanner.consumeTemplateLiteralParts(); err != nil {
+			if _, _, _, err := scanner.consumeTemplateLiteralParts(); err != nil {
 				return scanner.pos, err
 			}
 			canStartRegex = false
@@ -8516,6 +8896,45 @@ func classicJSTypeofValue(value Value) string {
 	}
 }
 
+func (p *classicJSStatementParser) skipCachedParsedBranch(kind classicJSSkipCacheKind, parse func(*classicJSStatementParser) (jsValue, error)) error {
+	if p == nil {
+		return nil
+	}
+	start := p.pos
+	if endPos, ok := p.skipCache.lookup(p.source, kind, start, false, p.allowAwait, p.allowYield, p.allowReturn, p.privateFieldPrefix); ok {
+		p.pos = endPos
+		return nil
+	}
+	skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
+	skip.pos = start
+	if _, err := parse(skip); err != nil {
+		return err
+	}
+	if p.skipCache != nil {
+		p.skipCache.store(p.source, kind, start, false, p.allowAwait, p.allowYield, p.allowReturn, p.privateFieldPrefix, skip.pos)
+	}
+	p.pos = skip.pos
+	return nil
+}
+
+func (p *classicJSStatementParser) skipCachedConditionalBranch(allowEOF bool) (int, error) {
+	if p == nil {
+		return 0, nil
+	}
+	start := p.pos
+	if endPos, ok := p.skipCache.lookup(p.source, classicJSSkipCacheKindConditionalBranch, start, allowEOF, p.allowAwait, p.allowYield, p.allowReturn, p.privateFieldPrefix); ok {
+		return endPos, nil
+	}
+	skip := *p
+	if _, err := scanClassicJSConditionalBranchTerminator(&skip, allowEOF); err != nil {
+		return skip.pos, err
+	}
+	if p.skipCache != nil {
+		p.skipCache.store(p.source, classicJSSkipCacheKindConditionalBranch, start, allowEOF, p.allowAwait, p.allowYield, p.allowReturn, p.privateFieldPrefix, skip.pos)
+	}
+	return skip.pos, nil
+}
+
 func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 	left, err := p.parseNullishCoalescing()
 	if err != nil {
@@ -8528,12 +8947,12 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 	}
 
 	p.pos++
-	branchStart := p.pos
-	skip := *p
-	skip.pos = branchStart
-	if _, err := scanClassicJSConditionalBranchTerminator(&skip, false); err != nil {
+	branchEnd, err := p.skipCachedConditionalBranch(false)
+	if err != nil {
 		return jsValue{}, err
 	}
+	skip := *p
+	skip.pos = branchEnd
 	skip.skipSpaceAndComments()
 	if !skip.consumeByte(':') {
 		return jsValue{}, NewError(ErrorKindParse, "conditional expressions require a `:` alternate branch in this bounded classic-JS slice")
@@ -8549,11 +8968,11 @@ func (p *classicJSStatementParser) parseConditional() (jsValue, error) {
 		if !p.consumeByte(':') {
 			return jsValue{}, NewError(ErrorKindParse, "conditional expressions require a `:` alternate branch in this bounded classic-JS slice")
 		}
-		skipAlternate := *p
-		if _, err := scanClassicJSConditionalBranchTerminator(&skipAlternate, true); err != nil {
+		if endPos, err := p.skipCachedConditionalBranch(true); err != nil {
 			return jsValue{}, err
+		} else {
+			p.pos = endPos
 		}
-		p.pos = skipAlternate.pos
 		return consequent.withoutAssignTarget(), nil
 	}
 
@@ -8580,12 +8999,11 @@ func (p *classicJSStatementParser) parseNullishCoalescing() (jsValue, error) {
 		p.pos += 2
 		if left.kind != jsValueScalar || !isNullishJSValue(left.value) {
 			// Short-circuit the right-hand side without running host side effects.
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = p.pos
-			if _, err := skip.parseLogicalOr(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalOr, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalOr()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			continue
 		}
 
@@ -8611,12 +9029,11 @@ func (p *classicJSStatementParser) parseLogicalOr() (jsValue, error) {
 
 		p.pos += 2
 		if jsTruthyJSValue(left) {
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = p.pos
-			if _, err := skip.parseLogicalAnd(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindLogicalAnd, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseLogicalAnd()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			continue
 		}
 
@@ -8642,12 +9059,11 @@ func (p *classicJSStatementParser) parseLogicalAnd() (jsValue, error) {
 
 		p.pos += 2
 		if !jsTruthyJSValue(left) {
-			skip := p.cloneForSkipping(skipHostBindings{delegate: p.host})
-			skip.pos = p.pos
-			if _, err := skip.parseBitwiseOr(); err != nil {
+			if err := p.skipCachedParsedBranch(classicJSSkipCacheKindBitwiseOr, func(skip *classicJSStatementParser) (jsValue, error) {
+				return skip.parseBitwiseOr()
+			}); err != nil {
 				return jsValue{}, err
 			}
-			p.pos = skip.pos
 			continue
 		}
 
@@ -9208,6 +9624,9 @@ parseNewCallee:
 			return p.parsePostfixTail(scalarJSValue(value))
 		}
 		if callee.value.NativeFunction != nil {
+			if callee.value.Function != nil && !callee.value.Function.constructible {
+				return jsValue{}, NewError(ErrorKindUnsupported, "new expressions only work on class expressions, class identifiers, or constructible function values in this bounded classic-JS slice")
+			}
 			value, err := callee.value.NativeFunction(args)
 			if err != nil {
 				return jsValue{}, err
@@ -9221,7 +9640,7 @@ parseNewCallee:
 		if !ok || marker == "" {
 			return jsValue{}, NewError(ErrorKindUnsupported, "new expressions only work on class expressions, class identifiers, or constructible function values in this bounded classic-JS slice")
 		}
-		receiver := ObjectValue([]ObjectEntry{
+		receiver := objectValueOwned(Value{}, []ObjectEntry{
 			{
 				Key:   classicJSInstanceMarkerKey(marker),
 				Value: BoolValue(true),
@@ -9516,6 +9935,165 @@ func (p *classicJSStatementParser) consumeAssignmentCallArguments() ([]classicJS
 			return args, nil
 		}
 	}
+}
+
+func (p *classicJSStatementParser) skipBalancedExpression(terminator byte, label string) error {
+	if p.eof() {
+		return NewError(ErrorKindParse, fmt.Sprintf("unexpected end of %s", label))
+	}
+
+	var quote byte
+	var escape bool
+	var lineComment bool
+	var blockComment bool
+	var parenDepth int
+	var braceDepth int
+	var bracketDepth int
+	canStartRegex := true
+
+	for !p.eof() {
+		ch := p.peekByte()
+		if lineComment {
+			p.pos++
+			if ch == '\n' || ch == '\r' {
+				lineComment = false
+			}
+			continue
+		}
+		if blockComment {
+			if ch == '*' && p.pos+1 < len(p.source) && p.source[p.pos+1] == '/' {
+				p.pos += 2
+				blockComment = false
+				continue
+			}
+			p.pos++
+			continue
+		}
+		if quote != 0 {
+			p.pos++
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' {
+				escape = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && ch == terminator {
+			p.pos++
+			return nil
+		}
+
+		switch ch {
+		case '\'', '"':
+			quote = ch
+			p.pos++
+			canStartRegex = false
+		case '`':
+			next, err := scanTemplateLiteralSource(p.source, p.pos)
+			if err != nil {
+				return err
+			}
+			p.pos = next
+			canStartRegex = false
+		case '/':
+			if p.pos+1 >= len(p.source) {
+				p.pos++
+				canStartRegex = true
+				continue
+			}
+			switch p.source[p.pos+1] {
+			case '/':
+				lineComment = true
+				p.pos += 2
+			case '*':
+				blockComment = true
+				p.pos += 2
+			default:
+				if canStartRegex {
+					if _, err := p.parseRegularExpressionLiteral(); err != nil {
+						return err
+					}
+					canStartRegex = false
+					continue
+				}
+				p.pos++
+				canStartRegex = true
+			}
+		case '(':
+			parenDepth++
+			p.pos++
+			canStartRegex = true
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+			p.pos++
+			canStartRegex = false
+		case '{':
+			braceDepth++
+			p.pos++
+			canStartRegex = true
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			p.pos++
+			canStartRegex = false
+		case '[':
+			bracketDepth++
+			p.pos++
+			canStartRegex = true
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+			p.pos++
+			canStartRegex = false
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+		case ',', ';', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
+			p.pos++
+			canStartRegex = true
+		default:
+			if isIdentStart(ch) {
+				p.pos++
+				for !p.eof() && isIdentPart(p.peekByte()) {
+					p.pos++
+				}
+				canStartRegex = false
+				continue
+			}
+			if isDigit(ch) {
+				p.pos++
+				for !p.eof() {
+					next := p.peekByte()
+					if isDigit(next) || next == '_' {
+						p.pos++
+						continue
+					}
+					break
+				}
+				canStartRegex = false
+				continue
+			}
+			p.pos++
+		}
+	}
+
+	if quote != 0 {
+		return NewError(ErrorKindParse, fmt.Sprintf("unterminated quoted string in %s", label))
+	}
+	if blockComment {
+		return NewError(ErrorKindParse, fmt.Sprintf("unterminated block comment in %s", label))
+	}
+	return NewError(ErrorKindParse, fmt.Sprintf("unterminated %s", label))
 }
 
 func (p *classicJSStatementParser) consumeAssignmentCallArgumentSource() (string, error) {
@@ -9837,7 +10415,7 @@ func (p *classicJSStatementParser) parsePostfixTail(value jsValue) (jsValue, err
 
 		case p.peekByte() == '`':
 			if shortCircuited {
-				if _, _, err := p.consumeTemplateLiteralParts(); err != nil {
+				if _, _, _, err := p.consumeTemplateLiteralParts(); err != nil {
 					return jsValue{}, err
 				}
 				value = scalarJSValue(UndefinedValue())
@@ -9908,6 +10486,12 @@ func (p *classicJSStatementParser) applyClassicJSIncrementDecrement(value jsValu
 	updated, err := classicJSIncrementDecrementValue(value.value, delta)
 	if err != nil {
 		return jsValue{}, err
+	}
+	if p.skipEvaluation {
+		if prefix {
+			return scalarJSValue(updated), nil
+		}
+		return scalarJSValue(value.value), nil
 	}
 
 	target := value.assignTarget
@@ -9995,6 +10579,9 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 		case ValueKindObject:
 			if resolved, ok := lookupObjectProperty(value.value.Object, name); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.receiver, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10071,6 +10658,9 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 		if name == "prototype" && (value.value.ClassDefinition != nil || value.value.ClassKey != "") {
 			if resolved, ok := classicJSClassPrototypeAccessValue(value.value); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.value, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10091,6 +10681,9 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			case ValueKindObject:
 				if resolved, ok := lookupObjectProperty(value.value.Object, privateKey); ok {
 					if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+						if p.skipEvaluation {
+							return scalarJSValue(resolved), nil
+						}
 						return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.value, hasReceiver: true})
 					}
 					if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10113,6 +10706,9 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			}
 			if resolved, ok := lookupObjectProperty(value.value.Object, name); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.value, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10128,7 +10724,7 @@ func (p *classicJSStatementParser) resolveMemberAccess(value jsValue, name strin
 			if name == "length" {
 				return scalarJSValue(NumberValue(float64(len(value.value.Array)))), nil
 			}
-			if method, ok, err := p.resolveArrayPrototypeMethod(value.value, name); ok || err != nil {
+			if method, ok, err := p.resolveArrayPrototypeMethod(value, name); ok || err != nil {
 				return scalarJSValue(method), err
 			}
 			return scalarJSValue(UndefinedValue()), nil
@@ -10206,6 +10802,9 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 		case ValueKindObject:
 			if resolved, ok := lookupObjectProperty(value.value.Object, keyString); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.receiver, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10265,6 +10864,9 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 		if keyString == "prototype" && (value.value.ClassDefinition != nil || value.value.ClassKey != "") {
 			if resolved, ok := classicJSClassPrototypeAccessValue(value.value); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.value, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10283,6 +10885,9 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 			}
 			if resolved, ok := lookupObjectProperty(value.value.Object, keyString); ok {
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil && resolved.Function.objectAccessor {
+					if p.skipEvaluation {
+						return scalarJSValue(resolved), nil
+					}
 					return p.invokeArrowFunction(resolved.Function, nil, jsValue{kind: jsValueScalar, value: value.value, receiver: value.value, hasReceiver: true})
 				}
 				if resolved.Kind == ValueKindFunction && resolved.Function != nil {
@@ -10304,11 +10909,16 @@ func (p *classicJSStatementParser) resolveBracketAccess(value jsValue, key Value
 				}
 				return scalarJSValue(UndefinedValue()), nil
 			}
-			if method, ok, err := p.resolveArrayPrototypeMethod(value.value, keyString); ok || err != nil {
+			if method, ok, err := p.resolveArrayPrototypeMethod(value, keyString); ok || err != nil {
 				return scalarJSValue(method), err
 			}
 			return scalarJSValue(UndefinedValue()), nil
 		case ValueKindString:
+			if isWellKnownSymbolIterator(key) {
+				if method, ok, err := p.resolveStringPrototypeMethod(value.value, "iterator"); ok || err != nil {
+					return scalarJSValue(method), err
+				}
+			}
 			if keyString == "length" {
 				return scalarJSValue(NumberValue(float64(len([]rune(value.value.String))))), nil
 			}
@@ -10447,7 +11057,7 @@ func classicJSConstructibleFunctionPrototypeValue(value Value) (Value, bool) {
 	if !ok || marker == "" {
 		return UndefinedValue(), false
 	}
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key:   "constructor",
 			Value: value,
@@ -10569,12 +11179,16 @@ func classicJSConstructibleFunctionMarker(fn *classicJSArrowFunction) (string, b
 }
 
 func (p *classicJSStatementParser) replaceObjectBindings(oldValue Value, newValue jsValue) int {
+	return p.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+}
+
+func (p *classicJSStatementParser) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
 	if oldValue.Kind != ValueKindObject || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindObject {
 		return 0
 	}
 	replaced := 0
 	if p.env != nil {
-		replaced += p.env.replaceObjectBindings(oldValue, newValue)
+		replaced += p.env.replaceObjectBindingsSeen(oldValue, newValue, visited)
 	}
 	oldPtr := reflect.ValueOf(oldValue.Object).Pointer()
 	if oldPtr != 0 && p.moduleExports != nil {
@@ -10589,7 +11203,11 @@ func (p *classicJSStatementParser) replaceObjectBindings(oldValue Value, newValu
 		}
 	}
 	if p.bindingUpdateParent != nil {
-		replaced += p.bindingUpdateParent.ReplaceObjectBindings(oldValue, newValue.value)
+		if parent, ok := p.bindingUpdateParent.(*classicJSStatementParser); ok {
+			replaced += parent.replaceObjectBindingsSeen(oldValue, newValue, visited)
+		} else {
+			replaced += p.bindingUpdateParent.ReplaceObjectBindings(oldValue, newValue.value)
+		}
 	}
 	return replaced
 }
@@ -10598,10 +11216,21 @@ func (p *classicJSStatementParser) ReplaceObjectBindings(oldValue Value, newValu
 	if p == nil || oldValue.Kind != ValueKindObject || newValue.Kind != ValueKindObject {
 		return 0
 	}
+	if p.skipEvaluation {
+		return 0
+	}
 	return p.replaceObjectBindings(oldValue, scalarJSValue(newValue))
 }
 
+func (p *classicJSStatementParser) SkipEvaluation() bool {
+	return p != nil && p.skipEvaluation
+}
+
 func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue jsValue) int {
+	return p.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+}
+
+func (p *classicJSStatementParser) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
 	if oldValue.Kind != ValueKindArray || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindArray {
 		return 0
 	}
@@ -10611,7 +11240,7 @@ func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue
 	}
 	replaced := 0
 	if p.env != nil {
-		replaced += p.env.replaceArrayBindings(oldValue, newValue)
+		replaced += p.env.replaceArrayBindingsSeen(oldValue, newValue, visited)
 	}
 	if p.moduleExports != nil {
 		for name, value := range p.moduleExports {
@@ -10624,13 +11253,20 @@ func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue
 		}
 	}
 	if p.bindingUpdateParent != nil {
-		replaced += p.bindingUpdateParent.ReplaceArrayBindings(oldValue, newValue.value)
+		if parent, ok := p.bindingUpdateParent.(*classicJSStatementParser); ok {
+			replaced += parent.replaceArrayBindingsSeen(oldValue, newValue, visited)
+		} else {
+			replaced += p.bindingUpdateParent.ReplaceArrayBindings(oldValue, newValue.value)
+		}
 	}
 	return replaced
 }
 
 func (p *classicJSStatementParser) ReplaceArrayBindings(oldValue Value, newValue Value) int {
 	if p == nil || oldValue.Kind != ValueKindArray || newValue.Kind != ValueKindArray {
+		return 0
+	}
+	if p.skipEvaluation {
 		return 0
 	}
 	return p.replaceArrayBindings(oldValue, scalarJSValue(newValue))
@@ -10849,7 +11485,7 @@ func deleteJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 		if len(steps) == 1 {
 			cloned := append([]Value(nil), value.Array...)
 			cloned[index] = UndefinedValue()
-			return ArrayValue(cloned), true, nil
+			return arrayValueOwned(cloned), true, nil
 		}
 		updatedChild, deleted, err := deleteJSValuePropertyChain(p, value.Array[index], steps[1:], privateFieldPrefix)
 		if err != nil {
@@ -10857,7 +11493,7 @@ func deleteJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 		}
 		cloned := append([]Value(nil), value.Array...)
 		cloned[index] = updatedChild
-		return ArrayValue(cloned), deleted, nil
+		return arrayValueOwned(cloned), deleted, nil
 	case ValueKindString:
 		key, err := deleteJSPropertyKey(steps[0], privateFieldPrefix)
 		if err != nil {
@@ -11090,6 +11726,9 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 	if len(steps) == 0 {
 		return rhs, nil
 	}
+	if p != nil && p.skipEvaluation {
+		return rhs, nil
+	}
 
 	key, err := deleteJSPropertyKey(steps[0], privateFieldPrefix)
 	if err != nil {
@@ -11202,7 +11841,7 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 				}
 				if newLength < len(value.Array) {
 					updated := value.Array[:newLength]
-					updatedValue := ArrayValue(updated)
+					updatedValue := arrayValueOwned(updated)
 					p.replaceArrayBindings(value, scalarJSValue(updatedValue))
 					return updatedValue, nil
 				}
@@ -11213,7 +11852,7 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 				for len(updated) < newLength {
 					updated = append(updated, UndefinedValue())
 				}
-				updatedValue := ArrayValue(updated)
+				updatedValue := arrayValueOwned(updated)
 				p.replaceArrayBindings(value, scalarJSValue(updatedValue))
 				return updatedValue, nil
 			}
@@ -11234,7 +11873,7 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 			} else {
 				updated[index] = rhs
 			}
-			updatedValue := ArrayValue(updated)
+			updatedValue := arrayValueOwned(updated)
 			p.replaceArrayBindings(value, scalarJSValue(updatedValue))
 			return updatedValue, nil
 		}
@@ -11280,6 +11919,9 @@ func assignJSValuePropertyChain(p *classicJSStatementParser, value Value, steps 
 
 func assignSuperJSValuePropertyChain(p *classicJSStatementParser, superValue jsValue, steps []classicJSDeleteStep, rhs Value, privateFieldPrefix string) (Value, error) {
 	if len(steps) == 0 {
+		return rhs, nil
+	}
+	if p != nil && p.skipEvaluation {
 		return rhs, nil
 	}
 	if superValue.kind != jsValueSuper {
@@ -11691,7 +12333,7 @@ func (p *classicJSStatementParser) parsePrimary() (jsValue, error) {
 			if !ok || moduleURL.kind != jsValueScalar || moduleURL.value.Kind != ValueKindString {
 				return jsValue{}, NewError(ErrorKindParse, "`import.meta` is only supported inside bounded module scripts in this bounded classic-JS slice")
 			}
-			return scalarJSValue(ObjectValue([]ObjectEntry{{Key: "url", Value: moduleURL.value}})), nil
+			return scalarJSValue(objectValueOwned(Value{}, []ObjectEntry{{Key: "url", Value: moduleURL.value}})), nil
 		}
 	}
 
@@ -11759,7 +12401,7 @@ func (p *classicJSStatementParser) parseArrayLiteral() (Value, error) {
 	for {
 		p.skipSpaceAndComments()
 		if p.consumeByte(']') {
-			return ArrayValue(elements), nil
+			return arrayValueOwned(elements), nil
 		}
 		if p.consumeByte(',') {
 			elements = append(elements, UndefinedValue())
@@ -11778,7 +12420,7 @@ func (p *classicJSStatementParser) parseArrayLiteral() (Value, error) {
 			elements = append(elements, spreadValues...)
 			p.skipSpaceAndComments()
 			if p.consumeByte(']') {
-				return ArrayValue(elements), nil
+				return arrayValueOwned(elements), nil
 			}
 			if !p.consumeByte(',') {
 				return UndefinedValue(), NewError(ErrorKindParse, "array literals must separate elements with commas")
@@ -11794,7 +12436,7 @@ func (p *classicJSStatementParser) parseArrayLiteral() (Value, error) {
 
 		p.skipSpaceAndComments()
 		if p.consumeByte(']') {
-			return ArrayValue(elements), nil
+			return arrayValueOwned(elements), nil
 		}
 		if !p.consumeByte(',') {
 			return UndefinedValue(), NewError(ErrorKindParse, "array literals must separate elements with commas")
@@ -12023,7 +12665,7 @@ func (p *classicJSStatementParser) finalizeClassicJSObjectLiteral(entries []Obje
 		}
 		entries[i].Value.Function.setObjectLiteralSuperTarget(superTarget)
 	}
-	return ObjectValue(entries)
+	return objectValueOwned(Value{}, entries)
 }
 
 func (p *classicJSStatementParser) parseObjectLiteralKey() (string, bool, error) {
@@ -12131,7 +12773,7 @@ func (p *classicJSStatementParser) parseObjectLiteralAccessor(keyword string) (s
 }
 
 func classicJSObjectLiteralDefaultSuperTarget() Value {
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key: "toString",
 			Value: NativeFunctionValue(func(args []Value) (Value, error) {
@@ -12300,7 +12942,7 @@ func (p *classicJSStatementParser) invokeFrame(callee jsValue, args []Value) (js
 	}
 }
 
-func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *classicJSEnvironment, params []classicJSFunctionParameter, restName string, args []Value, allowAwait bool, privateClass *classicJSClassDefinition) error {
+func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *classicJSEnvironment, params []classicJSFunctionParameter, restName string, args []Value, allowAwait bool, privateClass *classicJSClassDefinition, skipCache *classicJSSkipCache) error {
 	prevEnv := p.env
 	p.env = callEnv
 	defer func() {
@@ -12322,7 +12964,7 @@ func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *clas
 			value = args[i]
 		}
 		if param.defaultSource != "" && (i >= len(args) || value.Kind == ValueKindUndefined) {
-			parsed, err := evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(param.defaultSource, p.host, callEnv, p.stepLimit, allowAwait, false, p.newTarget, p.hasNewTarget, privateClass, nil)
+			parsed, err := evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(param.defaultSource, p.host, callEnv, p.stepLimit, allowAwait, false, p.newTarget, p.hasNewTarget, privateClass, nil, skipCache)
 			if err != nil {
 				return err
 			}
@@ -12344,7 +12986,7 @@ func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *clas
 		if len(args) > len(params) {
 			rest = append(rest, args[len(params):]...)
 		}
-		if err := callEnv.declare(restName, scalarJSValue(ArrayValue(rest)), true); err != nil {
+		if err := callEnv.declare(restName, scalarJSValue(arrayValueOwned(rest)), true); err != nil {
 			return err
 		}
 	}
@@ -12355,6 +12997,9 @@ func (p *classicJSStatementParser) bindClassicJSFunctionParameters(callEnv *clas
 func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunction, args []Value, callee jsValue) (jsValue, error) {
 	if fn == nil {
 		return jsValue{}, NewError(ErrorKindRuntime, "arrow function is unavailable")
+	}
+	if p != nil && p.skipEvaluation {
+		return scalarJSValue(UndefinedValue()), nil
 	}
 	if fn.generatorState != nil {
 		switch fn.generatorMethod {
@@ -12405,7 +13050,8 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 			return jsValue{}, err
 		}
 	}
-	if err := p.bindClassicJSFunctionParameters(callEnv, fn.params, fn.restName, args, fn.async, fn.privateClass); err != nil {
+	skipCache := fn.ensureSkipCache()
+	if err := p.bindClassicJSFunctionParameters(callEnv, fn.params, fn.restName, args, fn.async, fn.privateClass, skipCache); err != nil {
 		return jsValue{}, err
 	}
 	prevPrivateClass := p.privateClass
@@ -12493,7 +13139,7 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 	}
 
 	if fn.bodyIsBlock {
-		_, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, fn.allowReturn, nil, p.newTarget, p.hasNewTarget, fn.privateClass, nil)
+		_, err := evalClassicJSProgramWithAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, fn.allowReturn, nil, p.newTarget, p.hasNewTarget, fn.privateClass, nil, skipCache)
 		if err != nil {
 			if awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err); ok {
 				awaitedPromise.addWaiter(func(next Value, rejected bool) {
@@ -12521,7 +13167,7 @@ func (p *classicJSStatementParser) invokeArrowFunction(fn *classicJSArrowFunctio
 		return constructorResult(scalarJSValue(UndefinedValue())), nil
 	}
 
-	value, err := evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, p.newTarget, p.hasNewTarget, fn.privateClass, nil)
+	value, err := evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(fn.body, p.host, callEnv, p.stepLimit, fn.async, false, p.newTarget, p.hasNewTarget, fn.privateClass, nil, skipCache)
 	if err != nil {
 		if awaitedPromise, resumeState, ok := classicJSAwaitSignalDetails(err); ok {
 			awaitedPromise.addWaiter(func(next Value, rejected bool) {
@@ -12585,7 +13231,8 @@ func (p *classicJSStatementParser) invokeGeneratorFunction(fn *classicJSGenerato
 			return jsValue{}, err
 		}
 	}
-	if err := p.bindClassicJSFunctionParameters(callEnv, fn.params, fn.restName, args, fn.async, fn.privateClass); err != nil {
+	skipCache := fn.ensureSkipCache()
+	if err := p.bindClassicJSFunctionParameters(callEnv, fn.params, fn.restName, args, fn.async, fn.privateClass, skipCache); err != nil {
 		return jsValue{}, err
 	}
 
@@ -12605,6 +13252,7 @@ func (p *classicJSStatementParser) invokeGeneratorFunction(fn *classicJSGenerato
 	state := &classicJSGeneratorState{
 		statements:   statements,
 		env:          callEnv,
+		skipCache:    skipCache,
 		async:        fn.async,
 		newTarget:    p.newTarget,
 		hasNewTarget: p.hasNewTarget,
@@ -12621,7 +13269,7 @@ func (p *classicJSStatementParser) invokeGeneratorFunction(fn *classicJSGenerato
 		generatorMethod: "throw",
 		generatorState:  state,
 	}
-	return scalarJSValue(ObjectValue([]ObjectEntry{
+	return scalarJSValue(objectValueOwned(Value{}, []ObjectEntry{
 		{Key: "next", Value: FunctionValue(nextFn)},
 		{Key: "return", Value: FunctionValue(returnFn)},
 		{Key: "throw", Value: FunctionValue(throwFn)},
@@ -12685,7 +13333,7 @@ func (p *classicJSStatementParser) instantiateClassicJSClass(name string, classV
 	for _, field := range classDef.instanceFields {
 		value := UndefinedValue()
 		if strings.TrimSpace(field.init) != "" {
-			currentInstanceValue := ObjectValue(append([]ObjectEntry(nil), instanceEntries...))
+			currentInstanceValue := objectValueOwned(Value{}, append([]ObjectEntry(nil), instanceEntries...))
 			fieldEnv := field.env
 			if fieldEnv == nil {
 				fieldEnv = classDef.env
@@ -12726,7 +13374,7 @@ func (p *classicJSStatementParser) instantiateClassicJSClass(name string, classV
 		instanceEntries = append(instanceEntries, ObjectEntry{Key: key, Value: value})
 	}
 
-	instanceValue := ObjectValue(instanceEntries)
+	instanceValue := objectValueOwned(Value{}, instanceEntries)
 
 	if hasConstructor && constructorValue.Kind == ValueKindFunction && constructorValue.Function != nil {
 		constructorCall := scalarJSValue(constructorValue).withNewTarget(constructorValue)
@@ -12788,6 +13436,11 @@ func (p *classicJSStatementParser) invokeGeneratorNext(state *classicJSGenerator
 	if state == nil {
 		return jsValue{}, NewError(ErrorKindRuntime, "generator state is unavailable")
 	}
+	prevSkipCache := p.skipCache
+	p.skipCache = state.skipCache
+	defer func() {
+		p.skipCache = prevSkipCache
+	}()
 	prevHasNewTarget := p.hasNewTarget
 	prevNewTarget := p.newTarget
 	p.hasNewTarget = state.hasNewTarget
@@ -12848,7 +13501,7 @@ func (p *classicJSStatementParser) invokeGeneratorNext(state *classicJSGenerator
 		} else if ok {
 			value := UndefinedValue()
 			if yieldSource != "" {
-				value, err = evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(yieldSource, p.host, state.env, p.stepLimit, state.async, false, p.newTarget, p.hasNewTarget, p.privateClass, nil)
+				value, err = evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(yieldSource, p.host, state.env, p.stepLimit, state.async, false, p.newTarget, p.hasNewTarget, p.privateClass, nil, p.skipCache)
 				if err != nil {
 					return jsValue{}, err
 				}
@@ -12863,7 +13516,7 @@ func (p *classicJSStatementParser) invokeGeneratorNext(state *classicJSGenerator
 			return recordYield(value), nil
 		}
 
-		if _, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, state.async, true, false, nil, p.newTarget, p.hasNewTarget, nil, nil); err != nil {
+		if _, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, p.host, state.env, p.stepLimit, state.async, true, false, nil, p.newTarget, p.hasNewTarget, nil, nil, p.skipCache); err != nil {
 			if yieldedValue, resumeState, ok := classicJSYieldSignalDetails(err); ok {
 				if resumeState != nil {
 					state.activeState = resumeState
@@ -13139,7 +13792,7 @@ func (p *classicJSStatementParser) resumeYieldDelegationState(state *classicJSYi
 }
 
 func generatorIteratorResultValue(value Value, done bool) jsValue {
-	return scalarJSValue(ObjectValue([]ObjectEntry{
+	return scalarJSValue(objectValueOwned(Value{}, []ObjectEntry{
 		{Key: "value", Value: value},
 		{Key: "done", Value: BoolValue(done)},
 	}))
@@ -13296,7 +13949,7 @@ func (p *classicJSStatementParser) parseStringLiteral() (Value, error) {
 }
 
 func (p *classicJSStatementParser) parseTemplateLiteral() (Value, error) {
-	segments, substitutions, err := p.consumeTemplateLiteralParts()
+	segments, _, substitutions, err := p.consumeTemplateLiteralParts()
 	if err != nil {
 		return UndefinedValue(), err
 	}
@@ -13392,7 +14045,7 @@ func (p *classicJSStatementParser) consumeRegularExpressionFlags() (string, erro
 }
 
 func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
-	compiled, err := classicJSCompileRegExpLiteral(pattern, flags)
+	compiled, err := jsregex.CompileLiteral(pattern, flags)
 	if err != nil {
 		return UndefinedValue(), NewError(ErrorKindParse, fmt.Sprintf("invalid regular expression literal: %v", err))
 	}
@@ -13403,7 +14056,11 @@ func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
 		if len(args) > 0 {
 			input = args[0]
 		}
-		return BoolValue(compiled.MatchString(ToJSString(input))), nil
+		matched, err := compiled.MatchString(ToJSString(input))
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		return BoolValue(matched), nil
 	}
 	exec := func(args []Value) (Value, error) {
 		input := UndefinedValue()
@@ -13411,24 +14068,24 @@ func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
 			input = args[0]
 		}
 		text := ToJSString(input)
-		matches := compiled.FindStringSubmatch(text)
-		if matches == nil {
+		result, err := compiled.Exec(text)
+		if err != nil {
+			return UndefinedValue(), err
+		}
+		if result == nil {
 			return NullValue(), nil
 		}
-		loc := compiled.FindStringSubmatchIndex(text)
-		entries := make([]ObjectEntry, 0, len(matches)+3)
-		for i, match := range matches {
+		entries := make([]ObjectEntry, 0, len(result.Captures)+3)
+		for i, match := range result.Captures {
 			entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: StringValue(match)})
 		}
-		entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(matches)))})
-		if len(loc) >= 2 {
-			entries = append(entries, ObjectEntry{Key: "index", Value: NumberValue(float64(loc[0]))})
-		}
-		entries = append(entries, ObjectEntry{Key: "input", Value: StringValue(text)})
-		return ObjectValue(entries), nil
+		entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(result.Captures)))})
+		entries = append(entries, ObjectEntry{Key: "index", Value: NumberValue(float64(result.Index))})
+		entries = append(entries, ObjectEntry{Key: "input", Value: StringValue(result.Input)})
+		return objectValueOwned(Value{}, entries), nil
 	}
 
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{Key: classicJSRegExpPatternKey, Value: StringValue(pattern)},
 		{Key: classicJSRegExpFlagsKey, Value: StringValue(flags)},
 		{Key: "source", Value: StringValue(pattern)},
@@ -13441,71 +14098,8 @@ func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
 	}), nil
 }
 
-func classicJSCompileRegExpLiteral(pattern, flags string) (*regexp.Regexp, error) {
-	translated, err := classicJSExpandRegExpUnicodeEscapes(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	var prefix strings.Builder
-	seen := make(map[byte]bool, len(flags))
-	for i := 0; i < len(flags); i++ {
-		flag := flags[i]
-		if seen[flag] {
-			return nil, fmt.Errorf("duplicate regular expression flag %q", flag)
-		}
-		seen[flag] = true
-		switch flag {
-		case 'i':
-			prefix.WriteString("(?i)")
-		case 'm':
-			prefix.WriteString("(?m)")
-		case 's':
-			prefix.WriteString("(?s)")
-		case 'd', 'g', 'u', 'v', 'y':
-		default:
-			return nil, fmt.Errorf("unsupported regular expression flag %q", flag)
-		}
-	}
-
-	return regexp.Compile(prefix.String() + translated)
-}
-
-func classicJSExpandRegExpUnicodeEscapes(pattern string) (string, error) {
-	var b strings.Builder
-	for i := 0; i < len(pattern); {
-		if pattern[i] != '\\' || i+1 >= len(pattern) {
-			b.WriteByte(pattern[i])
-			i++
-			continue
-		}
-		if pattern[i+1] != 'u' {
-			b.WriteByte(pattern[i])
-			b.WriteByte(pattern[i+1])
-			i += 2
-			continue
-		}
-		if i+5 >= len(pattern) || !isHexDigit(pattern[i+2]) || !isHexDigit(pattern[i+3]) || !isHexDigit(pattern[i+4]) || !isHexDigit(pattern[i+5]) {
-			b.WriteByte(pattern[i])
-			b.WriteByte(pattern[i+1])
-			i += 2
-			continue
-		}
-		code, err := strconv.ParseInt(pattern[i+2:i+6], 16, 32)
-		if err != nil {
-			return "", fmt.Errorf("invalid unicode escape %q", pattern[i:i+6])
-		}
-		if code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF) {
-			return "", fmt.Errorf("unsupported unicode escape %q", pattern[i:i+6])
-		}
-		b.WriteRune(rune(code))
-		i += 6
-	}
-	return b.String(), nil
-}
-
 func (p *classicJSStatementParser) parseTaggedTemplateLiteral(tag jsValue) (jsValue, error) {
-	segments, substitutions, err := p.consumeTemplateLiteralParts()
+	segments, rawSegments, substitutions, err := p.consumeTemplateLiteralParts()
 	if err != nil {
 		return jsValue{}, err
 	}
@@ -13517,12 +14111,8 @@ func (p *classicJSStatementParser) parseTaggedTemplateLiteral(tag jsValue) (jsVa
 		}
 	}
 
-	cooked := make([]Value, len(segments))
-	for i, segment := range segments {
-		cooked[i] = StringValue(segment)
-	}
 	args := make([]Value, 0, len(substitutions)+1)
-	args = append(args, ArrayValue(cooked))
+	args = append(args, templateLiteralObjectValue(segments, rawSegments))
 	for _, source := range substitutions {
 		value, err := p.evalExpressionWithEnv(source, p.env)
 		if err != nil {
@@ -13538,35 +14128,54 @@ func (p *classicJSStatementParser) parseTaggedTemplateLiteral(tag jsValue) (jsVa
 	return value, nil
 }
 
-func (p *classicJSStatementParser) consumeTemplateLiteralParts() ([]string, []string, error) {
+func templateLiteralObjectValue(cooked, raw []string) Value {
+	entries := make([]ObjectEntry, 0, len(cooked)+2)
+	for i, segment := range cooked {
+		entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: StringValue(segment)})
+	}
+	rawValues := make([]Value, len(raw))
+	for i, segment := range raw {
+		rawValues[i] = StringValue(segment)
+	}
+	entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(cooked)))})
+	entries = append(entries, ObjectEntry{Key: "raw", Value: arrayValueOwned(rawValues)})
+	return objectValueOwned(Value{}, entries)
+}
+
+func (p *classicJSStatementParser) consumeTemplateLiteralParts() ([]string, []string, []string, error) {
 	if p.eof() {
-		return nil, nil, NewError(ErrorKindParse, "unexpected end of script source")
+		return nil, nil, nil, NewError(ErrorKindParse, "unexpected end of script source")
 	}
 
 	p.pos++
 	segments := make([]string, 0, 2)
+	rawSegments := make([]string, 0, 2)
 	substitutions := make([]string, 0, 1)
 	var b strings.Builder
+	rawStart := p.pos
 	for !p.eof() {
 		ch := p.peekByte()
 		switch {
 		case ch == '`':
+			rawSegments = append(rawSegments, p.source[rawStart:p.pos])
 			p.pos++
 			segments = append(segments, b.String())
-			return segments, substitutions, nil
+			return segments, rawSegments, substitutions, nil
 		case ch == '$' && p.pos+1 < len(p.source) && p.source[p.pos+1] == '{':
+			rawSegments = append(rawSegments, p.source[rawStart:p.pos])
 			p.pos += 2
 			source, err := p.consumeTemplateInterpolationSource()
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			segments = append(segments, b.String())
 			b.Reset()
 			substitutions = append(substitutions, source)
+			rawStart = p.pos
 		case ch == '\\':
 			p.pos++
 			if p.eof() {
-				return nil, nil, NewError(ErrorKindParse, "unterminated escape sequence in template literal")
+				return nil, nil, nil, NewError(ErrorKindParse, "unterminated escape sequence in template literal")
 			}
 			escaped := p.peekByte()
 			p.pos++
@@ -13592,13 +14201,13 @@ func (p *classicJSStatementParser) consumeTemplateLiteralParts() ([]string, []st
 			case 'x':
 				runeValue, err := p.parseHexEscape(2)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				b.WriteRune(runeValue)
 			case 'u':
 				runeValue, err := p.parseHexEscape(4)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				b.WriteRune(runeValue)
 			default:
@@ -13610,7 +14219,7 @@ func (p *classicJSStatementParser) consumeTemplateLiteralParts() ([]string, []st
 		}
 	}
 
-	return nil, nil, NewError(ErrorKindParse, "unterminated template literal")
+	return nil, nil, nil, NewError(ErrorKindParse, "unterminated template literal")
 }
 
 func (p *classicJSStatementParser) parseHexEscape(width int) (rune, error) {

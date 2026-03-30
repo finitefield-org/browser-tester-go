@@ -36,6 +36,19 @@ Exit criteria:
 
 - supported inline scripts and modules execute deterministically
 
+## Phase 2.5: Native RegExp Engine
+
+- Implement the Go-owned ECMAScript regular-expression parser, compiler, VM, and replacement
+  expansion.
+- Route regex literals and regex-aware `String.*` methods through that engine.
+- Remove the RE2/regexp2 fallback path from the production regex path.
+- Keep the engine UTF-16 aware and deterministic.
+
+Exit criteria:
+
+- lookahead, backreference, named-capture, and zero-width regex cases pass through the native engine
+- bootstrap and runtime tests no longer depend on external regex engines
+
 ## Phase 3: Events and Form Controls
 
 - Wire user-like actions, event propagation, and default actions.

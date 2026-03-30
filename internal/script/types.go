@@ -140,13 +140,32 @@ func ObjectValue(entries []ObjectEntry) Value {
 	}
 }
 
+func arrayValueOwned(values []Value) Value {
+	if len(values) == 0 {
+		values = make([]Value, 0, 1)
+	}
+	return Value{
+		Kind:  ValueKindArray,
+		Array: values,
+	}
+}
+
+func objectValueOwned(base Value, entries []ObjectEntry) Value {
+	if len(entries) == 0 {
+		entries = make([]ObjectEntry, 0, 1)
+	}
+	return Value{
+		Kind:            ValueKindObject,
+		Object:          entries,
+		ClassKey:        base.ClassKey,
+		ClassDefinition: base.ClassDefinition,
+		MapState:        base.MapState,
+		SetState:        base.SetState,
+	}
+}
+
 func objectValueWithMetadata(base Value, entries []ObjectEntry) Value {
-	cloned := ObjectValue(entries)
-	cloned.ClassKey = base.ClassKey
-	cloned.ClassDefinition = base.ClassDefinition
-	cloned.MapState = base.MapState
-	cloned.SetState = base.SetState
-	return cloned
+	return objectValueOwned(base, entries)
 }
 
 func PrivateNameValue(name string) Value {
@@ -168,6 +187,22 @@ func NativeFunctionValue(fn NativeFunction) Value {
 		Kind:           ValueKindFunction,
 		NativeFunction: fn,
 	}
+}
+
+func NativeNamedFunctionValue(name string, fn NativeFunction) Value {
+	value := NativeFunctionValue(fn)
+	value.Function = &classicJSArrowFunction{
+		name:          name,
+		constructible: false,
+		env:           newClassicJSEnvironment(),
+	}
+	if value.Function != nil {
+		value.Function.objectProps = []ObjectEntry{
+			{Key: "length", Value: NumberValue(0)},
+			{Key: "name", Value: StringValue(name)},
+		}
+	}
+	return value
 }
 
 func NativeConstructibleFunctionValue(callFn, constructFn NativeFunction) Value {

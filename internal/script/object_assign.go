@@ -33,7 +33,7 @@ func ObjectAssign(host HostBindings, target Value, sources ...Value) (Value, err
 			if err != nil {
 				return UndefinedValue(), err
 			}
-			if changed && ctx != nil {
+			if changed && ctx != nil && !ctx.SkipEvaluation() {
 				switch target.Kind {
 				case ValueKindObject:
 					ctx.ReplaceObjectBindings(target, updated)
@@ -55,7 +55,7 @@ func objectAssignBoxTarget(target Value) Value {
 	case ValueKindString:
 		return objectAssignStringObject(target.String)
 	default:
-		return ObjectValue(nil)
+		return objectValueOwned(Value{}, nil)
 	}
 }
 
@@ -69,7 +69,7 @@ func objectAssignStringObject(text string) Value {
 		})
 		index++
 	}
-	return ObjectValue(entries)
+	return objectValueOwned(Value{}, entries)
 }
 
 func objectAssignEnumerableKeys(source Value) []string {
@@ -150,7 +150,7 @@ func objectAssignWriteProperty(host HostBindings, target Value, key string, valu
 	case ValueKindArray:
 		return objectAssignWriteArrayProperty(target, key, value)
 	default:
-		return ObjectValue(nil), false, fmt.Errorf("Object.assign target must be an object or array")
+		return objectValueOwned(Value{}, nil), false, fmt.Errorf("Object.assign target must be an object or array")
 	}
 }
 
@@ -210,6 +210,6 @@ func objectAssignWriteArrayProperty(target Value, key string, value Value) (Valu
 	} else {
 		updated[index] = value
 	}
-	updatedValue := ArrayValue(updated)
+	updatedValue := arrayValueOwned(updated)
 	return updatedValue, true, nil
 }

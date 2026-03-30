@@ -224,6 +224,144 @@ func TestDispatchSupportsStringCaseConversion(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsStringWellFormedMethods(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `text.isWellFormed() + "|" + text.toWellFormed()`,
+		Bindings: map[string]Value{
+			"text": StringValue(string([]byte{0xff, 'a'})),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.isWellFormed/toWellFormed) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.isWellFormed/toWellFormed) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "false|\uFFFDa" {
+		t.Fatalf("Dispatch(String.isWellFormed/toWellFormed) value = %q, want %q", result.Value.String, "false|\uFFFDa")
+	}
+}
+
+func TestDispatchRejectsStringWellFormedConstruction(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	for _, source := range []string{
+		`new "abc".isWellFormed()`,
+		`new "abc".toWellFormed()`,
+	} {
+		_, err := runtime.Dispatch(DispatchRequest{Source: source})
+		if err == nil {
+			t.Fatalf("Dispatch(%s) error = nil, want error", source)
+		}
+		if got := err.Error(); !strings.Contains(got, "new expressions only work on class expressions") {
+			t.Fatalf("Dispatch(%s) error = %q, want constructibility error", source, got)
+		}
+	}
+}
+
+func TestDispatchSupportsStringIterator(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const iter = "A😀"[Symbol.iterator](); const first = iter.next(); const second = iter.next(); const third = iter.next(); [first.value, first.done, second.value, second.done, third.done, iter[Symbol.iterator]() === iter].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.iterator) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.iterator) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "A|false|😀|false|true|true" {
+		t.Fatalf("Dispatch(String.iterator) value = %q, want %q", result.Value.String, "A|false|😀|false|true|true")
+	}
+}
+
+func TestDispatchRejectsStringIteratorConstruction(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `const iter = "abc"[Symbol.iterator]; new iter()`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.iterator construction) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "new expressions only work on class expressions") {
+		t.Fatalf("Dispatch(String.iterator construction) error = %q, want constructibility error", got)
+	}
+}
+
+func TestDispatchSupportsStringToLocaleLowerCase(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["I".toLocaleLowerCase("tr"), "I".toLocaleLowerCase()].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "ı|i" {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase) value = %q, want %q", result.Value.String, "ı|i")
+	}
+}
+
+func TestDispatchRejectsInvalidStringToLocaleLowerCaseLocale(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"I".toLocaleLowerCase("invalid_locale")`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase invalid locale) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase invalid locale) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase invalid locale) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if got := scriptErr.Message; !strings.Contains(got, "String.toLocaleLowerCase invalid locale") {
+		t.Fatalf("Dispatch(String.toLocaleLowerCase invalid locale) error message = %q, want invalid locale error", got)
+	}
+}
+
+func TestDispatchSupportsStringToLocaleUpperCase(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `["i".toLocaleUpperCase("tr"), "i".toLocaleUpperCase()].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "İ|I" {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase) value = %q, want %q", result.Value.String, "İ|I")
+	}
+}
+
+func TestDispatchRejectsInvalidStringToLocaleUpperCaseLocale(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `"i".toLocaleUpperCase("invalid_locale")`})
+	if err == nil {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase invalid locale) error = nil, want error")
+	}
+	scriptErr, ok := err.(Error)
+	if !ok {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase invalid locale) error type = %T, want script.Error", err)
+	}
+	if scriptErr.Kind != ErrorKindRuntime {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase invalid locale) error kind = %q, want %q", scriptErr.Kind, ErrorKindRuntime)
+	}
+	if got := scriptErr.Message; !strings.Contains(got, "String.toLocaleUpperCase invalid locale") {
+		t.Fatalf("Dispatch(String.toLocaleUpperCase invalid locale) error message = %q, want invalid locale error", got)
+	}
+}
+
 func TestDispatchSupportsStringConcat(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -916,6 +1054,34 @@ func TestDispatchSupportsArraySpliceWithoutDeleteCountInNestedHelper(t *testing.
 	}
 }
 
+func TestDispatchSupportsRepeatedArrayPushAndSpliceOnDirectBinding(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			function buildRows() {
+				const rows = [];
+				const cells = ["alpha", "beta"];
+				for (let i = 0; i < 200; i++) {
+					rows.push(cells.splice(0));
+					cells.push("alpha", "beta");
+				}
+				return [rows.length, rows[0].join(","), rows[199].join(","), cells.length].join("|");
+			}
+			buildRows()
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(repeated Array.push/splice) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(repeated Array.push/splice) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "200|alpha,beta|alpha,beta|2" {
+		t.Fatalf("Dispatch(repeated Array.push/splice) value = %q, want %q", result.Value.String, "200|alpha,beta|alpha,beta|2")
+	}
+}
+
 func TestDispatchSupportsArrayPop(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -1140,6 +1306,52 @@ func TestDispatchSupportsArrayReverse(t *testing.T) {
 	}
 	if result.Value.String != "3,2,1|3,2,1" {
 		t.Fatalf("Dispatch(Array.reverse) value = %q, want %q", result.Value.String, "3,2,1|3,2,1")
+	}
+}
+
+func TestDispatchSupportsArrayToReversed(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const values = [1, 2, 3]; const reversed = values.toReversed(); [values.join(","), reversed.join(",")].join("|")`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.toReversed) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Array.toReversed) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1,2,3|3,2,1" {
+		t.Fatalf("Dispatch(Array.toReversed) value = %q, want %q", result.Value.String, "1,2,3|3,2,1")
+	}
+}
+
+func TestDispatchSupportsArrayPushOnSelfReferentialArray(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const values = []; values.push(values); values.push(1); values.length`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Array.push self reference) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber {
+		t.Fatalf("Dispatch(Array.push self reference) kind = %q, want %q", result.Value.Kind, ValueKindNumber)
+	}
+	if result.Value.Number != 2 {
+		t.Fatalf("Dispatch(Array.push self reference) value = %v, want 2", result.Value.Number)
+	}
+}
+
+func TestDispatchRejectsArrayToReversedWithNew(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	_, err := runtime.Dispatch(DispatchRequest{Source: `new ([1, 2].toReversed)`})
+	if err == nil {
+		t.Fatalf("Dispatch(new Array.toReversed) error = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "new expressions only work on class expressions, class identifiers, or constructible function values") {
+		t.Fatalf("Dispatch(new Array.toReversed) error = %q, want constructibility error", got)
 	}
 }
 
@@ -1712,5 +1924,22 @@ func TestDispatchUpdatesNestedArrayBindings(t *testing.T) {
 	}
 	if result.Value.String != "a,b,c|0,1,9,8,3" {
 		t.Fatalf("Dispatch(nested array bindings) value = %q, want %q", result.Value.String, "a,b,c|0,1,9,8,3")
+	}
+}
+
+func TestDispatchUpdatesCyclicArrayAndObjectBindingsWithoutRecursion(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `const values = []; const state = { values }; values.push(state); function mutate() { values.push(1); } mutate(); values.length`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(cyclic array/object bindings) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber {
+		t.Fatalf("Dispatch(cyclic array/object bindings) kind = %q, want %q", result.Value.Kind, ValueKindNumber)
+	}
+	if result.Value.Number != 2 {
+		t.Fatalf("Dispatch(cyclic array/object bindings) value = %v, want 2", result.Value.Number)
 	}
 }

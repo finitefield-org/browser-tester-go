@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const bindingReplacementWalkLimit = 1024
+
 type RuntimeConfig struct {
 	StepLimit int
 }
@@ -23,6 +25,7 @@ type HostBindings interface {
 type BindingUpdateContext interface {
 	ReplaceObjectBindings(oldValue Value, newValue Value) int
 	ReplaceArrayBindings(oldValue Value, newValue Value) int
+	SkipEvaluation() bool
 }
 
 var currentBindingUpdateContext BindingUpdateContext
@@ -75,8 +78,9 @@ type classicJSEnvironment struct {
 }
 
 type classicJSBinding struct {
-	value   jsValue
-	mutable bool
+	value              jsValue
+	mutable            bool
+	skipBindingUpdates bool
 }
 
 type classicJSClassFieldDefinition struct {
@@ -120,6 +124,31 @@ func (e *classicJSEnvironment) clone() *classicJSEnvironment {
 
 func (e *classicJSEnvironment) cloneDetached() *classicJSEnvironment {
 	return e.cloneDetachedWithMapping(make(map[*classicJSEnvironment]*classicJSEnvironment))
+}
+
+func (e *classicJSEnvironment) cloneSkipped() *classicJSEnvironment {
+	if e == nil {
+		return newClassicJSEnvironment()
+	}
+	sanitizer := newSkippedValueSanitizer()
+	cloned := &classicJSEnvironment{
+		parent:     e.parent.cloneSkipped(),
+		bindings:   make(map[string]classicJSBinding, len(e.bindings)),
+		classDefs:  make(map[string]*classicJSClassDefinition, len(e.classDefs)),
+		withScopes: make([]Value, len(e.withScopes)),
+	}
+	for name, binding := range e.bindings {
+		clonedBinding := binding
+		clonedBinding.value = sanitizer.sanitizeJSValue(binding.value)
+		cloned.bindings[name] = clonedBinding
+	}
+	for name, classDef := range e.classDefs {
+		cloned.classDefs[name] = classDef
+	}
+	for i, scope := range e.withScopes {
+		cloned.withScopes[i] = sanitizer.sanitize(scope)
+	}
+	return cloned
 }
 
 func (e *classicJSEnvironment) cloneDetachedWithMapping(mapping map[*classicJSEnvironment]*classicJSEnvironment) *classicJSEnvironment {
@@ -251,15 +280,25 @@ func resolveClassicJSClassDefinition(value Value, env *classicJSEnvironment) (*c
 }
 
 func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*classicJSEnvironment) jsValue {
+	return cloneJSValueDetachedSeen(
+		value,
+		mapping,
+		make(map[*classicJSArrowFunction]*classicJSArrowFunction),
+		make(map[uintptr]Value),
+		make(map[uintptr]Value),
+	)
+}
+
+func cloneJSValueDetachedSeen(value jsValue, mapping map[*classicJSEnvironment]*classicJSEnvironment, clonedFunctions map[*classicJSArrowFunction]*classicJSArrowFunction, clonedArrays map[uintptr]Value, clonedObjects map[uintptr]Value) jsValue {
 	switch value.kind {
 	case jsValueScalar:
-		cloned := scalarJSValue(cloneValueDetached(value.value, mapping))
+		cloned := scalarJSValue(cloneValueDetachedSeen(value.value, mapping, clonedFunctions, clonedArrays, clonedObjects))
 		if value.hasReceiver {
-			cloned.receiver = cloneValueDetached(value.receiver, mapping)
+			cloned.receiver = cloneValueDetachedSeen(value.receiver, mapping, clonedFunctions, clonedArrays, clonedObjects)
 			cloned.hasReceiver = true
 		}
 		if value.hasNewTarget {
-			cloned.newTarget = cloneValueDetached(value.newTarget, mapping)
+			cloned.newTarget = cloneValueDetachedSeen(value.newTarget, mapping, clonedFunctions, clonedArrays, clonedObjects)
 			cloned.hasNewTarget = true
 		}
 		return cloned
@@ -270,9 +309,9 @@ func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*clas
 	case jsValueHostMethod:
 		return hostMethodJSValue(value.method)
 	case jsValueSuper:
-		cloned := superJSValue(cloneValueDetached(value.value, mapping), cloneValueDetached(value.receiver, mapping))
+		cloned := superJSValue(cloneValueDetachedSeen(value.value, mapping, clonedFunctions, clonedArrays, clonedObjects), cloneValueDetachedSeen(value.receiver, mapping, clonedFunctions, clonedArrays, clonedObjects))
 		if value.hasNewTarget {
-			cloned.newTarget = cloneValueDetached(value.newTarget, mapping)
+			cloned.newTarget = cloneValueDetachedSeen(value.newTarget, mapping, clonedFunctions, clonedArrays, clonedObjects)
 			cloned.hasNewTarget = true
 		}
 		return cloned
@@ -282,34 +321,66 @@ func cloneJSValueDetached(value jsValue, mapping map[*classicJSEnvironment]*clas
 }
 
 func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJSEnvironment) Value {
+	return cloneValueDetachedSeen(
+		value,
+		mapping,
+		make(map[*classicJSArrowFunction]*classicJSArrowFunction),
+		make(map[uintptr]Value),
+		make(map[uintptr]Value),
+	)
+}
+
+func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*classicJSEnvironment, clonedFunctions map[*classicJSArrowFunction]*classicJSArrowFunction, clonedArrays map[uintptr]Value, clonedObjects map[uintptr]Value) Value {
 	switch value.Kind {
 	case ValueKindArray:
 		if len(value.Array) == 0 {
-			return ArrayValue(nil)
+			return arrayValueOwned(nil)
+		}
+		ptr := reflect.ValueOf(value.Array).Pointer()
+		if ptr != 0 {
+			if cloned, ok := clonedArrays[ptr]; ok {
+				return cloned
+			}
 		}
 		cloned := make([]Value, len(value.Array))
-		for i, element := range value.Array {
-			cloned[i] = cloneValueDetached(element, mapping)
+		clonedValue := Value{Kind: ValueKindArray, Array: cloned}
+		if ptr != 0 {
+			clonedArrays[ptr] = clonedValue
 		}
-		return ArrayValue(cloned)
+		for i, element := range value.Array {
+			cloned[i] = cloneValueDetachedSeen(element, mapping, clonedFunctions, clonedArrays, clonedObjects)
+		}
+		return clonedValue
 	case ValueKindObject:
 		if len(value.Object) == 0 {
-			cloned := ObjectValue(nil)
+			cloned := Value{Kind: ValueKindObject}
 			cloned.ClassKey = value.ClassKey
 			cloned.ClassDefinition = value.ClassDefinition
 			cloned.MapState = cloneMapStateDetached(value.MapState, mapping)
 			cloned.SetState = cloneSetStateDetached(value.SetState, mapping)
 			return cloned
 		}
-		cloned := make([]ObjectEntry, len(value.Object))
-		for i, entry := range value.Object {
-			cloned[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetached(entry.Value, mapping)}
+		ptr := reflect.ValueOf(value.Object).Pointer()
+		if ptr != 0 {
+			if cloned, ok := clonedObjects[ptr]; ok {
+				return cloned
+			}
 		}
-		clonedValue := ObjectValue(cloned)
+		cloned := make([]ObjectEntry, len(value.Object))
+		clonedValue := Value{Kind: ValueKindObject, Object: cloned}
 		clonedValue.ClassKey = value.ClassKey
 		clonedValue.ClassDefinition = value.ClassDefinition
+		if ptr != 0 {
+			clonedObjects[ptr] = clonedValue
+		}
+		for i, entry := range value.Object {
+			cloned[i] = ObjectEntry{Key: entry.Key, Value: cloneValueDetachedSeen(entry.Value, mapping, clonedFunctions, clonedArrays, clonedObjects)}
+		}
 		clonedValue.MapState = cloneMapStateDetached(value.MapState, mapping)
 		clonedValue.SetState = cloneSetStateDetached(value.SetState, mapping)
+		if ptr != 0 {
+			clonedObjects[ptr] = clonedValue
+		}
 		return clonedValue
 	case ValueKindFunction:
 		if value.NativeFunction != nil || value.NativeConstructibleFunction != nil {
@@ -321,14 +392,20 @@ func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJ
 		if value.Function == nil {
 			return value
 		}
-		cloned := FunctionValue(value.Function.cloneDetached(mapping))
+		if clonedFn, ok := clonedFunctions[value.Function]; ok {
+			cloned := FunctionValue(clonedFn)
+			cloned.NativeFunction = value.NativeFunction
+			cloned.NativeConstructibleFunction = value.NativeConstructibleFunction
+			return cloned
+		}
+		cloned := FunctionValue(value.Function.cloneDetachedSeen(mapping, clonedFunctions, clonedArrays, clonedObjects))
 		cloned.NativeFunction = value.NativeFunction
 		cloned.NativeConstructibleFunction = value.NativeConstructibleFunction
 		return cloned
 	case ValueKindPromise:
 		cloned := value
 		if value.Promise != nil {
-			clonedPromise := cloneValueDetached(*value.Promise, mapping)
+			clonedPromise := cloneValueDetachedSeen(*value.Promise, mapping, clonedFunctions, clonedArrays, clonedObjects)
 			cloned.Promise = &clonedPromise
 		}
 		return cloned
@@ -414,6 +491,9 @@ func (e *classicJSEnvironment) lookupWithScopes(name string) (jsValue, bool) {
 }
 
 func (e *classicJSEnvironment) assign(name string, value jsValue) error {
+	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
+		return nil
+	}
 	for current := e; current != nil; current = current.parent {
 		if len(current.bindings) == 0 {
 			handled, err := current.assignWithScopes(name, value)
@@ -447,6 +527,9 @@ func (e *classicJSEnvironment) assign(name string, value jsValue) error {
 }
 
 func (e *classicJSEnvironment) assignWithScopes(name string, value jsValue) (bool, error) {
+	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
+		return false, nil
+	}
 	if e == nil || len(e.withScopes) == 0 {
 		return false, nil
 	}
@@ -529,7 +612,7 @@ func classicJSEnvironmentScopeAssign(scope Value, name string, rhs Value) (Value
 			for len(updated) < newLength {
 				updated = append(updated, UndefinedValue())
 			}
-			return ArrayValue(updated), true, nil
+			return arrayValueOwned(updated), true, nil
 		}
 		index, ok := arrayIndexFromBracketKey(name)
 		if !ok {
@@ -538,14 +621,14 @@ func classicJSEnvironmentScopeAssign(scope Value, name string, rhs Value) (Value
 		if index < len(scope.Array) {
 			updated := append([]Value(nil), scope.Array...)
 			updated[index] = rhs
-			return ArrayValue(updated), true, nil
+			return arrayValueOwned(updated), true, nil
 		}
 		updated := append([]Value(nil), scope.Array...)
 		for len(updated) < index {
 			updated = append(updated, UndefinedValue())
 		}
 		updated = append(updated, rhs)
-		return ArrayValue(updated), true, nil
+		return arrayValueOwned(updated), true, nil
 	default:
 		return scope, false, NewError(ErrorKindUnsupported, "with statements require object or array values in this bounded classic-JS slice")
 	}
@@ -568,6 +651,13 @@ func (e *classicJSEnvironment) setBindingValue(name string, value jsValue) bool 
 }
 
 func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue jsValue) int {
+	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
+		return 0
+	}
+	return e.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+}
+
+func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
 	if oldValue.Kind != ValueKindObject || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindObject {
 		return 0
 	}
@@ -581,10 +671,19 @@ func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue js
 		return 0
 	}
 	for current := e; current != nil; current = current.parent {
+		if visited != nil {
+			if _, seen := visited[current]; seen {
+				continue
+			}
+			visited[current] = struct{}{}
+		}
 		if len(current.bindings) == 0 {
 			goto updateScopes
 		}
 		for name, binding := range current.bindings {
+			if binding.skipBindingUpdates {
+				continue
+			}
 			updated, changed := replaceObjectReferencesInJSValue(binding.value, oldPtr, replacement.value)
 			if !changed {
 				continue
@@ -655,48 +754,97 @@ func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement
 }
 
 func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+	budget := bindingReplacementWalkLimit
+	return replaceObjectReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}))
+}
+
+func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenObjects map[uintptr]struct{}, seenArrays map[uintptr]struct{}, seenFunctions map[uintptr]struct{}) (Value, bool) {
 	switch value.Kind {
 	case ValueKindObject:
-		if reflect.ValueOf(value.Object).Pointer() == oldPtr {
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
+		ptr := reflect.ValueOf(value.Object).Pointer()
+		if ptr == oldPtr {
 			return replacement, true
 		}
+		if ptr == 0 {
+			return value, false
+		}
+		if _, seen := seenObjects[ptr]; seen {
+			return value, false
+		}
+		seenObjects[ptr] = struct{}{}
 		if len(value.Object) == 0 {
 			return value, false
 		}
-		updated := make([]ObjectEntry, len(value.Object))
+		var updated []ObjectEntry
 		changed := false
 		for i, entry := range value.Object {
-			next, ok := replaceObjectReferencesInValue(entry.Value, oldPtr, replacement)
-			if ok {
+			next, ok := replaceObjectReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+			if ok && !changed {
+				updated = make([]ObjectEntry, len(value.Object))
+				copy(updated, value.Object[:i])
 				changed = true
 			}
-			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+			if changed {
+				updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+			}
 		}
 		if !changed {
 			return value, false
 		}
-		cloned := objectValueWithMetadata(value, updated)
-		return cloned, true
+		return objectValueOwned(value, updated), true
 	case ValueKindArray:
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
+		ptr := reflect.ValueOf(value.Array).Pointer()
+		if ptr == oldPtr {
+			return replacement, true
+		}
+		if ptr == 0 {
+			return value, false
+		}
+		if _, seen := seenArrays[ptr]; seen {
+			return value, false
+		}
+		seenArrays[ptr] = struct{}{}
 		if len(value.Array) == 0 {
 			return value, false
 		}
-		updated := make([]Value, len(value.Array))
+		var updated []Value
 		changed := false
 		for i, element := range value.Array {
-			next, ok := replaceObjectReferencesInValue(element, oldPtr, replacement)
-			if ok {
+			next, ok := replaceObjectReferencesInValueSeen(element, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+			if ok && !changed {
+				updated = make([]Value, len(value.Array))
+				copy(updated, value.Array[:i])
 				changed = true
 			}
-			updated[i] = next
+			if changed {
+				updated[i] = next
+			}
 		}
 		if !changed {
 			return value, false
 		}
-		return ArrayValue(updated), true
+		return arrayValueOwned(updated), true
 	case ValueKindPromise:
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
 		if value.PromiseState != nil && value.PromiseState.resolved {
-			next, ok := replaceObjectReferencesInValue(value.PromiseState.value, oldPtr, replacement)
+			next, ok := replaceObjectReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
 			if !ok {
 				return value, false
 			}
@@ -711,7 +859,7 @@ func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Val
 		if value.Promise == nil {
 			return value, false
 		}
-		next, ok := replaceObjectReferencesInValue(*value.Promise, oldPtr, replacement)
+		next, ok := replaceObjectReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
 		if !ok {
 			return value, false
 		}
@@ -719,29 +867,20 @@ func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Val
 		cloned.Promise = &next
 		return cloned, true
 	case ValueKindFunction:
-		if value.Function == nil || len(value.Function.objectProps) == 0 {
-			return value, false
-		}
-		updated := make([]ObjectEntry, len(value.Function.objectProps))
-		changed := false
-		for i, entry := range value.Function.objectProps {
-			next, ok := replaceObjectReferencesInValue(entry.Value, oldPtr, replacement)
-			if ok {
-				changed = true
-			}
-			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
-		}
-		if !changed {
-			return value, false
-		}
-		value.Function.objectProps = updated
-		return value, true
+		return value, false
 	default:
 		return value, false
 	}
 }
 
 func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsValue) int {
+	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
+		return 0
+	}
+	return e.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+}
+
+func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
 	if oldValue.Kind != ValueKindArray || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindArray {
 		return 0
 	}
@@ -755,7 +894,16 @@ func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsV
 		return 0
 	}
 	for current := e; current != nil; current = current.parent {
+		if visited != nil {
+			if _, seen := visited[current]; seen {
+				continue
+			}
+			visited[current] = struct{}{}
+		}
 		for name, binding := range current.bindings {
+			if binding.skipBindingUpdates {
+				continue
+			}
 			updated, changed := replaceArrayReferencesInJSValue(binding.value, oldPtr, replacement.value)
 			if !changed {
 				continue
@@ -825,48 +973,97 @@ func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement 
 }
 
 func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+	budget := bindingReplacementWalkLimit
+	return replaceArrayReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}))
+}
+
+func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenArrays map[uintptr]struct{}, seenObjects map[uintptr]struct{}, seenFunctions map[uintptr]struct{}) (Value, bool) {
 	switch value.Kind {
 	case ValueKindArray:
-		if reflect.ValueOf(value.Array).Pointer() == oldPtr {
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
+		ptr := reflect.ValueOf(value.Array).Pointer()
+		if ptr == oldPtr {
 			return replacement, true
 		}
+		if ptr == 0 {
+			return value, false
+		}
+		if _, seen := seenArrays[ptr]; seen {
+			return value, false
+		}
+		seenArrays[ptr] = struct{}{}
 		if len(value.Array) == 0 {
 			return value, false
 		}
-		updated := make([]Value, len(value.Array))
+		var updated []Value
 		changed := false
 		for i, element := range value.Array {
-			next, ok := replaceArrayReferencesInValue(element, oldPtr, replacement)
-			if ok {
+			next, ok := replaceArrayReferencesInValueSeen(element, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+			if ok && !changed {
+				updated = make([]Value, len(value.Array))
+				copy(updated, value.Array[:i])
 				changed = true
 			}
-			updated[i] = next
+			if changed {
+				updated[i] = next
+			}
 		}
 		if !changed {
 			return value, false
 		}
-		return ArrayValue(updated), true
+		return arrayValueOwned(updated), true
 	case ValueKindObject:
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
+		ptr := reflect.ValueOf(value.Object).Pointer()
+		if ptr == oldPtr {
+			return replacement, true
+		}
+		if ptr == 0 {
+			return value, false
+		}
+		if _, seen := seenObjects[ptr]; seen {
+			return value, false
+		}
+		seenObjects[ptr] = struct{}{}
 		if len(value.Object) == 0 {
 			return value, false
 		}
-		updated := make([]ObjectEntry, len(value.Object))
+		var updated []ObjectEntry
 		changed := false
 		for i, entry := range value.Object {
-			next, ok := replaceArrayReferencesInValue(entry.Value, oldPtr, replacement)
-			if ok {
+			next, ok := replaceArrayReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+			if ok && !changed {
+				updated = make([]ObjectEntry, len(value.Object))
+				copy(updated, value.Object[:i])
 				changed = true
 			}
-			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+			if changed {
+				updated[i] = ObjectEntry{Key: entry.Key, Value: next}
+			}
 		}
 		if !changed {
 			return value, false
 		}
-		cloned := objectValueWithMetadata(value, updated)
-		return cloned, true
+		return objectValueOwned(value, updated), true
 	case ValueKindPromise:
+		if budget != nil {
+			if *budget <= 0 {
+				return value, false
+			}
+			*budget--
+		}
 		if value.PromiseState != nil && value.PromiseState.resolved {
-			next, ok := replaceArrayReferencesInValue(value.PromiseState.value, oldPtr, replacement)
+			next, ok := replaceArrayReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
 			if !ok {
 				return value, false
 			}
@@ -881,7 +1078,7 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 		if value.Promise == nil {
 			return value, false
 		}
-		next, ok := replaceArrayReferencesInValue(*value.Promise, oldPtr, replacement)
+		next, ok := replaceArrayReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
 		if !ok {
 			return value, false
 		}
@@ -889,23 +1086,7 @@ func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Valu
 		cloned.Promise = &next
 		return cloned, true
 	case ValueKindFunction:
-		if value.Function == nil || len(value.Function.objectProps) == 0 {
-			return value, false
-		}
-		updated := make([]ObjectEntry, len(value.Function.objectProps))
-		changed := false
-		for i, entry := range value.Function.objectProps {
-			next, ok := replaceArrayReferencesInValue(entry.Value, oldPtr, replacement)
-			if ok {
-				changed = true
-			}
-			updated[i] = ObjectEntry{Key: entry.Key, Value: next}
-		}
-		if !changed {
-			return value, false
-		}
-		value.Function.objectProps = updated
-		return value, true
+		return value, false
 	default:
 		return value, false
 	}
@@ -1050,13 +1231,13 @@ func (r *Runtime) Dispatch(request DispatchRequest) (DispatchResult, error) {
 
 	baseEnv := newClassicJSEnvironment()
 	if len(r.globalBindings) > 0 {
-		if err := seedClassicJSEnvironment(baseEnv, r.globalBindings); err != nil {
+		if err := seedClassicJSEnvironment(baseEnv, r.globalBindings, true); err != nil {
 			return DispatchResult{}, err
 		}
 	}
 	env := baseEnv.clone()
 	if len(request.Bindings) > 0 {
-		if err := seedClassicJSEnvironment(env, request.Bindings); err != nil {
+		if err := seedClassicJSEnvironment(env, request.Bindings, false); err != nil {
 			return DispatchResult{}, err
 		}
 	}
@@ -1159,7 +1340,7 @@ func (r *Runtime) dispatchSourceWithEnv(source string, env *classicJSEnvironment
 	return DispatchResult{Value: value}, nil
 }
 
-func seedClassicJSEnvironment(env *classicJSEnvironment, bindings map[string]Value) error {
+func seedClassicJSEnvironment(env *classicJSEnvironment, bindings map[string]Value, skipBindingUpdates bool) error {
 	if env == nil {
 		return NewError(ErrorKindRuntime, "classic-JS environment is unavailable")
 	}
@@ -1167,6 +1348,11 @@ func seedClassicJSEnvironment(env *classicJSEnvironment, bindings map[string]Val
 		mutable := name == "Intl"
 		if err := env.declare(name, scalarJSValue(value), mutable); err != nil {
 			return err
+		}
+		if skipBindingUpdates {
+			binding := env.bindings[name]
+			binding.skipBindingUpdates = true
+			env.bindings[name] = binding
 		}
 	}
 	return nil
@@ -1180,15 +1366,15 @@ func evalClassicJSProgramWithAllowAwait(source string, host HostBindings, env *c
 	return evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source, host, env, stepLimit, allowAwait, false, false, nil, UndefinedValue(), false, privateClass, nil)
 }
 
-func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, true)
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExports(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, skipCache ...*classicJSSkipCache) (Value, error) {
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, true, skipCache...)
 }
 
-func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsAllowLoopSignals(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value) (Value, error) {
-	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, false)
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsAllowLoopSignals(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, skipCache ...*classicJSSkipCache) (Value, error) {
+	return evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, false, skipCache...)
 }
 
-func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, convertLoopSignals bool) (Value, error) {
+func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string, host HostBindings, env *classicJSEnvironment, stepLimit int, allowAwait bool, allowYield bool, allowReturn bool, resumeState classicJSResumeState, newTarget Value, hasNewTarget bool, privateClass *classicJSClassDefinition, moduleExports map[string]Value, convertLoopSignals bool, skipCache ...*classicJSSkipCache) (Value, error) {
 	if env == nil {
 		env = newClassicJSEnvironment()
 	}
@@ -1203,9 +1389,13 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string,
 	if len(statements) == 0 {
 		return UndefinedValue(), nil
 	}
+	var cachedSkip *classicJSSkipCache
+	if len(skipCache) > 0 {
+		cachedSkip = skipCache[0]
+	}
 
 	hoisted, err := hoistTopLevelFunctionStatements(statements, func(statement string) (Value, error) {
-		return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports)
+		return evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, cachedSkip)
 	})
 	if err != nil {
 		return UndefinedValue(), err
@@ -1217,7 +1407,7 @@ func evalClassicJSProgramWithAllowAwaitAndYieldAndExportsInternal(source string,
 			last = UndefinedValue()
 			continue
 		}
-		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports)
+		value, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(statement, host, env, stepLimit, allowAwait, allowYield, allowReturn, resumeState, newTarget, hasNewTarget, privateClass, moduleExports, cachedSkip)
 		if err != nil {
 			if awaitedPromise, nextState, ok := classicJSAwaitSignalDetails(err); ok {
 				continuation := &classicJSBlockState{

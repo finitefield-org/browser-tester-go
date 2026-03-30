@@ -245,6 +245,21 @@ func TestRunScriptSupportsArrayConstructorAndInstanceof(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsArrayOf(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `let empty = Array.of(); let values = Array.of(1, 2, 3); [empty.length, values.join(",")].join("|")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "0|1,2,3"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptRejectsArrayConstructorNegativeLength(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 
@@ -254,6 +269,18 @@ func TestRunScriptRejectsArrayConstructorNegativeLength(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "Array length must be non-negative") {
 		t.Fatalf("runScriptOnStore() error = %q, want Array length failure", got)
+	}
+}
+
+func TestRunScriptRejectsArrayOfWithNew(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `new Array.of(1, 2, 3)`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want Array.of new failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "new expressions only work on class expressions, class identifiers, or constructible function values") {
+		t.Fatalf("runScriptOnStore() error = %q, want Array.of new failure", got)
 	}
 }
 
@@ -1082,6 +1109,65 @@ func TestRunScriptSupportsStringFromCharCode(t *testing.T) {
 	}
 	if got, want := result.String, "ABC 0"; got != want {
 		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptSupportsStringFromCodePoint(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `String.fromCodePoint(0x41, 0x1F600)`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "A😀"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsStringFromCodePointInvalidValue(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	for _, source := range []string{
+		`String.fromCodePoint(65.9)`,
+		`String.fromCodePoint(0x110000)`,
+	} {
+		_, err := session.runScriptOnStore(dom.NewStore(), source)
+		if err == nil {
+			t.Fatalf("runScriptOnStore(%s) error = nil, want error", source)
+		}
+		if got := err.Error(); !strings.Contains(got, "String.fromCodePoint invalid code point") {
+			t.Fatalf("runScriptOnStore(%s) error = %q, want invalid code point error", source, got)
+		}
+	}
+}
+
+func TestRunScriptSupportsStringRaw(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `String.raw({ raw: ["a", "b", "c"] }, "1", "2")`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "a1b2c"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
+func TestRunScriptRejectsStringRawWithoutRawProperty(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	_, err := session.runScriptOnStore(dom.NewStore(), `String.raw({})`)
+	if err == nil {
+		t.Fatalf("runScriptOnStore() error = nil, want String.raw failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "String.raw template object must include a raw property") {
+		t.Fatalf("runScriptOnStore() error = %q, want raw property error", got)
 	}
 }
 

@@ -39,9 +39,13 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 			return browserObjectConstructor(args)
 		}), true, nil
 	case path == "Symbol":
-		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+		value := script.NativeNamedFunctionValue("Symbol", func(args []script.Value) (script.Value, error) {
 			return browserSymbolConstructor(args)
-		}), true, nil
+		})
+		script.SetFunctionOwnProperty(value, "iterator", script.WellKnownSymbolValue("Symbol.iterator"))
+		return value, true, nil
+	case path == "Symbol.iterator":
+		return script.WellKnownSymbolValue("Symbol.iterator"), true, nil
 	case strings.HasPrefix(path, "Object."):
 		value, err := resolveObjectReference(session, store, strings.TrimPrefix(path, "Object."))
 		return value, true, err
@@ -146,6 +150,10 @@ func resolveArrayReference(session *Session, store *dom.Store, path string) (scr
 	case "from":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserArrayFrom(session, store, args)
+		}), nil
+	case "of":
+		return script.NativeNamedFunctionValue("of", func(args []script.Value) (script.Value, error) {
+			return browserArrayOf(args)
 		}), nil
 	case "isArray":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -1056,6 +1064,10 @@ func browserArrayConstructor(args []script.Value) (script.Value, error) {
 	return script.ArrayValue(args), nil
 }
 
+func browserArrayOf(args []script.Value) (script.Value, error) {
+	return script.ArrayValue(args), nil
+}
+
 func browserArrayFrom(session *Session, store *dom.Store, args []script.Value) (script.Value, error) {
 	if len(args) == 0 {
 		return script.UndefinedValue(), fmt.Errorf("Array.from expects at least 1 argument")
@@ -1620,6 +1632,14 @@ func resolveStringReference(path string) (script.Value, error) {
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserStringFromCharCode(args)
 		}), nil
+	case "raw":
+		return script.NativeNamedFunctionValue("raw", func(args []script.Value) (script.Value, error) {
+			return browserStringRaw(args)
+		}), nil
+	case "fromCodePoint":
+		return script.NativeNamedFunctionValue("fromCodePoint", func(args []script.Value) (script.Value, error) {
+			return browserStringFromCodePoint(args)
+		}), nil
 	}
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "String."+path))
 }
@@ -1637,6 +1657,95 @@ func browserStringFromCharCode(args []script.Value) (script.Value, error) {
 		b.WriteRune(rune(unit))
 	}
 	return script.StringValue(b.String()), nil
+}
+
+func browserStringRaw(args []script.Value) (script.Value, error) {
+	if len(args) == 0 || args[0].Kind != script.ValueKindObject {
+		return script.UndefinedValue(), fmt.Errorf("String.raw template object must be an object")
+	}
+
+	raw, ok := objectProperty(args[0], "raw")
+	if !ok {
+		return script.UndefinedValue(), fmt.Errorf("String.raw template object must include a raw property")
+	}
+
+	rawSegments, err := browserStringRawSegments(raw)
+	if err != nil {
+		return script.UndefinedValue(), err
+	}
+
+	var b strings.Builder
+	for i, segment := range rawSegments {
+		b.WriteString(segment)
+		if i+1 < len(args) {
+			b.WriteString(script.ToJSString(args[i+1]))
+		}
+	}
+	return script.StringValue(b.String()), nil
+}
+
+func browserStringRawSegments(raw script.Value) ([]string, error) {
+	switch raw.Kind {
+	case script.ValueKindArray:
+		segments := make([]string, len(raw.Array))
+		for i, value := range raw.Array {
+			segments[i] = script.ToJSString(value)
+		}
+		return segments, nil
+	case script.ValueKindObject:
+		lengthValue, ok := objectProperty(raw, "length")
+		if !ok {
+			return []string{}, nil
+		}
+		length, err := browserInt64Value("String.raw", lengthValue)
+		if err != nil {
+			return nil, err
+		}
+		if length < 0 {
+			length = 0
+		}
+		segments := make([]string, 0, length)
+		for i := int64(0); i < length; i++ {
+			value, ok := objectProperty(raw, strconv.FormatInt(i, 10))
+			if !ok {
+				value = script.UndefinedValue()
+			}
+			segments = append(segments, script.ToJSString(value))
+		}
+		return segments, nil
+	default:
+		return nil, fmt.Errorf("String.raw raw property must be an array or object")
+	}
+}
+
+func browserStringFromCodePoint(args []script.Value) (script.Value, error) {
+	if len(args) == 0 {
+		return script.StringValue(""), nil
+	}
+	var b strings.Builder
+	for _, arg := range args {
+		codePoint, err := browserStringCodePointValue("String.fromCodePoint", arg)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		b.WriteRune(rune(codePoint))
+	}
+	return script.StringValue(b.String()), nil
+}
+
+func browserStringCodePointValue(method string, value script.Value) (int64, error) {
+	number, err := coerceNumber(value)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(number) || math.IsInf(number, 0) || math.Trunc(number) != number {
+		return 0, fmt.Errorf("%s invalid code point %v", method, number)
+	}
+	codePoint := int64(number)
+	if codePoint < 0 || codePoint > utf8.MaxRune {
+		return 0, fmt.Errorf("%s invalid code point %v", method, number)
+	}
+	return codePoint, nil
 }
 
 func browserBooleanConstructor(args []script.Value) (script.Value, error) {

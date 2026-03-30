@@ -224,6 +224,42 @@ func TestSessionBootstrapsArrayConstructorAndInstanceof(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsArrayOf(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Array.of().length, Array.of("left", "right").join(",")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "0|left,right" {
+		t.Fatalf("TextContent(#out) = %q, want 0|left,right", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Array.of bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsArrayToReversed(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const array = [1, 2, 3]; const reversed = array.toReversed(); document.getElementById("out").textContent = [array.join(","), reversed.join(",")].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1,2,3|3,2,1" {
+		t.Fatalf("TextContent(#out) = %q, want 1,2,3|3,2,1", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Array.toReversed bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNumberIsIntegerSurface(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = [Number.isInteger(42), Number.isInteger(1.5), Number.isInteger(Number.NaN), Number.isInteger("42")].join("|")</script></main>`
 
@@ -3320,6 +3356,24 @@ func TestSessionBootstrapsElementTextContentAssignmentWithRegularExpressionComma
 	}
 }
 
+func TestSessionBootstrapsElementTextContentAssignmentWithRegularExpressionPositiveLookaheadLiteral(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = "1234".replace(/\B(?=(\d{3})+(?!\d))/g, ",")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "1,234" {
+		t.Fatalf("TextContent(#out) = %q, want 1,234", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after positive-lookahead regex literal bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsArrayIndexOfAndLastIndexOf(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const values = ["alpha", "beta", "gamma", "beta"]; document.getElementById("out").textContent = [String(values.indexOf("beta")), String(values.indexOf("beta", 2)), String(values.indexOf("beta", -2)), String(values.lastIndexOf("beta")), String(values.lastIndexOf("beta", 2)), String(values.lastIndexOf("beta", -3))].join("|")</script></main>`
 
@@ -3389,6 +3443,114 @@ func TestSessionBootstrapsStringReplaceCallbackAndFromCharCode(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after String.replace callback bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringFromCodePoint(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = String.fromCodePoint(0x41, 0x1F600)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "A😀" {
+		t.Fatalf("TextContent(#out) = %q, want A😀", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.fromCodePoint bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringRaw(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = String.raw` + "`" + `\u0041` + "`" + `</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `\u0041` {
+		t.Fatalf("TextContent(#out) = %q, want \\u0041", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.raw bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringWellFormedMethods(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["Go".isWellFormed(), "Go".toWellFormed()].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|Go" {
+		t.Fatalf("TextContent(#out) = %q, want true|Go", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.isWellFormed bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringIterator(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const iter = "A😀"[Symbol.iterator](); const first = iter.next(); const second = iter.next(); const third = iter.next(); document.getElementById("out").textContent = [first.value, first.done, second.value, second.done, third.done, iter[Symbol.iterator]() === iter].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "A|false|😀|false|true|true" {
+		t.Fatalf("TextContent(#out) = %q, want A|false|😀|false|true|true", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.iterator bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringToLocaleLowerCase(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["I".toLocaleLowerCase("tr"), "I".toLocaleLowerCase()].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "ı|i" {
+		t.Fatalf("TextContent(#out) = %q, want ı|i", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.toLocaleLowerCase bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsStringToLocaleUpperCase(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = ["i".toLocaleUpperCase("tr"), "i".toLocaleUpperCase()].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "İ|I" {
+		t.Fatalf("TextContent(#out) = %q, want İ|I", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after String.toLocaleUpperCase bootstrap", got)
 	}
 }
 

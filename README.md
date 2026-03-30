@@ -92,7 +92,7 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `image/svg+xml` documents, including parsererror fallbacks with `getElementsByTagName()`, `namespaceURI` reads on parsed SVG nodes, `XMLSerializer.serializeToString()` for bounded SVG element nodes, `element.cloneNode()` on bounded element refs, `element.scrollIntoView()` as a bounded no-op scroll helper, `Intl.NumberFormat` / `Intl.NumberFormat.prototype.resolvedOptions()` / `Intl.NumberFormat.prototype.formatToParts()` / `Intl.NumberFormat.supportedLocalesOf()` / `Intl.Collator.supportedLocalesOf()` / `Intl.Collator`, `CSS.escape()`, `localStorage`, `sessionStorage`,
   `matchMedia`, `fetch()`, `console`, `clipboard`, `window.open()` / bare `open()` string inputs use browser-style string coercion, open a blank popup when called without a URL, ignore extra arguments, and reject `Symbol` inputs at runtime, dynamic session-backed `window.<custom>` object properties such as
   `window.crypto` / `window.hashApi` (unset reads through `window` / `self` / `globalThis` /
-  `top` / `parent` / `frames` return `undefined` like browser feature detection), and
+  `top` / `parent` / `frames` return `undefined` like browser feature detection), `element.dir`, and
   bounded constructor globals for `HTMLElement` / `HTMLButtonElement` / `HTMLSelectElement` / `Image` / `HTMLImageElement` / `HTMLCanvasElement` / `Uint8Array` element checks, plus inline-script `toggleAttribute(name, force)` and `classList.toggle(token, force)` calls that use browser-style truthiness coercion for the optional force argument, plus blob-backed `Image` / `HTMLImageElement` `load` / `error` callbacks and bounded `canvas.getContext("2d")` / `drawImage()` / `toBlob()` / `toDataURL()` PNG export, and
   bounded timer globals (`setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`,
   `requestAnimationFrame`, `cancelAnimationFrame`, `queueMicrotask`), plus a bounded browser
@@ -103,12 +103,12 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   plus `Set.prototype.keys()` / `Set.prototype.values()` / `Set.prototype.entries()`,
   `Object.assign()` / `Object.keys()` / `Object.getOwnPropertyNames()` / `Object.getOwnPropertySymbols()` / `Object.prototype.hasOwnProperty.call()` / `Object.hasOwn()`, `JSON.parse()` / `JSON.stringify()`,
   `Number.parseInt()` / `Number.parseFloat()` / global `parseInt()` / global `parseFloat()` / `encodeURI()` / `decodeURI()` / `encodeURIComponent()` / `decodeURIComponent()` / `Number.isInteger()` / `Number.isNaN()` / `Number.isFinite()` / `Number.isSafeInteger()` / `Number.EPSILON` / `Number.MAX_VALUE` / `Number.MIN_VALUE` / `Number.MAX_SAFE_INTEGER` / `Number.MIN_SAFE_INTEGER` / `Number.NaN` / `Number.POSITIVE_INFINITY` / `Number.NEGATIVE_INFINITY` / global `NaN` / global `Infinity`, `Date` constructor / `new Date()` / `instanceof Date` / `Date.now()` / `Date.UTC()`, `Math.E` / `Math.LN10` / `Math.LN2` / `Math.LOG10E` / `Math.LOG2E` / `Math.PI` / `Math.SQRT1_2` / `Math.SQRT2` / `Math.abs()` / `Math.pow()` / `Math.ceil()` / `Math.floor()` / `Math.min()` / `Math.max()` /
-  `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()`, `Intl.DateTimeFormat()` / `Intl.DateTimeFormat.supportedLocalesOf()` / `Intl.Collator()`, `String.fromCharCode()` /
+  `Math.round()` / `Math.trunc()` / `Math.random()` / `Math.acos()` / `Math.acosh()` / `Math.asin()` / `Math.asinh()` / `Math.atan()` / `Math.atan2()` / `Math.atanh()` / `Math.cbrt()` / `Math.clz32()` / `Math.cos()` / `Math.cosh()` / `Math.exp()` / `Math.expm1()` / `Math.fround()` / `Math.hypot()` / `Math.imul()` / `Math.log()` / `Math.log10()` / `Math.log1p()` / `Math.log2()` / `Math.sign()` / `Math.sin()` / `Math.sinh()` / `Math.sqrt()` / `Math.tan()` / `Math.tanh()`, `Date.now()` / `Date.UTC()` / `Intl.DateTimeFormat()` / `Intl.DateTimeFormat.supportedLocalesOf()` / `Intl.Collator()`, `String.fromCharCode()` / `String.fromCodePoint()` / `String.raw()` /
   `String.prototype.charAt()` / `String.prototype.charCodeAt()` / `String.prototype.at()` / `String.prototype.codePointAt()` / `String.prototype.normalize()` / `String.prototype.indexOf()` / `String.prototype.substring()` / `String.prototype.replace()` / `String.prototype.replaceAll()` /
   `String.prototype.matchAll()` / `String.prototype.search()` / `String.prototype.includes()` /
   `String.prototype.split()` / `String.prototype.trim()` / `String.prototype.trimStart()` /
   `String.prototype.trimEnd()` / `String.prototype.padStart()` / `String.prototype.padEnd()` /
-  `String.prototype.repeat()` / `String.prototype.toLowerCase()` / `String.prototype.toUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare(locale, options)` / `String.prototype.replaceAll(callback replacers)` /
+  `String.prototype.repeat()` / `String.prototype.toLowerCase()` / `String.prototype.toUpperCase()` / `String.prototype.isWellFormed()` / `String.prototype.toWellFormed()` / `String.prototype.toLocaleLowerCase()` / `String.prototype.toLocaleUpperCase()` / `String.prototype.concat()` / `String.prototype.localeCompare(locale, options)` / `String.prototype.replaceAll(callback replacers)` / `String.prototype[@@iterator]` /
   `String.prototype.startsWith()` / `String.prototype.endsWith()`,
   `Array.prototype.at()` / `Array.prototype.includes()` / `Array.prototype.indexOf()` / `Array.prototype.lastIndexOf()` / `Array.prototype.findIndex()` /
   `Array.prototype.findLast()` / `Array.prototype.findLastIndex()` /
@@ -116,7 +116,9 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   `Array.prototype.reduce()` / `Array.prototype.reduceRight()` / `Array.prototype.reverse()` /
   `Array.prototype.sort()` / `Array.prototype.shift()` / `Array.prototype.entries()` /
   `Array.prototype.keys()` / `Array.prototype.values()` / `Array.prototype.toLocaleString()` /
-  `Array.prototype.toSorted()` / `flatMap()` / `splice()` / `unshift()`,
+  `Array.prototype.toSorted()` / `Array.prototype.toReversed()` / `Array.from()` /
+  `Array.of()` / `Array.isArray()` /
+  `flatMap()` / `splice()` / `unshift()`,
   `Number.prototype.toPrecision()` /
   `toExponential()` / `toLocaleString(locale, options)` / `Date.prototype.toDateString()` / `Date.prototype.toTimeString()` / `Date.prototype.toLocaleString()` / `Date.prototype.toLocaleTimeString()` / `Date.prototype.toLocaleDateString()` / `Date.prototype.toUTCString()` / `Date.parse()` / `Date(string)` / `Date.prototype.getFullYear()` / `Date.prototype.getUTCFullYear()` / `Date.prototype.getMonth()` / `Date.prototype.getUTCMonth()` / `Date.prototype.getDate()` / `Date.prototype.getUTCDate()` / `Date.prototype.getDay()` / `Date.prototype.getUTCDay()` / `Date.prototype.getHours()` / `Date.prototype.getUTCHours()` / `Date.prototype.getMinutes()` / `Date.prototype.getUTCMinutes()` / `Date.prototype.getSeconds()` / `Date.prototype.getUTCSeconds()` / `Date.prototype.getMilliseconds()` / `Date.prototype.getUTCMilliseconds()` / `Date.prototype.getTimezoneOffset()` / `Date.prototype.setTime()` / `Date.prototype.setDate()` / `Date.prototype.setUTCDate()` / `Date.prototype.setMonth()` / `Date.prototype.setUTCMonth()` / `Date.prototype.setFullYear()` / `Date.prototype.setUTCFullYear()` / `Date.prototype.setMilliseconds()` / `Date.prototype.setUTCMilliseconds()` / `Date.prototype.setSeconds()` / `Date.prototype.setUTCSeconds()` / `Date.prototype.setMinutes()` / `Date.prototype.setUTCMinutes()` / `Date.prototype.setHours()` / `Date.prototype.setUTCHours()`, and the bounded array/string/number/date prototype helpers used by
   template-driven bootstrap, plus the live `URL` / `URLSearchParams` query-state bridge
@@ -149,7 +151,8 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
     bindings, plain function values, and host-reference property chains such as
     `document.getElementById(...).textContent = ...`, with nested helper calls preserving array
     binding updates across invocation frames so mutations like `push()` remain visible to the
-    caller binding, including creating missing plain object properties on write, with getter-only property
+    caller binding and cyclic array/object graphs are skipped safely during replacement, including
+    creating missing plain object properties on write, with getter-only property
     assignments failing with runtime errors, private class
     fields, bounded private `in` operator on bounded class private fields, and bounded `super`
     property assignment, including class field initializers and computed class member names that can
@@ -201,7 +204,8 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
     bounded `new Class()` / `new (class {...})()` / `new (class extends Base {...})()`
     instantiation, template literals with bounded `${...}` interpolation plus tagged template
     literals with bounded function tags and interpolation, bounded regular expression literals with
-    bounded `.test()` / `.exec()` helpers, with non-callable tags failing explicitly at runtime,
+    bounded `.test()` / `.exec()` helpers and browser-style lookahead / backreference support, with
+    non-callable tags failing explicitly at runtime,
     bounded object-property access, bounded bracket access on object, array, string, and primitive
     number/boolean/bigint values, dot access on number/boolean/bigint/string/array values yielding
     `undefined` for unknown properties, array `length` lookups, and optional chaining plus optional
@@ -447,6 +451,8 @@ runtime slices. The detailed support map lives in `doc/capability-matrix.md`.
   - `SetAttribute`
   - `ToggleAttribute`
   - `RemoveAttribute`
+- form-control reflection helpers:
+  - `type` on `button` / `input`
 - live class/dataset views:
   - `ClassList` (`Values`, `Contains`, `Item`, `Add`, `Remove`)
   - `Dataset` (`Values`, `Get`, `Set`, `Remove`)

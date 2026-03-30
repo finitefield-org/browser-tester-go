@@ -42,6 +42,25 @@ func TestSessionInlineScriptsCanReadAndWriteDocumentElementLang(t *testing.T) {
 	}
 }
 
+func TestSessionInlineScriptsCanReadAndWriteElementDirReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><div id="root" dir="rtl"></div><div id="probe"></div><script>const root = document.getElementById("root"); const before = root.dir; root.dir = "ltr"; host:setTextContent("#probe", expr(before + "|" + root.dir + "|" + root.getAttribute("dir")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after element.dir reflection bridge error = %v", err)
+	} else if got != "rtl|ltr|ltr" {
+		t.Fatalf("TextContent(#probe) after element.dir reflection bridge = %q, want %q", got, "rtl|ltr|ltr")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after element.dir reflection bridge", got)
+	}
+}
+
 func TestSessionInlineScriptsTreatMissingDocumentElementLangAsEmptyString(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<!doctype html><html><body><div id="probe"></div><script>const root = document.documentElement; host:setTextContent("#probe", expr("[" + root.lang + "]"))</script></body></html>`,
@@ -58,6 +77,56 @@ func TestSessionInlineScriptsTreatMissingDocumentElementLangAsEmptyString(t *tes
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after missing documentElement.lang reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsTreatMissingElementDirAsEmptyString(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><div id="box"></div><div id="probe"></div><script>const box = document.querySelector("#box"); host:setTextContent("#probe", expr("[" + box.dir + "]"))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after missing element.dir reflection bridge error = %v", err)
+	} else if got != "[]" {
+		t.Fatalf("TextContent(#probe) after missing element.dir reflection bridge = %q, want %q", got, "[]")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after missing element.dir reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsCanReadAndWriteFormControlTypeReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><input id="field" type="checkbox"><button id="btn"></button><div id="probe"></div><script>const field = document.querySelector("#field"); const btn = document.querySelector("#btn"); const before = [field.type, btn.type].join("|"); field.type = "radio"; btn.type = "button"; host:setTextContent("#probe", expr(before + "|" + field.type + "|" + btn.type + "|" + field.getAttribute("type") + "|" + btn.getAttribute("type")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after form-control type reflection bridge error = %v", err)
+	} else if got != "checkbox|submit|radio|button|radio|button" {
+		t.Fatalf("TextContent(#probe) after form-control type reflection bridge = %q, want %q", got, "checkbox|submit|radio|button|radio|button")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after form-control type reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsRejectUnsupportedGenericElementTypeReflection(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><div id="box"></div><div id="probe"></div><script>const box = document.querySelector("#box"); host:setTextContent("#probe", expr(String(box.type)))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err == nil {
+		t.Fatalf("ensureDOM() error = nil, want unsupported generic element.type error")
+	} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindUnsupported || !strings.Contains(scriptErr.Message, `.type`) {
+		t.Fatalf("ensureDOM() error = %#v, want unsupported generic element.type script error", err)
 	}
 }
 

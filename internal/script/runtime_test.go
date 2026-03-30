@@ -4636,6 +4636,23 @@ func TestDispatchSupportsTaggedTemplateLiterals(t *testing.T) {
 	}
 }
 
+func TestDispatchExposesTaggedTemplateRawSegments(t *testing.T) {
+	runtime := NewRuntime(&fakeHost{})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: "function tag(strings) { return strings[0] + '|' + strings.raw[0] + '|' + strings.length + '|' + strings.raw.length }; tag`\\u0041`",
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(tagged template raw segments) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(tagged template raw segments) kind = %q, want string", result.Value.Kind)
+	}
+	if result.Value.String != "A|\\u0041|1|1" {
+		t.Fatalf("Dispatch(tagged template raw segments) value = %q, want %q", result.Value.String, "A|\\u0041|1|1")
+	}
+}
+
 func TestDispatchSupportsRegularExpressionLiterals(t *testing.T) {
 	host := &echoHost{}
 	runtime := NewRuntime(host)
@@ -4699,6 +4716,28 @@ func TestDispatchSupportsRegularExpressionUnicodeEscapeLiterals(t *testing.T) {
 	}
 	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindBool || !host.calls[0].args[0].Bool {
 		t.Fatalf("host.calls[0].args = %#v, want bool true", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsRegularExpressionPositiveLookaheadLiterals(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("1234".replace(/\B(?=(\d{3})+(?!\d))/g, ","))`})
+	if err != nil {
+		t.Fatalf("Dispatch(regular expression positive lookahead literal) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "1,234" {
+		t.Fatalf("Dispatch(regular expression positive lookahead literal) value = %#v, want string 1,234", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "1,234" {
+		t.Fatalf("host.calls[0].args = %#v, want string 1,234", host.calls[0].args)
 	}
 }
 

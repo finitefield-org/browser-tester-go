@@ -3,6 +3,7 @@ package script
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"unicode/utf8"
 
 	"browsertester/internal/collation"
+	"browsertester/internal/script/jsregex"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -40,6 +44,9 @@ func (p *classicJSStatementParser) invokeCallableValue(callee Value, args []Valu
 
 func currentBindingUpdateContextReplaceObjectBindings(oldValue Value, newValue Value) int {
 	if ctx := CurrentBindingUpdateContext(); ctx != nil {
+		if ctx.SkipEvaluation() {
+			return 0
+		}
 		return ctx.ReplaceObjectBindings(oldValue, newValue)
 	}
 	return 0
@@ -47,12 +54,16 @@ func currentBindingUpdateContextReplaceObjectBindings(oldValue Value, newValue V
 
 func currentBindingUpdateContextReplaceArrayBindings(oldValue Value, newValue Value) int {
 	if ctx := CurrentBindingUpdateContext(); ctx != nil {
+		if ctx.SkipEvaluation() {
+			return 0
+		}
 		return ctx.ReplaceArrayBindings(oldValue, newValue)
 	}
 	return 0
 }
 
-func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name string) (Value, bool, error) {
+func (p *classicJSStatementParser) resolveArrayPrototypeMethod(receiver jsValue, name string) (Value, bool, error) {
+	value := receiver.value
 	if value.Kind != ValueKindArray {
 		return UndefinedValue(), false, nil
 	}
@@ -61,8 +72,13 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			updated := append([]Value(nil), value.Array...)
 			updated = append(updated, args...)
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			updatedValue := arrayValueOwned(updated)
+			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
+				return NumberValue(float64(len(updated))), nil
+			}
+			if receiver.assignTarget != nil {
+				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			}
 			return NumberValue(float64(len(updated))), nil
 		}), true, nil
 	case "pop":
@@ -72,8 +88,13 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			updated := append([]Value(nil), value.Array[:len(value.Array)-1]...)
 			removed := value.Array[len(value.Array)-1]
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			updatedValue := arrayValueOwned(updated)
+			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
+				return removed, nil
+			}
+			if receiver.assignTarget != nil {
+				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			}
 			return removed, nil
 		}), true, nil
 	case "shift":
@@ -83,8 +104,13 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			removed := value.Array[0]
 			updated := append([]Value(nil), value.Array[1:]...)
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			updatedValue := arrayValueOwned(updated)
+			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
+				return removed, nil
+			}
+			if receiver.assignTarget != nil {
+				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			}
 			return removed, nil
 		}), true, nil
 	case "includes":
@@ -92,7 +118,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if len(args) == 0 {
 				return BoolValue(false), nil
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			start := 0
 			if len(args) > 1 {
 				start = indexFromValue(args[1], 0)
@@ -128,7 +154,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if len(args) > 0 {
 				search = args[0]
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			length := len(elements)
 			start := indexFromValueOrDefault(args, 1, 0)
 			if start < 0 {
@@ -153,7 +179,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if len(args) > 0 {
 				search = args[0]
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			length := len(elements)
 			if length == 0 {
 				return NumberValue(-1), nil
@@ -182,7 +208,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			var filtered []Value
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
@@ -197,7 +223,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 					filtered = append(filtered, element)
 				}
 			}
-			return ArrayValue(filtered), nil
+			return arrayValueOwned(filtered), nil
 		}), true, nil
 	case "forEach":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -206,7 +232,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i, element := range elements {
 				if _, err := p.invokeCallableValue(callback, []Value{
 					element,
@@ -225,7 +251,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			mapped := make([]Value, 0, len(elements))
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
@@ -238,7 +264,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				}
 				mapped = append(mapped, result)
 			}
-			return ArrayValue(mapped), nil
+			return arrayValueOwned(mapped), nil
 		}), true, nil
 	case "flatMap":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -247,7 +273,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			flattened := make([]Value, 0, len(elements))
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
@@ -264,7 +290,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				}
 				flattened = append(flattened, result)
 			}
-			return ArrayValue(flattened), nil
+			return arrayValueOwned(flattened), nil
 		}), true, nil
 	case "entries":
 		return classicJSArrayIteratorMethodValue("entries", value.Array, classicJSArrayIterationEntries), true, nil
@@ -286,10 +312,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if depth < 0 {
 				depth = 0
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			flattened := make([]Value, 0, len(elements))
 			flattenArrayValues(elements, depth, &flattened)
-			return ArrayValue(flattened), nil
+			return arrayValueOwned(flattened), nil
 		}), true, nil
 	case "some":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -298,7 +324,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
 					element,
@@ -321,7 +347,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
 					element,
@@ -347,7 +373,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				initial = args[1]
 				hasInitial = true
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			return browserArrayReduce(p, elements, args[0], initial, hasInitial, value, false, "Array.reduce")
 		}), true, nil
 	case "reduceRight":
@@ -360,7 +386,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				initial = args[1]
 				hasInitial = true
 			}
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			return browserArrayReduce(p, elements, args[0], initial, hasInitial, value, true, "Array.reduceRight")
 		}), true, nil
 	case "find":
@@ -370,7 +396,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
 					element,
@@ -393,7 +419,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i, element := range elements {
 				result, err := p.invokeCallableValue(callback, []Value{
 					element,
@@ -416,7 +442,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i := len(elements) - 1; i >= 0; i-- {
 				result, err := p.invokeCallableValue(callback, []Value{
 					elements[i],
@@ -439,7 +465,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			}
 			callback := args[0]
 			thisArg, hasReceiver := callbackReceiver(args)
-			elements := append([]Value(nil), value.Array...)
+			elements := value.Array
 			for i := len(elements) - 1; i >= 0; i-- {
 				result, err := p.invokeCallableValue(callback, []Value{
 					elements[i],
@@ -495,20 +521,23 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			updated = append(updated, insert...)
 			updated = append(updated, value.Array[start+deleteCount:]...)
 
-			updatedValue := ArrayValue(updated)
+			updatedValue := arrayValueOwned(updated)
+			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
+				return arrayValueOwned(removed), nil
+			}
 			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			return ArrayValue(removed), nil
+			return arrayValueOwned(removed), nil
 		}), true, nil
 	case "reverse":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
-			// Reverse a copy, then update any bindings that point at the original array.
-			updated := append([]Value(nil), value.Array...)
-			for i, j := 0, len(updated)-1; i < j; i, j = i+1, j-1 {
-				updated[i], updated[j] = updated[j], updated[i]
+			for i, j := 0, len(value.Array)-1; i < j; i, j = i+1, j-1 {
+				value.Array[i], value.Array[j] = value.Array[j], value.Array[i]
 			}
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			return updatedValue, nil
+			return value, nil
+		}), true, nil
+	case "toReversed":
+		return NativeNamedFunctionValue("toReversed", func(args []Value) (Value, error) {
+			return arrayValueOwned(browserArrayReversedValues(value.Array)), nil
 		}), true, nil
 	case "fill":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -525,14 +554,11 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 				end = start
 			}
 
-			updated := append([]Value(nil), value.Array...)
 			for i := start; i < end; i++ {
-				updated[i] = args[0]
+				value.Array[i] = args[0]
 			}
 
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			return updatedValue, nil
+			return value, nil
 		}), true, nil
 	case "copyWithin":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -550,13 +576,10 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if remaining := length - target; count > remaining {
 				count = remaining
 			}
-			updated := append([]Value(nil), value.Array...)
 			if count > 0 {
-				copy(updated[target:target+count], updated[start:end])
+				copy(value.Array[target:target+count], value.Array[start:end])
 			}
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			return updatedValue, nil
+			return value, nil
 		}), true, nil
 	case "sort":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -564,9 +587,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if err != nil {
 				return UndefinedValue(), err
 			}
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			return updatedValue, nil
+			copy(value.Array, updated)
+			return value, nil
 		}), true, nil
 	case "toSorted":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -574,7 +596,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			if err != nil {
 				return UndefinedValue(), err
 			}
-			return ArrayValue(updated), nil
+			return arrayValueOwned(updated), nil
 		}), true, nil
 	case "unshift":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -584,8 +606,13 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 			updated := make([]Value, 0, len(args)+len(value.Array))
 			updated = append(updated, args...)
 			updated = append(updated, value.Array...)
-			updatedValue := ArrayValue(updated)
-			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			updatedValue := arrayValueOwned(updated)
+			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
+				return NumberValue(float64(len(updated))), nil
+			}
+			if receiver.assignTarget != nil {
+				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
+			}
 			return NumberValue(float64(len(updated))), nil
 		}), true, nil
 	case "slice":
@@ -611,7 +638,7 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 					result = append(result, arg)
 				}
 			}
-			return ArrayValue(result), nil
+			return arrayValueOwned(result), nil
 		}), true, nil
 	case "join":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -641,10 +668,173 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(value Value, name
 		}), true, nil
 	case "valueOf":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
-			return ArrayValue(value.Array), nil
+			return value, nil
 		}), true, nil
 	}
 	return UndefinedValue(), false, nil
+}
+
+func (p *classicJSStatementParser) tryUpdateUniqueDirectArrayBinding(receiver jsValue, value Value, updatedValue Value) bool {
+	if p == nil || p.env == nil || receiver.assignTarget == nil || len(receiver.assignTarget.steps) != 0 {
+		return false
+	}
+	oldPtr := reflect.ValueOf(value.Array).Pointer()
+	if oldPtr == 0 {
+		return false
+	}
+	if countDirectArrayBindingReferences(p.env, oldPtr) != 1 {
+		return false
+	}
+	if valueContainsArrayPointer(value, oldPtr) {
+		return false
+	}
+	return p.env.setBindingValue(receiver.assignTarget.name, scalarJSValue(updatedValue))
+}
+
+func countDirectArrayBindingReferences(env *classicJSEnvironment, ptr uintptr) int {
+	if env == nil || ptr == 0 {
+		return 0
+	}
+	count := 0
+	seen := make(map[*classicJSEnvironment]struct{})
+	for current := env; current != nil; current = current.parent {
+		if _, ok := seen[current]; ok {
+			continue
+		}
+		seen[current] = struct{}{}
+		for _, binding := range current.bindings {
+			if binding.value.kind != jsValueScalar || binding.value.value.Kind != ValueKindArray {
+				continue
+			}
+			if reflect.ValueOf(binding.value.value.Array).Pointer() == ptr {
+				count++
+			}
+		}
+		for _, scope := range current.withScopes {
+			if scope.Kind != ValueKindArray {
+				continue
+			}
+			if reflect.ValueOf(scope.Array).Pointer() == ptr {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func valueContainsArrayPointer(value Value, targetPtr uintptr) bool {
+	if targetPtr == 0 {
+		return false
+	}
+	return valueContainsArrayPointerSeen(value, targetPtr, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[*classicJSArrowFunction]struct{}))
+}
+
+func valueContainsArrayPointerSeen(value Value, targetPtr uintptr, seenArrays map[uintptr]struct{}, seenObjects map[uintptr]struct{}, seenFunctions map[*classicJSArrowFunction]struct{}) bool {
+	switch value.Kind {
+	case ValueKindArray:
+		ptr := reflect.ValueOf(value.Array).Pointer()
+		if ptr == targetPtr {
+			return true
+		}
+		if ptr == 0 {
+			return false
+		}
+		if _, ok := seenArrays[ptr]; ok {
+			return false
+		}
+		seenArrays[ptr] = struct{}{}
+		for _, element := range value.Array {
+			if valueContainsArrayPointerSeen(element, targetPtr, seenArrays, seenObjects, seenFunctions) {
+				return true
+			}
+		}
+	case ValueKindObject:
+		ptr := reflect.ValueOf(value.Object).Pointer()
+		if ptr == 0 {
+			return false
+		}
+		if _, ok := seenObjects[ptr]; ok {
+			return false
+		}
+		seenObjects[ptr] = struct{}{}
+		for _, entry := range value.Object {
+			if valueContainsArrayPointerSeen(entry.Value, targetPtr, seenArrays, seenObjects, seenFunctions) {
+				return true
+			}
+		}
+	case ValueKindPromise:
+		if value.PromiseState != nil && value.PromiseState.resolved {
+			return valueContainsArrayPointerSeen(value.PromiseState.value, targetPtr, seenArrays, seenObjects, seenFunctions)
+		}
+		if value.Promise != nil {
+			return valueContainsArrayPointerSeen(*value.Promise, targetPtr, seenArrays, seenObjects, seenFunctions)
+		}
+	case ValueKindFunction:
+		if value.Function == nil {
+			return false
+		}
+		if _, ok := seenFunctions[value.Function]; ok {
+			return false
+		}
+		seenFunctions[value.Function] = struct{}{}
+		for _, entry := range value.Function.objectProps {
+			if valueContainsArrayPointerSeen(entry.Value, targetPtr, seenArrays, seenObjects, seenFunctions) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func browserArrayReversedValues(values []Value) []Value {
+	updated := append([]Value(nil), values...)
+	for i, j := 0, len(updated)-1; i < j; i, j = i+1, j-1 {
+		updated[i], updated[j] = updated[j], updated[i]
+	}
+	return updated
+}
+
+func browserStringIteratorMethodValue(value Value) Value {
+	return NativeNamedFunctionValue("iterator", func(args []Value) (Value, error) {
+		if len(args) != 0 {
+			return UndefinedValue(), fmt.Errorf("String.iterator expects no arguments")
+		}
+		return browserStringIteratorValue([]rune(value.String)), nil
+	})
+}
+
+func browserStringIteratorValue(runes []rune) Value {
+	index := 0
+	var iterator Value
+	iterator = objectValueOwned(Value{}, []ObjectEntry{
+		{
+			Key: "next",
+			Value: NativeFunctionValue(func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return UndefinedValue(), fmt.Errorf("String iterator next expects no arguments")
+				}
+				if index >= len(runes) {
+					return classicJSIteratorResult(UndefinedValue(), true), nil
+				}
+				current := runes[index]
+				index++
+				return classicJSIteratorResult(StringValue(string(current)), false), nil
+			}),
+		},
+		{
+			Key: func() string {
+				key, _ := SymbolObjectKey(wellKnownSymbolIterator)
+				return key
+			}(),
+			Value: NativeFunctionValue(func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return UndefinedValue(), fmt.Errorf("String iterator iterator expects no arguments")
+				}
+				return iterator, nil
+			}),
+		},
+	})
+	return iterator
 }
 
 func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, name string) (Value, bool, error) {
@@ -688,9 +878,35 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(strings.ToLower(value.String)), nil
 		}), true, nil
+	case "toLocaleLowerCase":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			locale, err := browserStringLocaleTag("String.toLocaleLowerCase", args)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return StringValue(cases.Lower(locale).String(value.String)), nil
+		}), true, nil
 	case "toUpperCase":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			return StringValue(strings.ToUpper(value.String)), nil
+		}), true, nil
+	case "isWellFormed":
+		return NativeNamedFunctionValue("isWellFormed", func(args []Value) (Value, error) {
+			return BoolValue(utf8.ValidString(value.String)), nil
+		}), true, nil
+	case "toWellFormed":
+		return NativeNamedFunctionValue("toWellFormed", func(args []Value) (Value, error) {
+			return StringValue(strings.ToValidUTF8(value.String, "\uFFFD")), nil
+		}), true, nil
+	case "iterator":
+		return browserStringIteratorMethodValue(value), true, nil
+	case "toLocaleUpperCase":
+		return NativeFunctionValue(func(args []Value) (Value, error) {
+			locale, err := browserStringLocaleTag("String.toLocaleUpperCase", args)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return StringValue(cases.Upper(locale).String(value.String)), nil
 		}), true, nil
 	case "concat":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -754,9 +970,17 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 					return UndefinedValue(), err
 				}
 				if strings.Contains(flags, "g") {
-					return StringValue(compiled.ReplaceAllString(value.String, replacement)), nil
+					updated, err := compiled.ReplaceAllString(value.String, replacement)
+					if err != nil {
+						return UndefinedValue(), err
+					}
+					return StringValue(updated), nil
 				}
-				return StringValue(replaceFirstRegexp(compiled, value.String, replacement)), nil
+				updated, err := replaceFirstRegexp(compiled, value.String, replacement)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				return StringValue(updated), nil
 			}
 			search := ToJSString(args[0])
 			return StringValue(strings.Replace(value.String, search, replacement, 1)), nil
@@ -795,7 +1019,11 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				if !strings.Contains(flags, "g") {
 					return UndefinedValue(), NewError(ErrorKindRuntime, "String.replaceAll requires a global regular expression")
 				}
-				return StringValue(compiled.ReplaceAllString(value.String, replacement)), nil
+				updated, err := compiled.ReplaceAllString(value.String, replacement)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				return StringValue(updated), nil
 			}
 			search := ToJSString(args[0])
 			return StringValue(strings.ReplaceAll(value.String, search, replacement)), nil
@@ -815,7 +1043,7 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 	case "split":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
 			if len(args) == 0 || args[0].Kind == ValueKindUndefined {
-				return ArrayValue([]Value{StringValue(value.String)}), nil
+				return arrayValueOwned([]Value{StringValue(value.String)}), nil
 			}
 			limit := -1
 			if len(args) > 1 && args[1].Kind != ValueKindUndefined {
@@ -828,12 +1056,15 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				if err != nil {
 					return UndefinedValue(), err
 				}
-				parts := compiled.Split(value.String, limit)
+				parts, err := compiled.Split(value.String, limit)
+				if err != nil {
+					return UndefinedValue(), err
+				}
 				out := make([]Value, 0, len(parts))
 				for _, part := range parts {
 					out = append(out, StringValue(part))
 				}
-				return ArrayValue(out), nil
+				return arrayValueOwned(out), nil
 			}
 			separator := ToJSString(args[0])
 			var parts []string
@@ -846,7 +1077,7 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 			for _, part := range parts {
 				out = append(out, StringValue(part))
 			}
-			return ArrayValue(out), nil
+			return arrayValueOwned(out), nil
 		}), true, nil
 	case "match":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -858,17 +1089,23 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 					return UndefinedValue(), err
 				}
 				if strings.Contains(flags, "g") {
-					matches := compiled.FindAllString(value.String, -1)
+					matches, err := compiled.FindAllStringSubmatch(value.String, -1)
+					if err != nil {
+						return UndefinedValue(), err
+					}
 					if matches == nil {
 						return NullValue(), nil
 					}
 					out := make([]Value, 0, len(matches))
 					for _, match := range matches {
-						out = append(out, StringValue(match))
+						out = append(out, StringValue(match[0]))
 					}
-					return ArrayValue(out), nil
+					return arrayValueOwned(out), nil
 				}
-				matches := compiled.FindStringSubmatch(value.String)
+				matches, err := compiled.FindStringSubmatch(value.String)
+				if err != nil {
+					return UndefinedValue(), err
+				}
 				if matches == nil {
 					return NullValue(), nil
 				}
@@ -876,13 +1113,13 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				for _, match := range matches {
 					out = append(out, StringValue(match))
 				}
-				return ArrayValue(out), nil
+				return arrayValueOwned(out), nil
 			}
 			search := ToJSString(args[0])
 			if strings.Index(value.String, search) == -1 {
 				return NullValue(), nil
 			}
-			return ArrayValue([]Value{StringValue(search)}), nil
+			return arrayValueOwned([]Value{StringValue(search)}), nil
 		}), true, nil
 	case "matchAll":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -896,10 +1133,21 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				if !strings.Contains(flags, "g") {
 					return UndefinedValue(), NewError(ErrorKindRuntime, "String.matchAll requires a global regular expression")
 				}
-				return browserStringMatchAllMatches(value.String, compiled), nil
+				matches, err := browserStringMatchAllMatches(value.String, compiled)
+				if err != nil {
+					return UndefinedValue(), err
+				}
+				return matches, nil
 			}
-			quoted := regexp.MustCompile(regexp.QuoteMeta(ToJSString(args[0])))
-			return browserStringMatchAllMatches(value.String, quoted), nil
+			quoted, err := jsregex.CompileLiteral(regexp.QuoteMeta(ToJSString(args[0])), "")
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			matches, err := browserStringMatchAllMatches(value.String, quoted)
+			if err != nil {
+				return UndefinedValue(), err
+			}
+			return matches, nil
 		}), true, nil
 	case "search":
 		return NativeFunctionValue(func(args []Value) (Value, error) {
@@ -911,7 +1159,10 @@ func (p *classicJSStatementParser) resolveStringPrototypeMethod(value Value, nam
 				if err != nil {
 					return UndefinedValue(), err
 				}
-				match := compiled.FindStringIndex(value.String)
+				match, err := compiled.FindStringIndex(value.String)
+				if err != nil {
+					return UndefinedValue(), err
+				}
 				if match == nil {
 					return NumberValue(-1), nil
 				}
@@ -1210,6 +1461,37 @@ func browserStringNormalize(text string, args []Value) (string, error) {
 	}
 }
 
+func browserStringLocaleTag(method string, args []Value) (language.Tag, error) {
+	if len(args) == 0 || args[0].Kind == ValueKindUndefined || args[0].Kind == ValueKindNull {
+		return language.Und, nil
+	}
+
+	locale := browserStringLocaleString(args[0])
+	locale = strings.TrimSpace(locale)
+	if locale == "" {
+		return language.Und, nil
+	}
+
+	tag, err := language.Parse(locale)
+	if err != nil {
+		return language.Tag{}, NewError(ErrorKindRuntime, fmt.Sprintf("%s invalid locale %q", method, locale))
+	}
+	return tag, nil
+}
+
+func browserStringLocaleString(value Value) string {
+	if value.Kind == ValueKindArray {
+		for _, element := range value.Array {
+			if element.Kind == ValueKindUndefined || element.Kind == ValueKindNull {
+				continue
+			}
+			return ToJSString(element)
+		}
+		return ""
+	}
+	return ToJSString(value)
+}
+
 func repeatStringToRuneLength(fill string, targetLength int) string {
 	if fill == "" || targetLength <= 0 {
 		return ""
@@ -1228,10 +1510,13 @@ func repeatStringToRuneLength(fill string, targetLength int) string {
 	return string(repeated)
 }
 
-func browserStringMatchAllMatches(text string, compiled *regexp.Regexp) Value {
-	matches := compiled.FindAllStringSubmatch(text, -1)
+func browserStringMatchAllMatches(text string, compiled *jsregex.RegexpState) (Value, error) {
+	matches, err := compiled.FindAllStringSubmatch(text, -1)
+	if err != nil {
+		return UndefinedValue(), err
+	}
 	if len(matches) == 0 {
-		return ArrayValue(nil)
+		return arrayValueOwned(nil), nil
 	}
 	out := make([]Value, 0, len(matches))
 	for _, match := range matches {
@@ -1239,9 +1524,9 @@ func browserStringMatchAllMatches(text string, compiled *regexp.Regexp) Value {
 		for _, part := range match {
 			parts = append(parts, StringValue(part))
 		}
-		out = append(out, ArrayValue(parts))
+		out = append(out, arrayValueOwned(parts))
 	}
-	return ArrayValue(out)
+	return arrayValueOwned(out), nil
 }
 
 func browserStringRepeatCount(value Value) (int, error) {
@@ -2091,7 +2376,7 @@ func classicJSArrayIteratorMethodValue(method string, values []Value, mode class
 
 func classicJSArrayIteratorValue(values []Value, mode classicJSArrayIterationMode) Value {
 	index := 0
-	return ObjectValue([]ObjectEntry{
+	return objectValueOwned(Value{}, []ObjectEntry{
 		{
 			Key: "next",
 			Value: NativeFunctionValue(func(args []Value) (Value, error) {
@@ -2108,7 +2393,7 @@ func classicJSArrayIteratorValue(values []Value, mode classicJSArrayIterationMod
 				case classicJSArrayIterationKeys:
 					return classicJSIteratorResult(NumberValue(float64(currentIndex)), false), nil
 				case classicJSArrayIterationEntries:
-					return classicJSIteratorResult(ArrayValue([]Value{
+					return classicJSIteratorResult(arrayValueOwned([]Value{
 						NumberValue(float64(currentIndex)),
 						current,
 					}), false), nil
@@ -2199,7 +2484,7 @@ func flattenArrayValues(values []Value, depth int, out *[]Value) {
 	}
 }
 
-func classicJSRegExpValue(value Value) (*regexp.Regexp, string, bool, error) {
+func classicJSRegExpValue(value Value) (*jsregex.RegexpState, string, bool, error) {
 	if value.Kind != ValueKindObject {
 		return nil, "", false, nil
 	}
@@ -2211,20 +2496,15 @@ func classicJSRegExpValue(value Value) (*regexp.Regexp, string, bool, error) {
 	if !ok || flagsValue.Kind != ValueKindString {
 		return nil, "", false, nil
 	}
-	compiled, err := classicJSCompileRegExpLiteral(patternValue.String, flagsValue.String)
+	compiled, err := jsregex.CompileLiteral(patternValue.String, flagsValue.String)
 	if err != nil {
 		return nil, "", true, err
 	}
 	return compiled, flagsValue.String, true, nil
 }
 
-func replaceFirstRegexp(compiled *regexp.Regexp, input string, replacement string) string {
-	loc := compiled.FindStringSubmatchIndex(input)
-	if loc == nil {
-		return input
-	}
-	expanded := compiled.ExpandString(nil, replacement, input, loc)
-	return input[:loc[0]] + string(expanded) + input[loc[1]:]
+func replaceFirstRegexp(compiled *jsregex.RegexpState, input string, replacement string) (string, error) {
+	return compiled.ReplaceString(input, replacement)
 }
 
 func replaceStringWithCallback(host HostBindings, input, search string, replacer Value) (string, error) {
@@ -2281,8 +2561,11 @@ func replaceStringAllWithCallback(host HostBindings, input, search string, repla
 	return b.String(), nil
 }
 
-func replaceRegexpWithCallback(host HostBindings, compiled *regexp.Regexp, input string, replacer Value, global bool) (string, error) {
-	matches := compiled.FindAllStringSubmatchIndex(input, -1)
+func replaceRegexpWithCallback(host HostBindings, compiled *jsregex.RegexpState, input string, replacer Value, global bool) (string, error) {
+	matches, err := compiled.FindAllStringSubmatchIndex(input, -1)
+	if err != nil {
+		return "", err
+	}
 	if len(matches) == 0 {
 		return input, nil
 	}

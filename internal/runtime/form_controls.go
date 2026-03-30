@@ -204,7 +204,11 @@ func (s *Session) applyClickDefaultAction(selector string) error {
 	case "a", "area":
 		return s.applyHyperlinkDefaultAction(node)
 	case "summary":
-		return s.applyDetailsSummaryDefaultAction(store, nodeID, node)
+		detailsID, err := s.applyDetailsSummaryDefaultAction(store, nodeID, node)
+		if err != nil {
+			return err
+		}
+		return s.dispatchDetailsToggleEvent(store, detailsID)
 	}
 
 	return nil
@@ -291,36 +295,79 @@ func (s *Session) applyClickDefaultActionForNode(store *dom.Store, nodeID dom.No
 	case "a", "area":
 		return s.applyHyperlinkDefaultAction(node)
 	case "summary":
-		return s.applyDetailsSummaryDefaultAction(store, nodeID, node)
+		detailsID, err := s.applyDetailsSummaryDefaultAction(store, nodeID, node)
+		if err != nil {
+			return err
+		}
+		return s.dispatchDetailsToggleEvent(store, detailsID)
 	}
 
 	return nil
 }
 
-func (s *Session) applyDetailsSummaryDefaultAction(store *dom.Store, summaryNodeID dom.NodeID, node *dom.Node) error {
+func (s *Session) applyDetailsSummaryDefaultAction(store *dom.Store, summaryNodeID dom.NodeID, node *dom.Node) (dom.NodeID, error) {
 	if s == nil {
-		return fmt.Errorf("session is unavailable")
+		return 0, fmt.Errorf("session is unavailable")
 	}
 	if store == nil || node == nil || node.Kind != dom.NodeKindElement || node.TagName != "summary" {
-		return nil
+		return 0, nil
 	}
 
 	detailsID := summaryDetailsAncestorID(store, summaryNodeID)
 	if detailsID == 0 {
-		return nil
+		return 0, nil
 	}
 	if firstSummaryChildID(store, detailsID) != summaryNodeID {
-		return nil
+		return 0, nil
 	}
 
 	details := store.Node(detailsID)
 	if details == nil {
+		return 0, nil
+	}
+	changed, err := s.setDetailsOpenState(store, detailsID, !hasAttribute(details.Attrs, "open"))
+	if err != nil {
+		return 0, err
+	}
+	if !changed {
+		return 0, nil
+	}
+	return detailsID, nil
+}
+
+func (s *Session) setDetailsOpenState(store *dom.Store, detailsID dom.NodeID, open bool) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("session is unavailable")
+	}
+	if store == nil || detailsID == 0 {
+		return false, nil
+	}
+	details := store.Node(detailsID)
+	if details == nil || details.Kind != dom.NodeKindElement || details.TagName != "details" {
+		return false, nil
+	}
+	present := hasAttribute(details.Attrs, "open")
+	if present == open {
+		return false, nil
+	}
+	if open {
+		if err := store.SetAttribute(detailsID, "open", ""); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := store.RemoveAttribute(detailsID, "open"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Session) dispatchDetailsToggleEvent(store *dom.Store, detailsID dom.NodeID) error {
+	if detailsID == 0 {
 		return nil
 	}
-	if hasAttribute(details.Attrs, "open") {
-		return store.RemoveAttribute(detailsID, "open")
-	}
-	return store.SetAttribute(detailsID, "open", "")
+	_, err := s.dispatchTargetEventListeners(store, detailsID, "toggle")
+	return err
 }
 
 func summaryDetailsAncestorID(store *dom.Store, nodeID dom.NodeID) dom.NodeID {

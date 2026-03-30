@@ -1269,8 +1269,12 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementDownloadValue(session, store, nodeID)
 	case "placeholder":
 		return resolveElementPlaceholderValue(session, store, nodeID)
+	case "type":
+		return resolveElementTypeValue(session, store, nodeID)
 	case "lang":
 		return resolveElementLangValue(session, store, nodeID)
+	case "dir":
+		return resolveElementDirValue(session, store, nodeID)
 	case "src":
 		if node.TagName != "img" {
 			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "element:"+strconv.FormatInt(int64(nodeID), 10)+"."+rest))

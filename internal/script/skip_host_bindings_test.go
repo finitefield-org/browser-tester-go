@@ -143,3 +143,67 @@ func TestSkipHostBindingsPreservePureHostConstructorsInShortCircuit(t *testing.T
 		})
 	}
 }
+
+func TestSkipHostBindingsDoNotMutateSharedBindingsInShortCircuit(t *testing.T) {
+	env := newClassicJSEnvironment()
+	shared := ObjectValue([]ObjectEntry{{Key: "flag", Value: StringValue("safe")}})
+	if err := env.declare("shared", scalarJSValue(shared), true); err != nil {
+		t.Fatalf("declare(shared) error = %v", err)
+	}
+
+	host := &skipHostBindingsReproHost{}
+	result, err := evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(
+		`host.echo("keep" || (shared.flag = "boom"))`,
+		host,
+		env,
+		DefaultRuntimeConfig().StepLimit,
+		false,
+		false,
+		false,
+		nil,
+		UndefinedValue(),
+		false,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports() error = %v", err)
+	}
+	if result.Kind != ValueKindString || result.String != "keep" {
+		t.Fatalf("result = %#v, want string %q", result, "keep")
+	}
+	if len(host.calls) != 1 || host.calls[0].method != "echo" {
+		t.Fatalf("host calls = %#v, want one echo call", host.calls)
+	}
+
+	binding, ok := env.lookup("shared")
+	if !ok || binding.kind != jsValueScalar || binding.value.Kind != ValueKindObject {
+		t.Fatalf("shared binding = %#v, want object", binding)
+	}
+	flag, ok := lookupObjectProperty(binding.value.Object, "flag")
+	if !ok || flag.Kind != ValueKindString || flag.String != "safe" {
+		t.Fatalf("shared.flag = %#v, want %q", flag, "safe")
+	}
+}
+
+func TestSkipHostBindingsDoNotExecuteSkippedArrowFunctionBodies(t *testing.T) {
+	host := &skipHostBindingsReproHost{}
+	runtime := NewRuntimeWithBindings(host, nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `host.echo("keep" || (() => host.echo("boom"))())`})
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "keep" {
+		t.Fatalf("Dispatch() value = %#v, want string %q", result.Value, "keep")
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one echo call", host.calls)
+	}
+	if host.calls[0].method != "echo" {
+		t.Fatalf("host.calls[0].method = %q, want echo", host.calls[0].method)
+	}
+	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "keep" {
+		t.Fatalf("host.calls[0].args = %#v, want one %q string", host.calls[0].args, "keep")
+	}
+}
