@@ -834,6 +834,25 @@ func TestRunScriptSupportsIntlNumberFormatFractionDigitRounding(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsIntlNumberFormatUseGroupingFalse(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `(() => {
+		const decimal = new Intl.NumberFormat("en-US", { useGrouping: false, maximumFractionDigits: 0 });
+		const significant = new Intl.NumberFormat("en-US", { useGrouping: false, maximumSignificantDigits: 4 });
+		return [decimal.format(10000), significant.format(1234567), String(decimal.resolvedOptions().useGrouping)].join("|");
+	})()`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "10000|1235000|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptSupportsIntlNumberFormatCurrencyStyle(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 

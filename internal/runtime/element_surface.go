@@ -68,7 +68,7 @@ func resolveElementDownloadValue(session *Session, store *dom.Store, nodeID dom.
 		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
 	}
 	node := nodeFromStore(store, nodeID)
-	if node == nil || node.Kind != dom.NodeKindElement || !supportsHyperlinkHref(node.TagName) {
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsHyperlinkDownload(node.TagName) {
 		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
 	}
 	value, ok := domAttributeValue(store, nodeID, "download")
@@ -76,6 +76,26 @@ func resolveElementDownloadValue(session *Session, store *dom.Store, nodeID dom.
 		return script.StringValue(""), nil
 	}
 	return script.StringValue(value), nil
+}
+
+func resolveElementTabIndexValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".tabIndex"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsTabIndexAttribute(node.TagName) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	value, ok := domAttributeValue(store, nodeID, "tabindex")
+	if !ok {
+		return script.NumberValue(0), nil
+	}
+	index, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return script.NumberValue(0), nil
+	}
+	return script.NumberValue(float64(index)), nil
 }
 
 func resolveElementPlaceholderValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
@@ -506,7 +526,25 @@ func supportsDisabledAttribute(tagName string) bool {
 
 func supportsHyperlinkHref(tagName string) bool {
 	switch tagName {
+	case "a", "area", "link":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsHyperlinkDownload(tagName string) bool {
+	switch tagName {
 	case "a", "area":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsTabIndexAttribute(tagName string) bool {
+	switch tagName {
+	case "button", "input", "select", "textarea":
 		return true
 	default:
 		return false

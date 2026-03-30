@@ -156,6 +156,26 @@ func TestSessionInlineScriptsCanReadSelectTypeReflectionSurfaces(t *testing.T) {
 	}
 }
 
+func TestSessionInlineScriptsCanReadCanonicalLinkHrefReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		URL:  "https://finitefield.org/en/tools/agri/orchard-pollination-planner/",
+		HTML: `<!doctype html><html><head><link rel="canonical" href="/tools/agri/orchard-pollination-planner/"></head><body><div id="probe"></div><script>const canonicalLink = document.querySelector("link[rel=\"canonical\"]"); const canonicalHref = canonicalLink && canonicalLink.href ? canonicalLink.href : ""; host:setTextContent("#probe", expr(canonicalHref))</script></body></html>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after canonical link.href reflection bridge error = %v", err)
+	} else if got != "https://finitefield.org/tools/agri/orchard-pollination-planner/" {
+		t.Fatalf("TextContent(#probe) after canonical link.href reflection bridge = %q, want %q", got, "https://finitefield.org/tools/agri/orchard-pollination-planner/")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after canonical link.href reflection bridge", got)
+	}
+}
+
 func TestSessionBootstrapsFormControlTypeReflectionInHelper(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<main><input id="field" type="checkbox" checked><div id="out"></div><script>function setValue(elm, value) { if (elm.type === "checkbox") { elm.checked = Boolean(value); return; } elm.value = value === null || value === undefined ? "" : String(value); } setValue(document.getElementById("field"), false); document.getElementById("out").textContent = "done";</script></main>`,
@@ -172,6 +192,25 @@ func TestSessionBootstrapsFormControlTypeReflectionInHelper(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after form-control type bootstrap", got)
+	}
+}
+
+func TestSessionInlineScriptsCanReadAndWriteFormControlTabIndexReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><button id="seg" type="button">Segment</button><div id="probe"></div><script>const button = document.getElementById("seg"); const before = button.tabIndex; button.tabIndex = -1; host:setTextContent("#probe", expr([before, button.tabIndex, button.getAttribute("tabindex")].join("|")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after button.tabIndex reflection bridge error = %v", err)
+	} else if got != "0|-1|-1" {
+		t.Fatalf("TextContent(#probe) after button.tabIndex reflection bridge = %q, want %q", got, "0|-1|-1")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after button.tabIndex reflection bridge", got)
 	}
 }
 

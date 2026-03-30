@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"browsertester/internal/dom"
@@ -168,10 +169,19 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 		}
 		return store.SetAttribute(nodeID, "href", script.ToJSString(value))
 	case rest == "download":
-		if !supportsHyperlinkHref(node.TagName) {
+		if !supportsHyperlinkDownload(node.TagName) {
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
 		}
 		return store.SetAttribute(nodeID, "download", script.ToJSString(value))
+	case rest == "tabIndex":
+		if !supportsTabIndexAttribute(node.TagName) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		index, err := browserInt64Value("element.tabIndex", value)
+		if err != nil {
+			return err
+		}
+		return store.SetAttribute(nodeID, "tabindex", strconv.FormatInt(index, 10))
 	case rest == "src":
 		if node.TagName != "img" {
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))

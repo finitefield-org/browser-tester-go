@@ -1267,6 +1267,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementHrefValue(session, store, nodeID)
 	case "download":
 		return resolveElementDownloadValue(session, store, nodeID)
+	case "tabIndex":
+		return resolveElementTabIndexValue(session, store, nodeID)
 	case "placeholder":
 		return resolveElementPlaceholderValue(session, store, nodeID)
 	case "type":
@@ -1843,6 +1845,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 	minFractionDigits := 0
 	maxFractionDigits := -1
 	maxSignificantDigits := -1
+	useGrouping := true
 	style := ""
 	currency := ""
 	hasMinimumFractionDigits := false
@@ -1915,6 +1918,9 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 			maxSignificantDigits = int(parsed)
 			hasMaximumSignificantDigits = true
 		}
+		if value, ok := objectProperty(options, "useGrouping"); ok && value.Kind == script.ValueKindBool {
+			useGrouping = value.Bool
+		}
 	}
 
 	entries := []script.ObjectEntry{
@@ -1928,7 +1934,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				if err != nil {
 					return script.UndefinedValue(), err
 				}
-				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits)
+				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits, useGrouping)
 				if style == "currency" {
 					formatted = browserCurrencyFormat(formatted, currency, locale)
 				}
@@ -1945,7 +1951,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				if err != nil {
 					return script.UndefinedValue(), err
 				}
-				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits)
+				formatted := formatNumber(number, minFractionDigits, maxFractionDigits, maxSignificantDigits, useGrouping)
 				if style == "currency" {
 					formatted = browserCurrencyFormat(formatted, currency, locale)
 				}
@@ -1965,7 +1971,7 @@ func browserNumberFormatConstructor(args []script.Value) (script.Value, error) {
 				resolved := []script.ObjectEntry{
 					{Key: "locale", Value: script.StringValue(locale)},
 					{Key: "style", Value: script.StringValue(resolvedStyle)},
-					{Key: "useGrouping", Value: script.BoolValue(true)},
+					{Key: "useGrouping", Value: script.BoolValue(useGrouping)},
 					{Key: "minimumIntegerDigits", Value: script.NumberValue(1)},
 				}
 				if hasMinimumFractionDigits {
@@ -2239,7 +2245,7 @@ func formatDateTimeRangeParts(startMs, endMs int64, locale string, hour12 bool, 
 	return parts
 }
 
-func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignificantDigits int) string {
+func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignificantDigits int, useGrouping bool) string {
 	if math.IsNaN(value) {
 		return "NaN"
 	}
@@ -2250,10 +2256,14 @@ func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignif
 		return "-Infinity"
 	}
 	if maxSignificantDigits > 0 {
-		return formatNumberWithSignificantDigits(value, maxSignificantDigits)
+		return formatNumberWithSignificantDigits(value, maxSignificantDigits, useGrouping)
 	}
 	if maxFractionDigits < 0 {
-		return groupDecimalIntegerPart(formatNumberWithMinimumFractionDigits(strconv.FormatFloat(value, 'f', -1, 64), minFractionDigits))
+		text := formatNumberWithMinimumFractionDigits(strconv.FormatFloat(value, 'f', -1, 64), minFractionDigits)
+		if useGrouping {
+			return groupDecimalIntegerPart(text)
+		}
+		return text
 	}
 	pow := math.Pow10(maxFractionDigits)
 	rounded := math.Round(value*pow) / pow
@@ -2265,7 +2275,11 @@ func formatNumber(value float64, minFractionDigits, maxFractionDigits, maxSignif
 	if text == "" || text == "-0" {
 		text = "0"
 	}
-	return groupDecimalIntegerPart(formatNumberWithMinimumFractionDigits(text, minFractionDigits))
+	text = formatNumberWithMinimumFractionDigits(text, minFractionDigits)
+	if useGrouping {
+		return groupDecimalIntegerPart(text)
+	}
+	return text
 }
 
 func formatNumberWithMinimumFractionDigits(text string, minFractionDigits int) string {
@@ -2290,7 +2304,7 @@ func formatNumberWithMinimumFractionDigits(text string, minFractionDigits int) s
 	return sign + parts[0] + "." + parts[1]
 }
 
-func formatNumberWithSignificantDigits(value float64, maxSignificantDigits int) string {
+func formatNumberWithSignificantDigits(value float64, maxSignificantDigits int, useGrouping bool) string {
 	if math.IsNaN(value) {
 		return "NaN"
 	}
@@ -2333,7 +2347,10 @@ func formatNumberWithSignificantDigits(value float64, maxSignificantDigits int) 
 	if text == "" || text == "-0" {
 		return "0"
 	}
-	return groupDecimalIntegerPart(text)
+	if useGrouping {
+		return groupDecimalIntegerPart(text)
+	}
+	return text
 }
 
 func groupDecimalIntegerPart(text string) string {

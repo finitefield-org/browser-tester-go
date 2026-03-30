@@ -32,10 +32,6 @@ func (s *Session) TypeText(selector, text string) (err error) {
 		}
 	}()
 	if store.FocusedNodeID() != nodeID {
-		s.skipChangeOnBlur = true
-		defer func() {
-			s.skipChangeOnBlur = false
-		}()
 		if err := s.focusNode(store, nodeID, normalized, false); err != nil {
 			return err
 		}

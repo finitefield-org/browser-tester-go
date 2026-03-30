@@ -3041,6 +3041,34 @@ func TestSessionBootstrapsIntlNumberFormatFractionDigitRounding(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsIntlNumberFormatUseGroupingFalse(t *testing.T) {
+	const rawHTML = `<main><div id="decimal"></div><div id="significant"></div><div id="resolved"></div><script>const decimal = new Intl.NumberFormat("en-US", { useGrouping: false, maximumFractionDigits: 0 }); const significant = new Intl.NumberFormat("en-US", { useGrouping: false, maximumSignificantDigits: 4 }); document.getElementById("decimal").textContent = decimal.format(10000); document.getElementById("significant").textContent = significant.format(1234567); document.getElementById("resolved").textContent = String(decimal.resolvedOptions().useGrouping)</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#decimal"); err != nil {
+		t.Fatalf("TextContent(#decimal) error = %v", err)
+	} else if got != "10000" {
+		t.Fatalf("TextContent(#decimal) = %q, want 10000", got)
+	}
+	if got, err := session.TextContent("#significant"); err != nil {
+		t.Fatalf("TextContent(#significant) error = %v", err)
+	} else if got != "1235000" {
+		t.Fatalf("TextContent(#significant) = %q, want 1235000", got)
+	}
+	if got, err := session.TextContent("#resolved"); err != nil {
+		t.Fatalf("TextContent(#resolved) error = %v", err)
+	} else if got != "false" {
+		t.Fatalf("TextContent(#resolved) = %q, want false", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after Intl.NumberFormat useGrouping bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsNumberToLocaleString(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>document.getElementById("out").textContent = (600).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })</script></main>`
 

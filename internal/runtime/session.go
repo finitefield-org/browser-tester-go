@@ -50,7 +50,6 @@ type Session struct {
 	focusedSelector          string
 	focusedControlValue      string
 	hasFocusedControlValue   bool
-	skipChangeOnBlur         bool
 	writingHTML              bool
 	interactions             []Interaction
 	eventListeners           []eventListenerRecord
@@ -910,9 +909,6 @@ func (s *Session) blurNode(store *dom.Store, nodeID dom.NodeID, selector string,
 		}
 	}()
 	dispatchChange := s.shouldDispatchChangeOnBlur(store, nodeID)
-	if s.skipChangeOnBlur {
-		dispatchChange = false
-	}
 	store.ClearFocusedNode()
 	s.clearFocusedState()
 	if _, err := s.dispatchTargetEventListeners(store, nodeID, "blur"); err != nil {

@@ -1603,7 +1603,7 @@ func TestSessionTypeTextWithHelperChainListeners(t *testing.T) {
 	}
 }
 
-func TestSessionTypeTextDoesNotCommitPreviousFocusedTextInputChange(t *testing.T) {
+func TestSessionTypeTextCommitsPreviousFocusedTextInputChangeOnFocusSwitch(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="first" type="text"><input id="second" type="text"><div id="first-status">--</div><div id="second-status">--</div><script>document.getElementById("first").addEventListener("change", () => { document.getElementById("first-status").textContent = "changed"; }); document.getElementById("second").addEventListener("input", (event) => { document.getElementById("second-status").textContent = String(event.target.value || ""); });</script></main>`,
 	})
@@ -1617,8 +1617,8 @@ func TestSessionTypeTextDoesNotCommitPreviousFocusedTextInputChange(t *testing.T
 
 	if got, err := s.TextContent("#first-status"); err != nil {
 		t.Fatalf("TextContent(#first-status) error = %v", err)
-	} else if got != "--" {
-		t.Fatalf("TextContent(#first-status) = %q, want --", got)
+	} else if got != "changed" {
+		t.Fatalf("TextContent(#first-status) = %q, want changed", got)
 	}
 	if got, err := s.TextContent("#second-status"); err != nil {
 		t.Fatalf("TextContent(#second-status) error = %v", err)
@@ -1629,7 +1629,7 @@ func TestSessionTypeTextDoesNotCommitPreviousFocusedTextInputChange(t *testing.T
 		t.Fatalf("FocusedSelector() = %q, want %q", got, want)
 	}
 	if got := s.DOMError(); got != "" {
-		t.Fatalf("DOMError() = %q, want empty after TypeText blur suppression regression", got)
+		t.Fatalf("DOMError() = %q, want empty after TypeText focus-switch regression", got)
 	}
 }
 
