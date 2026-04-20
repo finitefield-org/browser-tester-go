@@ -347,6 +347,18 @@ func TestDispatchSupportsTopLevelFunctionDeclarationHoisting(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsDuplicateTopLevelFunctionDeclarations(t *testing.T) {
+	runtime := NewRuntime(nil)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `function choose() { return "first" } function choose() { return "second" } choose()`})
+	if err != nil {
+		t.Fatalf("Dispatch(duplicate top-level function declarations) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString || result.Value.String != "second" {
+		t.Fatalf("Dispatch(duplicate top-level function declarations) value = %#v, want string second", result.Value)
+	}
+}
+
 func TestDispatchTreatsHoistedTopLevelFunctionDeclarationAsUndefinedStatement(t *testing.T) {
 	runtime := NewRuntime(nil)
 
@@ -4317,6 +4329,44 @@ host.echo(state.rows.map((row) => row.id).join(","))`})
 	}
 	if len(host.calls[0].args) != 1 || host.calls[0].args[0].Kind != ValueKindString || host.calls[0].args[0].String != "a,c,b" {
 		t.Fatalf("host.calls[0].args = %#v, want one string arg a,c,b", host.calls[0].args)
+	}
+}
+
+func TestDispatchSupportsRegExpExecArrayDestructuringInClassicJS(t *testing.T) {
+	host := &echoHost{}
+	runtime := NewRuntime(host)
+
+	result, err := runtime.Dispatch(DispatchRequest{Source: `const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec("2026-02-05"); const [, yyyy, mm, dd] = match; host.echo(match.index, match.input, yyyy, mm, dd)`})
+	if err != nil {
+		t.Fatalf("Dispatch(RegExp exec array destructuring) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindNumber || result.Value.Number != 0 {
+		t.Fatalf("Dispatch(RegExp exec array destructuring) value = %#v, want number 0", result.Value)
+	}
+	if len(host.calls) != 1 {
+		t.Fatalf("host calls = %#v, want one call", host.calls)
+	}
+	call := host.calls[0]
+	if call.method != "echo" {
+		t.Fatalf("host call method = %q, want echo", call.method)
+	}
+	if len(call.args) != 5 {
+		t.Fatalf("host call args len = %d, want 5", len(call.args))
+	}
+	if call.args[0].Kind != ValueKindNumber || call.args[0].Number != 0 {
+		t.Fatalf("host call arg[0] = %#v, want number 0", call.args[0])
+	}
+	if call.args[1].Kind != ValueKindString || call.args[1].String != "2026-02-05" {
+		t.Fatalf("host call arg[1] = %#v, want string 2026-02-05", call.args[1])
+	}
+	if call.args[2].Kind != ValueKindString || call.args[2].String != "2026" {
+		t.Fatalf("host call arg[2] = %#v, want string 2026", call.args[2])
+	}
+	if call.args[3].Kind != ValueKindString || call.args[3].String != "02" {
+		t.Fatalf("host call arg[3] = %#v, want string 02", call.args[3])
+	}
+	if call.args[4].Kind != ValueKindString || call.args[4].String != "05" {
+		t.Fatalf("host call arg[4] = %#v, want string 05", call.args[4])
 	}
 }
 
@@ -10049,6 +10099,42 @@ func TestClassicJSStatementParserPreservesRegexLiteralAfterWhitespace(t *testing
 			if elements[i] != want[i] {
 				t.Fatalf("tryParseArrayDestructuringAssignmentTarget()[%d] = %q, want %q", i, elements[i], want[i])
 			}
+		}
+	})
+}
+
+func TestClassicJSStatementParserPreservesRegexLiteralAfterReturnInBlockAndParenthesizedSource(t *testing.T) {
+	t.Run("block", func(t *testing.T) {
+		source := `{
+  const text = String(cell === null || cell === undefined ? "" : cell);
+  return /[",\n\t]/.test(text) ? ` + "`" + `"${text.replace(/"/g, '""')}"` + "`" + ` : text;
+}`
+		parser := &classicJSStatementParser{source: source}
+		got, err := parser.consumeBlockSource()
+		if err != nil {
+			t.Fatalf("consumeBlockSource() error = %v", err)
+		}
+		want := strings.TrimSpace(source[1 : len(source)-1])
+		if got != want {
+			t.Fatalf("consumeBlockSource() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("parenthesized", func(t *testing.T) {
+		source := `(
+  rows.map((cell) => {
+    const text = String(cell === null || cell === undefined ? "" : cell);
+    return /[",\n\t]/.test(text) ? ` + "`" + `"${text.replace(/"/g, '""')}"` + "`" + ` : text;
+  })
+)`
+		parser := &classicJSStatementParser{source: source}
+		got, err := parser.consumeParenthesizedSource("arrow function")
+		if err != nil {
+			t.Fatalf("consumeParenthesizedSource() error = %v", err)
+		}
+		want := strings.TrimSpace(source[1 : len(source)-1])
+		if got != want {
+			t.Fatalf("consumeParenthesizedSource() = %q, want %q", got, want)
 		}
 	})
 }

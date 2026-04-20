@@ -38,12 +38,18 @@ func (s *Session) windowPropertyValue(name string) (script.Value, bool) {
 	if s == nil || len(s.windowProperties) == 0 {
 		return script.Value{}, false
 	}
+	if name == "isSecureContext" || name == "geolocation" {
+		return script.Value{}, false
+	}
 	value, ok := s.windowProperties[name]
 	return value, ok
 }
 
 func (s *Session) setWindowProperty(name string, value script.Value) {
 	if s == nil {
+		return
+	}
+	if name == "isSecureContext" || name == "geolocation" {
 		return
 	}
 	if s.windowProperties == nil {
@@ -54,6 +60,9 @@ func (s *Session) setWindowProperty(name string, value script.Value) {
 
 func (s *Session) deleteWindowProperty(name string) bool {
 	if s == nil || len(s.windowProperties) == 0 {
+		return false
+	}
+	if name == "isSecureContext" || name == "geolocation" {
 		return false
 	}
 	if _, ok := s.windowProperties[name]; !ok {

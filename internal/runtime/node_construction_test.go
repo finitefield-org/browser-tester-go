@@ -51,6 +51,22 @@ func TestSessionInlineScriptsCanUseDocumentAppendAndPrepend(t *testing.T) {
 	}
 }
 
+func TestSessionInlineScriptsCanAppendDocumentFragmentIntoTableBody(t *testing.T) {
+	s := NewSession(DefaultSessionConfig())
+	if err := s.WriteHTML(`<main id="root"><table><tbody id="body"></tbody></table><div id="probe"></div><script>const fragment = document.createDocumentFragment(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.textContent = "ok"; row.appendChild(cell); fragment.appendChild(row); document.querySelector("#body").appendChild(fragment); document.querySelector("#probe").textContent = document.querySelector("#body").innerHTML</script></main>`); err != nil {
+		t.Fatalf("WriteHTML() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) error = %v", err)
+	} else if got != `<tr><td>ok</td></tr>` {
+		t.Fatalf("TextContent(#probe) = %q, want %q", got, `<tr><td>ok</td></tr>`)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after fragment append bootstrap", got)
+	}
+}
+
 func TestSessionInlineScriptsRejectElementAppendDocumentNode(t *testing.T) {
 	s := NewSession(DefaultSessionConfig())
 	err := s.WriteHTML(`<main id="root"><div id="box"></div><script>const box = document.querySelector("#box"); box.append(document)</script></main>`)

@@ -49,6 +49,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"HTMLSelectElement":     script.HostConstructorReference("HTMLSelectElement"),
 		"Math":                  script.HostObjectReference("Math"),
 		"Date":                  script.HostConstructorReference("Date"),
+		"Error":                 browserErrorValue(session),
 		"window":                windowRef,
 		"self":                  windowRef,
 		"globalThis":            windowRef,
@@ -59,11 +60,16 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"location":              locationRef,
 		"history":               historyRef,
 		"navigator":             navigatorRef,
+		"isSecureContext":       script.BoolValue(session.isSecureContext()),
 		"name":                  script.HostObjectReference("name"),
 		"URL":                   script.HostConstructorReference("URL"),
+		"Worker":                script.HostConstructorReference("Worker"),
 		"DOMParser":             script.HostConstructorReference("DOMParser"),
 		"XMLSerializer":         script.HostConstructorReference("XMLSerializer"),
 		"Blob":                  script.HostConstructorReference("Blob"),
+		"File":                  script.HostConstructorReference("File"),
+		"DataTransfer":          script.HostConstructorReference("DataTransfer"),
+		"RegExp":                script.HostConstructorReference("RegExp"),
 		"URLSearchParams":       script.HostConstructorReference("URLSearchParams"),
 		"Intl":                  intlRef,
 		"localStorage":          localStorageRef,
@@ -79,7 +85,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"print":                 script.HostFunctionReference("print"),
 		"scrollTo":              script.HostFunctionReference("scrollTo"),
 		"scrollBy":              script.HostFunctionReference("scrollBy"),
-		"innerWidth":            script.NumberValue(1280),
+		"innerWidth":            script.NumberValue(defaultBrowserInnerWidth),
 		"setTimeout":            script.HostFunctionReference("setTimeout"),
 		"setInterval":           script.HostFunctionReference("setInterval"),
 		"clearTimeout":          script.HostFunctionReference("clearTimeout"),
@@ -89,6 +95,7 @@ func browserGlobalBindings(session *Session, store *dom.Store) map[string]script
 		"queueMicrotask":        script.HostFunctionReference("queueMicrotask"),
 		"console":               consoleRef,
 		"clipboard":             clipboardRef,
+		"performance":           script.HostObjectReference("performance"),
 	}
 }
 
@@ -118,6 +125,12 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 		}
 		return session.resolveWindowPropertyReference(normalized)
 	}
+	if strings.HasPrefix(normalized, browserWorkerReferencePrefix) {
+		if session == nil {
+			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", path))
+		}
+		return resolveBrowserWorkerReference(session, normalized)
+	}
 
 	if value, ok, err := resolveStdlibReference(session, store, normalized); ok || err != nil {
 		return value, err
@@ -135,6 +148,15 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 	if strings.HasPrefix(normalized, "blob:") {
 		return resolveBlobReference(session, normalized)
 	}
+	if strings.HasPrefix(normalized, browserFileReferencePrefix) {
+		return resolveFileReference(session, normalized)
+	}
+	if strings.HasPrefix(normalized, browserDataTransferItemsReferencePrefix) {
+		return resolveDataTransferItemsReference(session, normalized)
+	}
+	if strings.HasPrefix(normalized, browserDataTransferReferencePrefix) {
+		return resolveDataTransferReference(session, normalized)
+	}
 	if strings.HasPrefix(normalized, "domparser.") {
 		return resolveDOMParserReference(session, store, normalized[len("domparser"):])
 	}
@@ -148,6 +170,18 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 
 	if normalized == "fetch" {
 		return resolveFetchReference(session)
+	}
+	if normalized == "isSecureContext" {
+		if session == nil {
+			return script.BoolValue(false), nil
+		}
+		return script.BoolValue(session.isSecureContext()), nil
+	}
+	if normalized == "geolocation" {
+		return resolveGeolocationReference(session, "")
+	}
+	if strings.HasPrefix(normalized, "geolocation.") {
+		return resolveGeolocationReference(session, strings.TrimPrefix(normalized, "geolocation."))
 	}
 
 	if session != nil {
@@ -218,6 +252,12 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserURLConstructor(session, args)
 		}), nil
+	case "Worker":
+		return script.NativeConstructibleNamedFunctionValue("Worker", func(args []script.Value) (script.Value, error) {
+			return script.UndefinedValue(), fmt.Errorf("Worker constructor must be called with `new` in this bounded classic-JS slice")
+		}, func(args []script.Value) (script.Value, error) {
+			return browserWorkerConstructor(session, args)
+		}), nil
 	case "DOMParser":
 		return script.NativeConstructibleFunctionValue(func(args []script.Value) (script.Value, error) {
 			return script.UndefinedValue(), fmt.Errorf("DOMParser constructor must be called with `new` in this bounded classic-JS slice")
@@ -239,6 +279,24 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 			return script.UndefinedValue(), fmt.Errorf("Blob constructor must be called with `new` in this bounded classic-JS slice")
 		}, func(args []script.Value) (script.Value, error) {
 			return browserBlobConstructor(session, args)
+		}), nil
+	case "File":
+		return script.NativeConstructibleNamedFunctionValue("File", func(args []script.Value) (script.Value, error) {
+			return script.UndefinedValue(), fmt.Errorf("File constructor must be called with `new` in this bounded classic-JS slice")
+		}, func(args []script.Value) (script.Value, error) {
+			return browserFileConstructor(session, args)
+		}), nil
+	case "DataTransfer":
+		return script.NativeConstructibleNamedFunctionValue("DataTransfer", func(args []script.Value) (script.Value, error) {
+			return script.UndefinedValue(), fmt.Errorf("DataTransfer constructor must be called with `new` in this bounded classic-JS slice")
+		}, func(args []script.Value) (script.Value, error) {
+			return browserDataTransferConstructor(session, args)
+		}), nil
+	case "RegExp":
+		return script.NativeConstructibleNamedFunctionValue("RegExp", func(args []script.Value) (script.Value, error) {
+			return browserRegExpConstructor(args)
+		}, func(args []script.Value) (script.Value, error) {
+			return browserRegExpConstructor(args)
 		}), nil
 	case "Symbol":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
@@ -324,6 +382,8 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 		return script.HostObjectReference("console"), nil
 	case "clipboard":
 		return script.HostObjectReference("clipboard"), nil
+	case "clipboarddata":
+		return script.HostObjectReference("clipboarddata"), nil
 	}
 
 	if strings.HasPrefix(normalized, "document.") {
@@ -352,6 +412,12 @@ func resolveBrowserGlobalReferenceWithPrefix(session *Session, store *dom.Store,
 	}
 	if strings.HasPrefix(normalized, "clipboard.") {
 		return resolveClipboardReference(session, strings.TrimPrefix(normalized, "clipboard."))
+	}
+	if strings.HasPrefix(normalized, "clipboarddata.") {
+		return resolveClipboardDataReference(session, strings.TrimPrefix(normalized, "clipboarddata."))
+	}
+	if strings.HasPrefix(normalized, "performance.") {
+		return resolvePerformanceReference(session, strings.TrimPrefix(normalized, "performance."))
 	}
 	if strings.HasPrefix(normalized, "url:") {
 		return resolveURLInstanceReference(session, normalized)
@@ -550,6 +616,20 @@ func resolveDocumentReference(session *Session, store *dom.Store, path string) (
 				return script.UndefinedValue(), fmt.Errorf("document.createTextNode accepts at most 1 argument")
 			}
 			nodeID, err := store.CreateTextNode(script.ToJSString(args[0]))
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			return browserElementReferenceValue(nodeID, store), nil
+		}), nil
+	case "createDocumentFragment":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if store == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "document.createDocumentFragment is unavailable in this bounded classic-JS slice")
+			}
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("document.createDocumentFragment accepts no arguments")
+			}
+			nodeID, err := store.CreateDocumentFragment()
 			if err != nil {
 				return script.UndefinedValue(), err
 			}
@@ -895,10 +975,15 @@ func resolveNavigatorReference(session *Session, store *dom.Store, path string) 
 			return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "navigator.cookieEnabled is unavailable in this bounded classic-JS slice")
 		}
 		return script.BoolValue(session.navigatorCookieEnabled()), nil
+	case "geolocation":
+		return resolveGeolocationReference(session, "")
 	case "clipboard":
 		return script.HostObjectReference("clipboard"), nil
 	}
 
+	if strings.HasPrefix(rest, "geolocation.") {
+		return resolveGeolocationReference(session, strings.TrimPrefix(rest, "geolocation."))
+	}
 	if strings.HasPrefix(rest, "clipboard.") {
 		return resolveClipboardReference(session, strings.TrimPrefix(rest, "clipboard."))
 	}
@@ -1222,6 +1307,64 @@ func resolveClipboardReference(session *Session, path string) (script.Value, err
 	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "clipboard."+rest))
 }
 
+func browserClipboardDataReferenceValue() script.Value {
+	return script.HostObjectReference("clipboarddata")
+}
+
+func resolveClipboardDataReference(session *Session, path string) (script.Value, error) {
+	rest := strings.TrimPrefix(path, ".")
+	switch rest {
+	case "":
+		return browserClipboardDataReferenceValue(), nil
+	case "getData":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if session == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "clipboardData.getData is unavailable in this bounded classic-JS slice")
+			}
+			if len(args) != 1 {
+				return script.UndefinedValue(), fmt.Errorf("clipboardData.getData expects 1 argument")
+			}
+			mimeType, err := scriptStringArg("clipboardData.getData", args, 0)
+			if err != nil {
+				return script.UndefinedValue(), err
+			}
+			normalized := strings.ToLower(strings.TrimSpace(mimeType))
+			switch normalized {
+			case "", "text", "text/plain":
+				text, err := session.ReadClipboard()
+				if err != nil {
+					return script.UndefinedValue(), err
+				}
+				return script.StringValue(text), nil
+			default:
+				return script.StringValue(""), nil
+			}
+		}), nil
+	}
+
+	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "clipboarddata."+rest))
+}
+
+func resolvePerformanceReference(session *Session, path string) (script.Value, error) {
+	rest := strings.TrimPrefix(path, ".")
+	switch rest {
+	case "":
+		return script.HostObjectReference("performance"), nil
+	case "now":
+		return script.NativeNamedFunctionValue("now", func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("performance.now accepts no arguments")
+			}
+			if session == nil {
+				return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "performance.now is unavailable in this bounded classic-JS slice")
+			}
+			return script.NumberValue(float64(session.NowMs())), nil
+		}), nil
+	}
+
+	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "performance."+rest))
+}
+
 func resolveElementReference(session *Session, store *dom.Store, path string) (script.Value, error) {
 	normalized := strings.TrimSpace(path)
 	nodeID, rest, err := splitElementReferencePath(normalized)
@@ -1364,6 +1507,9 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 		return resolveElementOuterTextValue(session, store, nodeID)
 	case "open":
 		return resolveElementOpenValue(session, store, nodeID)
+	case "hidden":
+		_, ok := domAttributeValue(store, nodeID, "hidden")
+		return script.BoolValue(ok), nil
 	case "addEventListener":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserElementAddEventListener(session, store, nodeID, args)
@@ -1573,6 +1719,8 @@ func resolveElementReference(session *Session, store *dom.Store, path string) (s
 			return script.BoolValue(false), nil
 		}
 		return script.BoolValue(value), nil
+	case "readOnly":
+		return resolveElementReadOnlyValue(session, store, nodeID)
 	case "disabled":
 		return resolveElementDisabledValue(session, store, nodeID)
 	case "selected":

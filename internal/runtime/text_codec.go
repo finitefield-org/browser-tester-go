@@ -3,8 +3,12 @@ package runtime
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 
 	"browsertester/internal/script"
 )
@@ -58,13 +62,15 @@ func browserTextDecoderValue() script.Value {
 				if len(args) > 2 {
 					return script.UndefinedValue(), fmt.Errorf("TextDecoder constructor accepts at most 2 arguments in this bounded classic-JS slice")
 				}
+				label := "utf-8"
 				if len(args) >= 1 {
-					label := strings.ToLower(strings.TrimSpace(script.ToJSString(args[0])))
-					if label != "" && label != "utf-8" && label != "utf8" {
-						return script.UndefinedValue(), fmt.Errorf("TextDecoder constructor only supports utf-8 in this bounded classic-JS slice")
+					normalized, ok := canonicalTextDecoderLabel(script.ToJSString(args[0]))
+					if !ok {
+						return script.UndefinedValue(), fmt.Errorf("TextDecoder constructor only supports utf-8 or shift_jis in this bounded classic-JS slice")
 					}
+					label = normalized
 				}
-				return script.HostObjectReference(browserTextDecoderInstancePath), nil
+				return browserTextDecoderReferenceValue(label), nil
 			},
 		)
 		prototype := script.ObjectValue([]script.ObjectEntry{
@@ -75,7 +81,7 @@ func browserTextDecoderValue() script.Value {
 			{
 				Key: "decode",
 				Value: script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-					return browserTextDecoderDecode(args)
+					return browserTextDecoderDecode("utf-8", args)
 				}),
 			},
 		})
@@ -96,7 +102,23 @@ func browserTextEncoderEncode(args []script.Value) (script.Value, error) {
 	return browserUint8ArrayValue([]byte(text)), nil
 }
 
-func browserTextDecoderDecode(args []script.Value) (script.Value, error) {
+func browserTextDecoderReferenceValue(label string) script.Value {
+	return script.HostObjectReference(browserTextDecoderInstancePath + "." + label)
+}
+
+func canonicalTextDecoderLabel(label string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	switch normalized {
+	case "", "utf8", "utf-8":
+		return "utf-8", true
+	case "shift_jis", "shift-jis", "shiftjis":
+		return "shift_jis", true
+	default:
+		return "", false
+	}
+}
+
+func browserTextDecoderDecode(label string, args []script.Value) (script.Value, error) {
 	if len(args) > 2 {
 		return script.UndefinedValue(), fmt.Errorf("TextDecoder.decode accepts at most 2 arguments")
 	}
@@ -107,7 +129,17 @@ func browserTextDecoderDecode(args []script.Value) (script.Value, error) {
 	if err != nil {
 		return script.UndefinedValue(), err
 	}
-	return script.StringValue(string(bytes.ToValidUTF8(bytesValue, []byte("\uFFFD")))), nil
+	switch label {
+	case "shift_jis":
+		decoder := transform.NewReader(bytes.NewReader(bytesValue), japanese.ShiftJIS.NewDecoder())
+		decoded, err := io.ReadAll(decoder)
+		if err != nil {
+			return script.UndefinedValue(), err
+		}
+		return script.StringValue(string(decoded)), nil
+	default:
+		return script.StringValue(string(bytes.ToValidUTF8(bytesValue, []byte("\uFFFD")))), nil
+	}
 }
 
 func browserTextDecoderBytesFromValue(value script.Value) ([]byte, error) {
@@ -134,17 +166,39 @@ func resolveTextEncoderInstanceReference(path string) (script.Value, error) {
 }
 
 func resolveTextDecoderInstanceReference(path string) (script.Value, error) {
-	switch strings.TrimPrefix(path, ".") {
+	labelPart := strings.TrimPrefix(strings.TrimSpace(path), ".")
+	if labelPart == "" {
+		labelPart = "utf-8"
+	}
+	label, suffix, found := strings.Cut(labelPart, ".")
+	if !found {
+		suffix = ""
+	}
+	normalized, ok := canonicalTextDecoderLabel(label)
+	if !ok {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", browserTextDecoderInstancePath+path))
+	}
+
+	switch suffix {
+	case "":
+		return browserTextDecoderReferenceValue(normalized), nil
 	case "decode":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
-			return browserTextDecoderDecode(args)
+			return browserTextDecoderDecode(normalized, args)
 		}), nil
 	case "encoding":
-		return script.StringValue("utf-8"), nil
+		return script.StringValue(normalized), nil
 	case "fatal":
 		return script.BoolValue(false), nil
 	case "ignoreBOM":
 		return script.BoolValue(false), nil
+	case "toString", "valueOf":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			if len(args) > 0 {
+				return script.UndefinedValue(), fmt.Errorf("TextDecoder.%s accepts no arguments", suffix)
+			}
+			return script.StringValue("[object TextDecoder]"), nil
+		}), nil
 	}
-	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", "textdecoder"+path))
+	return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("unsupported browser surface %q in this bounded classic-JS slice", browserTextDecoderInstancePath+path))
 }

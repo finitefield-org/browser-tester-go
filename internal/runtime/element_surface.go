@@ -116,13 +116,12 @@ func resolveElementPlaceholderValue(session *Session, store *dom.Store, nodeID d
 }
 
 func resolveElementTypeValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
-	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".type"
 	if session == nil || store == nil {
-		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+		return script.UndefinedValue(), nil
 	}
 	node := nodeFromStore(store, nodeID)
 	if node == nil || node.Kind != dom.NodeKindElement {
-		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+		return script.UndefinedValue(), nil
 	}
 	switch node.TagName {
 	case "button":
@@ -131,8 +130,10 @@ func resolveElementTypeValue(session *Session, store *dom.Store, nodeID dom.Node
 		return script.StringValue(dom.InputType(node)), nil
 	case "select":
 		return script.StringValue(dom.SelectType(node)), nil
+	case "textarea":
+		return script.StringValue("textarea"), nil
 	default:
-		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+		return script.UndefinedValue(), nil
 	}
 }
 
@@ -178,6 +179,19 @@ func resolveElementDisabledValue(session *Session, store *dom.Store, nodeID dom.
 		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
 	}
 	_, ok := domAttributeValue(store, nodeID, "disabled")
+	return script.BoolValue(ok), nil
+}
+
+func resolveElementReadOnlyValue(session *Session, store *dom.Store, nodeID dom.NodeID) (script.Value, error) {
+	surface := "element:" + strconv.FormatInt(int64(nodeID), 10) + ".readOnly"
+	if session == nil || store == nil {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	node := nodeFromStore(store, nodeID)
+	if node == nil || node.Kind != dom.NodeKindElement || !supportsReadOnlyAttribute(node.TagName) {
+		return script.UndefinedValue(), unsupportedElementSurfaceError(surface)
+	}
+	_, ok := domAttributeValue(store, nodeID, "readonly")
 	return script.BoolValue(ok), nil
 }
 
@@ -557,6 +571,15 @@ func supportsTextSelectionNode(node *dom.Node) bool {
 func supportsDisabledAttribute(tagName string) bool {
 	switch tagName {
 	case "button", "fieldset", "input", "optgroup", "option", "select", "textarea":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsReadOnlyAttribute(tagName string) bool {
+	switch tagName {
+	case "input", "textarea":
 		return true
 	default:
 		return false

@@ -63,11 +63,22 @@ type Session struct {
 	moduleBindings           map[string]script.Value
 	intlOverride             script.Value
 	hasIntlOverride          bool
+	errorConstructor         script.Value
+	hasErrorConstructor      bool
 	windowProperties         map[string]script.Value
 	blobStates               map[string]*browserBlobState
 	nextBlobStateID          int64
+	fileStates               map[string]*browserFileState
+	nextFileStateID          int64
 	urlStates                map[string]*browserURLState
 	nextURLStateID           int64
+	dataTransferStates       map[string]*browserDataTransferState
+	nextDataTransferStateID  int64
+	workerStates             map[string]*browserWorkerState
+	nextWorkerStateID        int64
+	geolocationWatches       map[int64]*browserGeolocationWatch
+	nextGeolocationWatchID   int64
+	fileInputSelections      map[dom.NodeID][]script.Value
 	historyEntries           []historyEntry
 	historyIndex             int
 	historyScrollRestoration string
@@ -748,15 +759,16 @@ func (s *Session) SetFiles(selector string, files []string) (err error) {
 	s.Registry().FileInput().SetFiles(selector, files)
 	normalized := strings.TrimSpace(selector)
 	if normalized != "" {
-		if matches, err := store.Select(normalized); err == nil && len(matches) > 0 {
-			if node := store.Node(matches[0]); node != nil && node.Kind == dom.NodeKindElement && node.TagName == "input" && inputType(node) == "file" {
-				if err := store.SetUserValidity(matches[0], true); err != nil {
+		if nodeID, ok := resolveFileInputNodeForSelector(store, normalized); ok {
+			s.clearBrowserFileInputSelection(nodeID)
+			if node := store.Node(nodeID); node != nil && node.Kind == dom.NodeKindElement && node.TagName == "input" && inputType(node) == "file" {
+				if err := store.SetUserValidity(nodeID, true); err != nil {
 					return err
 				}
-				if _, err := s.dispatchEventListeners(store, matches[0], "input"); err != nil {
+				if _, err := s.dispatchEventListeners(store, nodeID, "input"); err != nil {
 					return err
 				}
-				if _, err := s.dispatchEventListeners(store, matches[0], "change"); err != nil {
+				if _, err := s.dispatchEventListeners(store, nodeID, "change"); err != nil {
 					return err
 				}
 				return s.drainMicrotasks(store)
@@ -770,7 +782,14 @@ func (s *Session) MatchMedia(query string) (bool, error) {
 	if s == nil {
 		return false, fmt.Errorf("session is unavailable")
 	}
-	return s.Registry().MatchMedia().Resolve(query)
+	matches, err := s.Registry().MatchMedia().Resolve(query)
+	if err == nil {
+		return matches, nil
+	}
+	if fallback, ok := matchMediaQueryAgainstDefaultViewport(query); ok {
+		return fallback, nil
+	}
+	return false, err
 }
 
 func (s *Session) Click(selector string) (err error) {

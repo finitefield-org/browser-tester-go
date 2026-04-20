@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"math/bits"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -158,6 +159,8 @@ func resolveStdlibReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserDateConstructor(session, args)
 		}), true, nil
+	case path == "Error":
+		return browserErrorValue(session), true, nil
 	case strings.HasPrefix(path, "Date."):
 		value, err := resolveDateReference(session, strings.TrimPrefix(path, "Date."))
 		return value, true, err
@@ -213,6 +216,10 @@ func resolveObjectReference(session *Session, store *dom.Store, path string) (sc
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectCreate(args)
 		}), nil
+	case "is":
+		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
+			return browserObjectIs(args)
+		}), nil
 	case "fromEntries":
 		return script.NativeFunctionValue(func(args []script.Value) (script.Value, error) {
 			return browserObjectFromEntries(args)
@@ -261,6 +268,61 @@ func browserObjectHasOwn(args []script.Value) (script.Value, error) {
 		return script.UndefinedValue(), fmt.Errorf("Object.hasOwn requires an object receiver")
 	}
 	return script.BoolValue(browserObjectHasOwnValue(args[0], browserPropertyKeyString(args[1]))), nil
+}
+
+func browserObjectIs(args []script.Value) (script.Value, error) {
+	if len(args) != 2 {
+		return script.UndefinedValue(), fmt.Errorf("Object.is expects 2 arguments")
+	}
+
+	left := args[0]
+	right := args[1]
+	if left.Kind != right.Kind {
+		return script.BoolValue(false), nil
+	}
+
+	switch left.Kind {
+	case script.ValueKindUndefined, script.ValueKindNull:
+		return script.BoolValue(true), nil
+	case script.ValueKindString:
+		return script.BoolValue(left.String == right.String), nil
+	case script.ValueKindBool:
+		return script.BoolValue(left.Bool == right.Bool), nil
+	case script.ValueKindNumber:
+		if math.IsNaN(left.Number) || math.IsNaN(right.Number) {
+			return script.BoolValue(true), nil
+		}
+		if left.Number == 0 && right.Number == 0 {
+			return script.BoolValue(math.Signbit(left.Number) == math.Signbit(right.Number)), nil
+		}
+		return script.BoolValue(left.Number == right.Number), nil
+	case script.ValueKindBigInt:
+		return script.BoolValue(left.BigInt == right.BigInt), nil
+	case script.ValueKindSymbol:
+		return script.BoolValue(left.SymbolID == right.SymbolID), nil
+	case script.ValueKindArray:
+		return script.BoolValue(reflect.ValueOf(left.Array).Pointer() == reflect.ValueOf(right.Array).Pointer()), nil
+	case script.ValueKindObject:
+		return script.BoolValue(reflect.ValueOf(left.Object).Pointer() == reflect.ValueOf(right.Object).Pointer()), nil
+	case script.ValueKindHostReference:
+		return script.BoolValue(left.HostReferenceKind == right.HostReferenceKind && left.HostReferencePath == right.HostReferencePath), nil
+	case script.ValueKindFunction:
+		if left.Function != nil || right.Function != nil {
+			return script.BoolValue(left.Function == right.Function), nil
+		}
+		if left.NativeFunction != nil || right.NativeFunction != nil {
+			return script.BoolValue(reflect.ValueOf(left.NativeFunction).Pointer() == reflect.ValueOf(right.NativeFunction).Pointer()), nil
+		}
+		return script.BoolValue(true), nil
+	case script.ValueKindPromise:
+		return script.BoolValue(left.Promise == right.Promise), nil
+	case script.ValueKindInvocation:
+		return script.BoolValue(left.Invocation == right.Invocation), nil
+	case script.ValueKindPrivateName:
+		return script.BoolValue(left.PrivateName == right.PrivateName), nil
+	default:
+		return script.BoolValue(false), nil
+	}
 }
 
 func browserObjectHasOwnValue(value script.Value, key string) bool {

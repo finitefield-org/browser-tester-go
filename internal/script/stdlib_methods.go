@@ -72,12 +72,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(receiver jsValue,
 			updated := append([]Value(nil), value.Array...)
 			updated = append(updated, args...)
 			updatedValue := arrayValueOwned(updated)
-			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
-				return NumberValue(float64(len(updated))), nil
-			}
-			if receiver.assignTarget != nil {
-				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			}
+			p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return NumberValue(float64(len(updated))), nil
 		}), true, nil
 	case "pop":
@@ -88,12 +84,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(receiver jsValue,
 			updated := append([]Value(nil), value.Array[:len(value.Array)-1]...)
 			removed := value.Array[len(value.Array)-1]
 			updatedValue := arrayValueOwned(updated)
-			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
-				return removed, nil
-			}
-			if receiver.assignTarget != nil {
-				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			}
+			p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return removed, nil
 		}), true, nil
 	case "shift":
@@ -104,12 +96,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(receiver jsValue,
 			removed := value.Array[0]
 			updated := append([]Value(nil), value.Array[1:]...)
 			updatedValue := arrayValueOwned(updated)
-			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
-				return removed, nil
-			}
-			if receiver.assignTarget != nil {
-				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			}
+			p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return removed, nil
 		}), true, nil
 	case "includes":
@@ -606,12 +594,8 @@ func (p *classicJSStatementParser) resolveArrayPrototypeMethod(receiver jsValue,
 			updated = append(updated, args...)
 			updated = append(updated, value.Array...)
 			updatedValue := arrayValueOwned(updated)
-			if p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue) {
-				return NumberValue(float64(len(updated))), nil
-			}
-			if receiver.assignTarget != nil {
-				currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
-			}
+			p.tryUpdateUniqueDirectArrayBinding(receiver, value, updatedValue)
+			currentBindingUpdateContextReplaceArrayBindings(value, updatedValue)
 			return NumberValue(float64(len(updated))), nil
 		}), true, nil
 	case "slice":

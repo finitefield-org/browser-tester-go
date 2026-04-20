@@ -136,6 +136,9 @@ func setURLInstanceReferenceValue(session *Session, path string, value script.Va
 	case "search":
 		state.setRawQuery(script.ToJSString(value))
 		return nil
+	case "hash":
+		state.setHash(script.ToJSString(value))
+		return nil
 	default:
 		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
 	}

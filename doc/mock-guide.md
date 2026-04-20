@@ -82,7 +82,7 @@ Examples:
   against the current URL
 - `Downloads`: artifact capture through the registry and `Harness.CaptureDownload(...)`, plus
   hyperlink clicks on `a` / `area` elements with `download` attributes
-- `FileInput`: file selection capture, seeded file contents via `SeedFileText(selector, fileName, text)`, the `input.files` snapshot with `File.text()` support, and empty-string `value` clears on file inputs
+- `FileInput`: file selection capture, seeded file contents via `SeedFileText(selector, fileName, text)` and `SeedFileBytes(selector, fileName, bytes, mimeType)`, the `input.files` snapshot with `File.text()`, `File.arrayBuffer()`, `size`, and `type` support, and empty-string `value` clears on file inputs
 - `Open`: call capture and optional bootstrap failure
 - `Close`: call capture and optional bootstrap failure
 - `Print`: call capture and optional bootstrap failure

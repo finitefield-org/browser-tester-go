@@ -794,6 +794,13 @@ func (m *FileInputMocks) SeedFileText(selector, fileName, text string) {
 	m.family.SeedFileText(selector, fileName, text)
 }
 
+func (m *FileInputMocks) SeedFileBytes(selector, fileName string, bytes []byte, mimeType string) {
+	if m == nil || m.family == nil {
+		return
+	}
+	m.family.SeedFileBytes(selector, fileName, bytes, mimeType)
+}
+
 func (m *FileInputMocks) Selections() []FileInputSelection {
 	if m == nil || m.family == nil {
 		return nil

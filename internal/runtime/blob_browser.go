@@ -124,6 +124,14 @@ func browserBlobPartBytes(session *Session, value script.Value) []byte {
 				return copied
 			}
 		}
+		fileID, _, ok := parseBrowserFileInstancePath(value.HostReferencePath)
+		if ok {
+			if state, ok := session.browserFileStateByID(fileID); ok && state != nil {
+				copied := make([]byte, len(state.bytes))
+				copy(copied, state.bytes)
+				return copied
+			}
+		}
 	}
 	return []byte(script.ToJSString(value))
 }
@@ -255,7 +263,18 @@ func browserBlobStateIDFromValue(session *Session, value script.Value) (string, 
 	}
 	id, _, ok := parseBrowserBlobInstancePath(value.HostReferencePath)
 	if !ok {
-		return "", false
+		fileID, _, ok := parseBrowserFileInstancePath(value.HostReferencePath)
+		if !ok {
+			return "", false
+		}
+		if session == nil {
+			return "", false
+		}
+		state, ok := session.browserFileStateByID(fileID)
+		if !ok || state == nil || !state.readable {
+			return "", false
+		}
+		return session.allocateBrowserBlobState(state.bytes, state.mimeType), true
 	}
 	if session == nil {
 		return "", false

@@ -35,6 +35,7 @@ type eventDispatchContext struct {
 	targetNodeID       dom.NodeID
 	eventType          string
 	key                string
+	dataTransferID     string
 	defaultPrevented   bool
 	propagationStopped bool
 }
@@ -49,6 +50,24 @@ type EventListenerRegistration struct {
 
 func normalizeEventType(event string) string {
 	return strings.ToLower(strings.TrimSpace(event))
+}
+
+func browserEventTypeUsesDataTransfer(eventType string) bool {
+	switch normalizeEventType(eventType) {
+	case "dragstart", "dragover", "drop", "dragenter", "dragleave", "dragend":
+		return true
+	default:
+		return false
+	}
+}
+
+func browserEventTypeUsesClipboardData(eventType string) bool {
+	switch normalizeEventType(eventType) {
+	case "paste", "copy", "cut":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseEventPhase(phase string) (eventPhase, error) {
@@ -157,6 +176,9 @@ func (s *Session) dispatchTargetEventListeners(store *dom.Store, nodeID dom.Node
 		targetNodeID: nodeID,
 		eventType:    normalized,
 	}
+	if browserEventTypeUsesDataTransfer(normalized) {
+		ctx.dataTransferID = s.allocateBrowserDataTransferState(nil)
+	}
 	s.eventDispatch = ctx
 	defer func() {
 		s.eventDispatch = prev
@@ -195,6 +217,9 @@ func (s *Session) dispatchEventListenersWithPropagation(store *dom.Store, nodeID
 		targetNodeID: nodeID,
 		eventType:    normalized,
 		key:          key,
+	}
+	if browserEventTypeUsesDataTransfer(normalized) {
+		ctx.dataTransferID = s.allocateBrowserDataTransferState(nil)
 	}
 	s.eventDispatch = ctx
 	defer func() {
@@ -532,6 +557,12 @@ func browserEventObjectValue(session *Session, store *dom.Store, listener eventL
 			}
 			return script.UndefinedValue(), nil
 		})},
+	}
+	if session != nil && session.eventDispatch != nil && strings.TrimSpace(session.eventDispatch.dataTransferID) != "" {
+		entries = append(entries, script.ObjectEntry{Key: "dataTransfer", Value: browserDataTransferReferenceValue(session.eventDispatch.dataTransferID)})
+	}
+	if session != nil && session.eventDispatch != nil && browserEventTypeUsesClipboardData(session.eventDispatch.eventType) {
+		entries = append(entries, script.ObjectEntry{Key: "clipboardData", Value: browserClipboardDataReferenceValue()})
 	}
 	if session != nil && session.eventDispatch != nil && session.eventDispatch.key != "" {
 		entries = append(entries, script.ObjectEntry{Key: "key", Value: script.StringValue(session.eventDispatch.key)})

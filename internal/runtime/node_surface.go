@@ -23,7 +23,7 @@ func resolveNodeTreeNavigationValue(store *dom.Store, nodeID dom.NodeID, surface
 	case "nodeName":
 		return script.StringValue(nodeNameForNode(node)), true, nil
 	case "namespaceURI":
-		if node.Kind == dom.NodeKindDocument {
+		if node.Kind == dom.NodeKindDocument || node.Kind == dom.NodeKindDocumentFragment {
 			return script.NullValue(), true, nil
 		}
 		return script.StringValue(node.NamespaceURI), true, nil
@@ -110,6 +110,8 @@ func nodeTypeForNode(node *dom.Node) int {
 		return 3
 	case dom.NodeKindDocument:
 		return 9
+	case dom.NodeKindDocumentFragment:
+		return 11
 	default:
 		return 0
 	}
@@ -129,6 +131,8 @@ func nodeNameForNode(node *dom.Node) string {
 			return node.TagName
 		}
 		return strings.ToUpper(node.TagName)
+	case dom.NodeKindDocumentFragment:
+		return "#document-fragment"
 	default:
 		return ""
 	}

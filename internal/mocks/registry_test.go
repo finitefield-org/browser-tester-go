@@ -488,6 +488,35 @@ func TestFileInputFamilySeedFileTextReturnsCopyAndClearsState(t *testing.T) {
 	}
 }
 
+func TestFileInputFamilySeedFileBytesReturnsCopyAndMetadata(t *testing.T) {
+	var f FileInputFamily
+
+	f.SeedFileBytes("#upload", "sample.csv", []byte{0x41, 0x42, 0x43}, "text/csv")
+
+	if got, ok := f.FileText("#upload", "sample.csv"); !ok || got != "ABC" {
+		t.Fatalf("FileText(#upload, sample.csv) = (%q, %v), want seeded bytes text", got, ok)
+	}
+
+	data, ok := f.FileData("#upload", "sample.csv")
+	if !ok {
+		t.Fatalf("FileData(#upload, sample.csv) = false, want true")
+	}
+	if data.Type != "text/csv" {
+		t.Fatalf("FileData(#upload, sample.csv).Type = %q, want text/csv", data.Type)
+	}
+	if !data.HasBytes || !data.HasText {
+		t.Fatalf("FileData(#upload, sample.csv) flags = %#v, want both content flags true", data)
+	}
+	if got := string(data.Bytes); got != "ABC" {
+		t.Fatalf("FileData(#upload, sample.csv).Bytes = %q, want ABC", got)
+	}
+
+	data.Bytes[0] = 'Z'
+	if fresh, ok := f.FileData("#upload", "sample.csv"); !ok || string(fresh.Bytes) != "ABC" {
+		t.Fatalf("FileData(#upload, sample.csv) reread = %#v, want original bytes", fresh)
+	}
+}
+
 func TestStorageFamilyLocalAndSessionReturnCopies(t *testing.T) {
 	var f StorageFamily
 

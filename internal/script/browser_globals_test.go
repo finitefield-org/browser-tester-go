@@ -385,6 +385,33 @@ func TestDispatchSupportsBuiltinMapForEach(t *testing.T) {
 	}
 }
 
+func TestDispatchSupportsBuiltinMapGetArrayMutationAliases(t *testing.T) {
+	runtime := NewRuntimeWithBindings(nil, map[string]Value{
+		"Map": BuiltinMapValue(),
+	})
+
+	result, err := runtime.Dispatch(DispatchRequest{
+		Source: `
+			const grouped = new Map();
+			grouped.set("bucket", []);
+			const bucket = grouped.get("bucket");
+			bucket.push("alpha");
+			const firstRead = grouped.get("bucket").length;
+			grouped.get("bucket").push("beta");
+			[firstRead, bucket.length, grouped.get("bucket").length, bucket.join(",")].join("|")
+		`,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch(Map.get array mutation aliases) error = %v", err)
+	}
+	if result.Value.Kind != ValueKindString {
+		t.Fatalf("Dispatch(Map.get array mutation aliases) kind = %q, want %q", result.Value.Kind, ValueKindString)
+	}
+	if result.Value.String != "1|2|2|alpha,beta" {
+		t.Fatalf("Dispatch(Map.get array mutation aliases) value = %q, want 1|2|2|alpha,beta", result.Value.String)
+	}
+}
+
 func TestDispatchSupportsBuiltinMapAndSetIterators(t *testing.T) {
 	runtime := NewRuntimeWithBindings(nil, map[string]Value{
 		"Map": BuiltinMapValue(),

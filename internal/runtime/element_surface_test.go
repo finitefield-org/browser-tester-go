@@ -101,7 +101,7 @@ func TestSessionInlineScriptsTreatMissingElementDirAsEmptyString(t *testing.T) {
 
 func TestSessionInlineScriptsCanReadAndWriteFormControlTypeReflectionSurfaces(t *testing.T) {
 	session := NewSession(SessionConfig{
-		HTML: `<main><input id="field" type="checkbox"><button id="btn"></button><div id="probe"></div><script>const field = document.querySelector("#field"); const btn = document.querySelector("#btn"); const before = [field.type, btn.type].join("|"); field.type = "radio"; btn.type = "button"; host:setTextContent("#probe", expr(before + "|" + field.type + "|" + btn.type + "|" + field.getAttribute("type") + "|" + btn.getAttribute("type")))</script></main>`,
+		HTML: `<main><input id="field" type="checkbox"><button id="btn"></button><textarea id="ta"></textarea><div id="probe"></div><script>const field = document.querySelector("#field"); const btn = document.querySelector("#btn"); const ta = document.querySelector("#ta"); const before = [field.type, btn.type, ta.type].join("|"); field.type = "radio"; btn.type = "button"; host:setTextContent("#probe", expr(before + "|" + field.type + "|" + btn.type + "|" + ta.type + "|" + field.getAttribute("type") + "|" + btn.getAttribute("type")))</script></main>`,
 	})
 
 	if _, err := session.ensureDOM(); err != nil {
@@ -110,8 +110,8 @@ func TestSessionInlineScriptsCanReadAndWriteFormControlTypeReflectionSurfaces(t 
 
 	if got, err := session.TextContent("#probe"); err != nil {
 		t.Fatalf("TextContent(#probe) after form-control type reflection bridge error = %v", err)
-	} else if got != "checkbox|submit|radio|button|radio|button" {
-		t.Fatalf("TextContent(#probe) after form-control type reflection bridge = %q, want %q", got, "checkbox|submit|radio|button|radio|button")
+	} else if got != "checkbox|submit|textarea|radio|button|textarea|radio|button" {
+		t.Fatalf("TextContent(#probe) after form-control type reflection bridge = %q, want %q", got, "checkbox|submit|textarea|radio|button|textarea|radio|button")
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after form-control type reflection bridge", got)
@@ -214,15 +214,60 @@ func TestSessionInlineScriptsCanReadAndWriteFormControlTabIndexReflectionSurface
 	}
 }
 
-func TestSessionInlineScriptsRejectUnsupportedGenericElementTypeReflection(t *testing.T) {
+func TestSessionInlineScriptsCanReadAndWriteFormControlReadOnlyReflectionSurfaces(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><textarea id="ta"></textarea><input id="field" type="text"><div id="probe"></div><script>const ta = document.getElementById("ta"); const field = document.getElementById("field"); const before = [ta.readOnly, field.readOnly].join("|"); ta.readOnly = true; field.readOnly = true; field.readOnly = false; host:setTextContent("#probe", expr(before + "|" + [ta.readOnly, ta.hasAttribute("readonly"), field.readOnly, field.hasAttribute("readonly")].join("|")))</script></main>`,
+	})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after readOnly reflection bridge error = %v", err)
+	} else if got != "false|false|true|true|false|false" {
+		t.Fatalf("TextContent(#probe) after readOnly reflection bridge = %q, want %q", got, "false|false|true|true|false|false")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after readOnly reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsTreatGenericElementTypeReflectionAsUndefined(t *testing.T) {
 	session := NewSession(SessionConfig{
 		HTML: `<main><div id="box"></div><div id="probe"></div><script>const box = document.querySelector("#box"); host:setTextContent("#probe", expr(String(box.type)))</script></main>`,
 	})
 
-	if _, err := session.ensureDOM(); err == nil {
-		t.Fatalf("ensureDOM() error = nil, want unsupported generic element.type error")
-	} else if scriptErr, ok := err.(script.Error); !ok || scriptErr.Kind != script.ErrorKindUnsupported || !strings.Contains(scriptErr.Message, `.type`) {
-		t.Fatalf("ensureDOM() error = %#v, want unsupported generic element.type script error", err)
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after generic element.type reflection bridge error = %v", err)
+	} else if got != "undefined" {
+		t.Fatalf("TextContent(#probe) after generic element.type reflection bridge = %q, want %q", got, "undefined")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after generic element.type reflection bridge", got)
+	}
+}
+
+func TestSessionInlineScriptsCanReadFormControlTypeReflectionDuringSubmit(t *testing.T) {
+	session := NewSession(SessionConfig{
+		HTML: `<main><form id="form"><textarea id="note">Hello</textarea><select id="phase"><option value="carbonization" selected>炭化中</option></select><input id="recorded-at" type="datetime-local" value="2026-04-02T12:34"><input id="limit" type="number" value="42"><input id="agree" type="checkbox" checked><button id="submit" type="submit">Save</button></form><div id="probe"></div><script>function getInputValue(target) { if (target.type === "checkbox") return target.checked; return target.value; } function collect() { const note = document.getElementById("note"); const phase = document.getElementById("phase"); const recordedAt = document.getElementById("recorded-at"); const limit = document.getElementById("limit"); const agree = document.getElementById("agree"); document.getElementById("probe").textContent = [getInputValue(note), getInputValue(phase), getInputValue(recordedAt), getInputValue(limit), getInputValue(agree)].join("|"); } document.getElementById("form").addEventListener("submit", (event) => { event.preventDefault(); collect(); });</script></main>`,
+	})
+
+	if err := session.Click("#submit"); err != nil {
+		t.Fatalf("Click(#submit) error = %v", err)
+	}
+
+	if got, err := session.TextContent("#probe"); err != nil {
+		t.Fatalf("TextContent(#probe) after submit reflection bridge error = %v", err)
+	} else if got != "Hello|carbonization|2026-04-02T12:34|42|true" {
+		t.Fatalf("TextContent(#probe) after submit reflection bridge = %q, want %q", got, "Hello|carbonization|2026-04-02T12:34|42|true")
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after submit reflection bridge", got)
 	}
 }
 

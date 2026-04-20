@@ -13,6 +13,7 @@ const (
 	NodeKindDocument NodeKind = iota
 	NodeKindElement
 	NodeKindText
+	NodeKindDocumentFragment
 )
 
 type Attribute struct {
@@ -92,6 +93,15 @@ func (s *Store) CreateTextNode(text string) (NodeID, error) {
 	return s.newNode(Node{
 		Kind: NodeKindText,
 		Text: text,
+	}), nil
+}
+
+func (s *Store) CreateDocumentFragment() (NodeID, error) {
+	if s == nil {
+		return 0, fmt.Errorf("dom store is nil")
+	}
+	return s.newNode(Node{
+		Kind: NodeKindDocumentFragment,
 	}), nil
 }
 

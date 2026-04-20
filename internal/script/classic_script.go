@@ -22,6 +22,23 @@ const (
 	jsValueSuper
 )
 
+func (k jsValueKind) String() string {
+	switch k {
+	case jsValueScalar:
+		return "scalar"
+	case jsValueHostObject:
+		return "host-object"
+	case jsValueBuiltinExpr:
+		return "builtin-expr"
+	case jsValueHostMethod:
+		return "host-method"
+	case jsValueSuper:
+		return "super"
+	default:
+		return "unknown"
+	}
+}
+
 const ClassicJSModuleMetaURLBindingName = "\x00classic-js-module-url"
 
 const (
@@ -29,6 +46,19 @@ const (
 	classicJSRegExpPatternKey     = classicJSRegExpInternalPrefix + "pattern"
 	classicJSRegExpFlagsKey       = classicJSRegExpInternalPrefix + "flags"
 )
+
+var classicJSRegexStartKeywords = map[string]struct{}{
+	"await":      {},
+	"case":       {},
+	"delete":     {},
+	"in":         {},
+	"instanceof": {},
+	"return":     {},
+	"throw":      {},
+	"typeof":     {},
+	"void":       {},
+	"yield":      {},
+}
 
 type jsValue struct {
 	kind         jsValueKind
@@ -173,6 +203,14 @@ func superJSValue(target Value, receiver Value) jsValue {
 	}
 }
 
+func classicJSCanStartRegexAfterIdent(word string, lastWasDot bool) bool {
+	if lastWasDot {
+		return false
+	}
+	_, ok := classicJSRegexStartKeywords[word]
+	return ok
+}
+
 func (v jsValue) withoutAssignTarget() jsValue {
 	v.assignTarget = nil
 	return v
@@ -254,6 +292,22 @@ func isSkippedHostReferencePreserved(path string) bool {
 		return true
 	case path == "Intl" || strings.HasPrefix(path, "Intl."):
 		return true
+	case path == "Blob" || strings.HasPrefix(path, "Blob."):
+		return true
+	case path == "File" || strings.HasPrefix(path, "File."):
+		return true
+	case path == "DataTransfer" || strings.HasPrefix(path, "DataTransfer."):
+		return true
+	case path == "RegExp" || strings.HasPrefix(path, "RegExp."):
+		return true
+	case path == "URL" || strings.HasPrefix(path, "URL."):
+		return true
+	case path == "DOMParser" || strings.HasPrefix(path, "DOMParser."):
+		return true
+	case path == "XMLSerializer" || strings.HasPrefix(path, "XMLSerializer."):
+		return true
+	case path == "Worker" || strings.HasPrefix(path, "Worker."):
+		return true
 	default:
 		return false
 	}
@@ -321,6 +375,13 @@ func (s *skippedValueSanitizer) sanitize(value Value) Value {
 		}
 		if ptr != 0 {
 			s.objects[ptr] = clonedValue
+		}
+		if value.ArrayState != nil {
+			clonedArray := make([]Value, len(value.ArrayState))
+			for i, element := range value.ArrayState {
+				clonedArray[i] = s.sanitize(element)
+			}
+			clonedValue.ArrayState = clonedArray
 		}
 		for i, entry := range value.Object {
 			cloned[i] = ObjectEntry{Key: entry.Key, Value: s.sanitize(entry.Value)}
@@ -548,7 +609,7 @@ func evalClassicJSStatementWithEnvAndAllowAwaitAndYieldAndExports(source string,
 		parser.skipCache = skipCache[0]
 	}
 	if parser.skipCache == nil {
-		parser.skipCache = sharedClassicJSSkipCache()
+		parser.skipCache = newClassicJSSkipCache()
 	}
 	if privateClass != nil {
 		parser.privateFieldPrefix = privateClass.privateFieldPrefix
@@ -618,7 +679,7 @@ func evalClassicJSExpressionWithEnvAndAllowAwaitAndYieldAndExports(source string
 		parser.skipCache = skipCache[0]
 	}
 	if parser.skipCache == nil {
-		parser.skipCache = sharedClassicJSSkipCache()
+		parser.skipCache = newClassicJSSkipCache()
 	}
 	if privateClass != nil {
 		parser.privateFieldPrefix = privateClass.privateFieldPrefix
@@ -1160,7 +1221,7 @@ func (f *classicJSArrowFunction) ensureSkipCache() *classicJSSkipCache {
 		return nil
 	}
 	if f.skipCache == nil {
-		f.skipCache = sharedClassicJSSkipCache()
+		f.skipCache = newClassicJSSkipCache()
 	}
 	return f.skipCache
 }
@@ -1263,7 +1324,7 @@ func (f *classicJSGeneratorFunction) ensureSkipCache() *classicJSSkipCache {
 		return nil
 	}
 	if f.skipCache == nil {
-		f.skipCache = sharedClassicJSSkipCache()
+		f.skipCache = newClassicJSSkipCache()
 	}
 	return f.skipCache
 }
@@ -3470,7 +3531,7 @@ func (p *classicJSStatementParser) parseFunctionStatement(async bool, generator 
 	if p.env == nil {
 		p.env = newClassicJSEnvironment()
 	}
-	if err := p.env.declare(name, scalarJSValue(value), false); err != nil {
+	if err := p.env.declareFunction(name, scalarJSValue(value)); err != nil {
 		return UndefinedValue(), err
 	}
 	if p.moduleExports == nil && p.env.parent == nil {
@@ -3500,7 +3561,7 @@ func (p *classicJSStatementParser) parseDefaultExportFunctionLiteral(async bool,
 		if p.env == nil {
 			p.env = newClassicJSEnvironment()
 		}
-		if err := p.env.declare(name, scalarJSValue(value), false); err != nil {
+		if err := p.env.declareFunction(name, scalarJSValue(value)); err != nil {
 			return UndefinedValue(), err
 		}
 	}
@@ -4182,6 +4243,13 @@ func (p *classicJSStatementParser) collectClassicJSArrayLikeValues(value Value, 
 		}
 		return values, nil
 	case ValueKindObject:
+		if value.ArrayState != nil {
+			values := make([]Value, len(value.ArrayState))
+			for i, entry := range value.ArrayState {
+				values[i] = cloneValueDetached(entry, nil)
+			}
+			return values, nil
+		}
 		if value.SetState != nil {
 			values := make([]Value, len(value.SetState.entries))
 			for i, entry := range value.SetState.entries {
@@ -4749,6 +4817,8 @@ func (p *classicJSStatementParser) consumeStatementSource() (string, error) {
 	var parenDepth int
 	var braceDepth int
 	var bracketDepth int
+	canStartRegex := true
+	lastWasDot := false
 	for !p.eof() {
 		ch := p.peekByte()
 		if lineComment {
@@ -4793,16 +4863,22 @@ func (p *classicJSStatementParser) consumeStatementSource() (string, error) {
 		case '\'', '"':
 			quote = ch
 			p.pos++
+			canStartRegex = false
+			lastWasDot = false
 		case '`':
 			next, err := scanTemplateLiteralSource(p.source, p.pos)
 			if err != nil {
 				return "", err
 			}
 			p.pos = next
+			canStartRegex = false
+			lastWasDot = false
 			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
+				canStartRegex = true
+				lastWasDot = false
 				continue
 			}
 			switch p.source[p.pos+1] {
@@ -4813,33 +4889,92 @@ func (p *classicJSStatementParser) consumeStatementSource() (string, error) {
 				blockComment = true
 				p.pos += 2
 			default:
+				if canStartRegex {
+					if _, err := p.parseRegularExpressionLiteral(); err != nil {
+						return "", err
+					}
+					canStartRegex = false
+					lastWasDot = false
+					continue
+				}
 				p.pos++
+				canStartRegex = true
+				lastWasDot = false
 			}
 		case '(':
 			parenDepth++
 			p.pos++
+			canStartRegex = true
+			lastWasDot = false
 		case ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
 			p.pos++
+			canStartRegex = false
+			lastWasDot = false
 		case '{':
 			braceDepth++
 			p.pos++
+			canStartRegex = true
+			lastWasDot = false
 		case '}':
 			if braceDepth > 0 {
 				braceDepth--
 			}
 			p.pos++
+			canStartRegex = false
+			lastWasDot = false
 		case '[':
 			bracketDepth++
 			p.pos++
+			canStartRegex = true
+			lastWasDot = false
 		case ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
 			p.pos++
+			canStartRegex = false
+			lastWasDot = false
+		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
+			p.pos++
+			canStartRegex = true
+			lastWasDot = false
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+			continue
+		case '.':
+			p.pos++
+			canStartRegex = false
+			lastWasDot = true
+			lastWasDot = true
 		default:
+			if isIdentStart(ch) {
+				startIdent := p.pos
+				p.pos++
+				for !p.eof() && isIdentPart(p.peekByte()) {
+					p.pos++
+				}
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
+				continue
+			}
+			if isDigit(ch) {
+				p.pos++
+				for !p.eof() {
+					next := p.peekByte()
+					if isDigit(next) || next == '_' {
+						p.pos++
+						continue
+					}
+					break
+				}
+				canStartRegex = false
+				continue
+			}
+			canStartRegex = false
 			p.pos++
 		}
 	}
@@ -7021,6 +7156,7 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 	var lineComment bool
 	var blockComment bool
 	canStartRegex := true
+	lastWasDot := false
 	for !p.eof() {
 		ch := p.peekByte()
 		if lineComment {
@@ -7059,6 +7195,7 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 		case '\'', '"':
 			quote = ch
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '`':
 			next, err := scanTemplateLiteralSource(p.source, p.pos)
@@ -7067,11 +7204,13 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 			}
 			p.pos = next
 			canStartRegex = false
+			lastWasDot = false
 			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 				continue
 			}
 			switch p.source[p.pos+1] {
@@ -7087,14 +7226,17 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 						return "", err
 					}
 					canStartRegex = false
+					lastWasDot = false
 					continue
 				}
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 			}
 		case '{':
 			depth++
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case '}':
 			depth--
@@ -7104,35 +7246,45 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 				return block, nil
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '(':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ')':
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '[':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ']':
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ' ', '\t', '\n', '\r':
 			p.pos++
 			continue
 		case '.':
 			canStartRegex = false
+			lastWasDot = true
 			p.pos++
 		default:
 			if isIdentStart(ch) {
+				startIdent := p.pos
 				p.pos++
 				for !p.eof() && isIdentPart(p.peekByte()) {
 					p.pos++
 				}
-				canStartRegex = false
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
 				continue
 			}
 			if isDigit(ch) {
@@ -7146,9 +7298,11 @@ func (p *classicJSStatementParser) consumeBlockSource() (string, error) {
 					break
 				}
 				canStartRegex = false
+				lastWasDot = false
 				continue
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		}
 	}
@@ -7175,6 +7329,7 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 	var lineComment bool
 	var blockComment bool
 	canStartRegex := true
+	lastWasDot := false
 	for !p.eof() {
 		ch := p.peekByte()
 		if lineComment {
@@ -7213,6 +7368,7 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 		case '\'', '"':
 			quote = ch
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '`':
 			next, err := scanTemplateLiteralSource(p.source, p.pos)
@@ -7221,11 +7377,13 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 			}
 			p.pos = next
 			canStartRegex = false
+			lastWasDot = false
 			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 				continue
 			}
 			switch p.source[p.pos+1] {
@@ -7241,14 +7399,17 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 						return "", err
 					}
 					canStartRegex = false
+					lastWasDot = false
 					continue
 				}
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 			}
 		case '(':
 			depth++
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ')':
 			depth--
@@ -7258,23 +7419,29 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 				return inner, nil
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ' ', '\t', '\n', '\r':
 			p.pos++
 			continue
 		case '.':
 			canStartRegex = false
+			lastWasDot = true
 			p.pos++
 		default:
 			if isIdentStart(ch) {
+				startIdent := p.pos
 				p.pos++
 				for !p.eof() && isIdentPart(p.peekByte()) {
 					p.pos++
 				}
-				canStartRegex = false
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
 				continue
 			}
 			if isDigit(ch) {
@@ -7288,9 +7455,11 @@ func (p *classicJSStatementParser) consumeParenthesizedSource(label string) (str
 					break
 				}
 				canStartRegex = false
+				lastWasDot = false
 				continue
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		}
 	}
@@ -7312,6 +7481,7 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 	var lineComment bool
 	var blockComment bool
 	canStartRegex := true
+	lastWasDot := false
 
 	for !p.eof() {
 		ch := p.peekByte()
@@ -7351,16 +7521,19 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 		case '\'', '"':
 			quote = ch
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '`':
 			if _, _, _, err := p.consumeTemplateLiteralParts(); err != nil {
 				return "", err
 			}
 			canStartRegex = false
+			lastWasDot = false
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 				continue
 			}
 			switch p.source[p.pos+1] {
@@ -7376,14 +7549,17 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 						return "", err
 					}
 					canStartRegex = false
+					lastWasDot = false
 					continue
 				}
 				p.pos++
 				canStartRegex = true
+				lastWasDot = false
 			}
 		case '{':
 			depth++
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case '}':
 			depth--
@@ -7393,35 +7569,45 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 				return source, nil
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '(':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ')':
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case '[':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ']':
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			canStartRegex = true
+			lastWasDot = false
 			p.pos++
 		case ' ', '\t', '\n', '\r':
 			p.pos++
 			continue
 		case '.':
 			canStartRegex = false
+			lastWasDot = true
 			p.pos++
 		default:
 			if isIdentStart(ch) {
+				startIdent := p.pos
 				p.pos++
 				for !p.eof() && isIdentPart(p.peekByte()) {
 					p.pos++
 				}
-				canStartRegex = false
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
 				continue
 			}
 			if isDigit(ch) {
@@ -7435,9 +7621,11 @@ func (p *classicJSStatementParser) consumeTemplateInterpolationSource() (string,
 					break
 				}
 				canStartRegex = false
+				lastWasDot = false
 				continue
 			}
 			canStartRegex = false
+			lastWasDot = false
 			p.pos++
 		}
 	}
@@ -7460,6 +7648,8 @@ func (p *classicJSStatementParser) consumeArrowFunctionExpressionSource() (strin
 	var parenDepth int
 	var braceDepth int
 	var bracketDepth int
+	canStartRegex := true
+	lastWasDot := false
 
 	for !p.eof() {
 		ch := p.peekByte()
@@ -7507,16 +7697,19 @@ func (p *classicJSStatementParser) consumeArrowFunctionExpressionSource() (strin
 		case '\'', '"':
 			quote = ch
 			p.pos++
+			canStartRegex = false
 		case '`':
 			next, err := scanTemplateLiteralSource(p.source, p.pos)
 			if err != nil {
 				return "", err
 			}
 			p.pos = next
+			canStartRegex = false
 			continue
 		case '/':
 			if p.pos+1 >= len(p.source) {
 				p.pos++
+				canStartRegex = true
 				continue
 			}
 			switch p.source[p.pos+1] {
@@ -7527,34 +7720,80 @@ func (p *classicJSStatementParser) consumeArrowFunctionExpressionSource() (strin
 				blockComment = true
 				p.pos += 2
 			default:
+				if canStartRegex {
+					if _, err := p.parseRegularExpressionLiteral(); err != nil {
+						return "", err
+					}
+					canStartRegex = false
+					continue
+				}
 				p.pos++
+				canStartRegex = true
 			}
 		case '(':
 			parenDepth++
 			p.pos++
+			canStartRegex = true
 		case ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
 			p.pos++
+			canStartRegex = false
 		case '{':
 			braceDepth++
 			p.pos++
+			canStartRegex = true
 		case '}':
 			if braceDepth > 0 {
 				braceDepth--
 			}
 			p.pos++
+			canStartRegex = false
 		case '[':
 			bracketDepth++
 			p.pos++
+			canStartRegex = true
 		case ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
 			p.pos++
-		default:
+			canStartRegex = false
+		case ',', ':', '?', '=', '!', '~', '+', '-', '*', '%', '&', '|', '^', '<', '>':
 			p.pos++
+			canStartRegex = true
+		default:
+			if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+				p.pos++
+				continue
+			}
+			p.pos++
+			if isIdentStart(ch) {
+				startIdent := p.pos - 1
+				for !p.eof() && isIdentPart(p.peekByte()) {
+					p.pos++
+				}
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
+				continue
+			}
+			if isDigit(ch) {
+				for !p.eof() {
+					next := p.peekByte()
+					if isDigit(next) || next == '_' {
+						p.pos++
+						continue
+					}
+					break
+				}
+				canStartRegex = false
+				lastWasDot = false
+				continue
+			}
+			canStartRegex = false
+			lastWasDot = false
 		}
 	}
 
@@ -9569,7 +9808,7 @@ func (p *classicJSStatementParser) parseMultiplicative() (jsValue, error) {
 			return jsValue{}, err
 		}
 		if left.kind != jsValueScalar || right.kind != jsValueScalar {
-			return jsValue{}, NewError(ErrorKindUnsupported, "multiplicative operators only work on scalar values in this bounded classic-JS slice")
+			return jsValue{}, NewError(ErrorKindUnsupported, fmt.Sprintf("multiplicative operators only work on scalar values in this bounded classic-JS slice (left=%s right=%s near %q)", left.kind.String(), right.kind.String(), p.remainingPreview()))
 		}
 		result, err := classicJSMultiplyValues(left.value, right.value, op)
 		if err != nil {
@@ -10165,6 +10404,7 @@ func (p *classicJSStatementParser) skipBalancedExpression(terminator byte, label
 	var braceDepth int
 	var bracketDepth int
 	canStartRegex := true
+	lastWasDot := false
 
 	for !p.eof() {
 		ch := p.peekByte()
@@ -10278,11 +10518,13 @@ func (p *classicJSStatementParser) skipBalancedExpression(terminator byte, label
 			canStartRegex = true
 		default:
 			if isIdentStart(ch) {
-				p.pos++
+				startIdent := p.pos
 				for !p.eof() && isIdentPart(p.peekByte()) {
 					p.pos++
 				}
-				canStartRegex = false
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
 				continue
 			}
 			if isDigit(ch) {
@@ -10325,6 +10567,7 @@ func (p *classicJSStatementParser) consumeAssignmentCallArgumentSource() (string
 	var braceDepth int
 	var bracketDepth int
 	canStartRegex := true
+	lastWasDot := false
 
 	for !p.eof() {
 		ch := p.peekByte()
@@ -10440,13 +10683,16 @@ func (p *classicJSStatementParser) consumeAssignmentCallArgumentSource() (string
 		case '.':
 			p.pos++
 			canStartRegex = false
+			lastWasDot = true
 		default:
 			if isIdentStart(ch) {
-				p.pos++
+				startIdent := p.pos
 				for !p.eof() && isIdentPart(p.peekByte()) {
 					p.pos++
 				}
-				canStartRegex = false
+				word := p.source[startIdent:p.pos]
+				canStartRegex = classicJSCanStartRegexAfterIdent(word, lastWasDot)
+				lastWasDot = false
 				continue
 			}
 			if isDigit(ch) {
@@ -11394,22 +11640,22 @@ func classicJSConstructibleFunctionMarker(fn *classicJSArrowFunction) (string, b
 }
 
 func (p *classicJSStatementParser) replaceObjectBindings(oldValue Value, newValue jsValue) int {
-	return p.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+	return p.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}), &bindingReplacementCache{arrays: make(map[uintptr]Value), objects: make(map[uintptr]Value)})
 }
 
-func (p *classicJSStatementParser) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
+func (p *classicJSStatementParser) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}, cache *bindingReplacementCache) int {
 	if oldValue.Kind != ValueKindObject || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindObject {
 		return 0
 	}
 	replaced := 0
 	if p.env != nil {
-		replaced += p.env.replaceObjectBindingsSeen(oldValue, newValue, visited)
+		replaced += p.env.replaceObjectBindingsSeen(oldValue, newValue, visited, cache)
 	}
 	oldPtr := reflect.ValueOf(oldValue.Object).Pointer()
 	if oldPtr != 0 && p.moduleExports != nil {
 		replacement := newValue.value
 		for name, value := range p.moduleExports {
-			updated, changed := replaceObjectReferencesInValue(value, oldPtr, replacement)
+			updated, changed := replaceObjectReferencesInValue(value, oldPtr, replacement, cache)
 			if !changed {
 				continue
 			}
@@ -11419,7 +11665,7 @@ func (p *classicJSStatementParser) replaceObjectBindingsSeen(oldValue Value, new
 	}
 	if p.bindingUpdateParent != nil {
 		if parent, ok := p.bindingUpdateParent.(*classicJSStatementParser); ok {
-			replaced += parent.replaceObjectBindingsSeen(oldValue, newValue, visited)
+			replaced += parent.replaceObjectBindingsSeen(oldValue, newValue, visited, cache)
 		} else {
 			replaced += p.bindingUpdateParent.ReplaceObjectBindings(oldValue, newValue.value)
 		}
@@ -11442,10 +11688,10 @@ func (p *classicJSStatementParser) SkipEvaluation() bool {
 }
 
 func (p *classicJSStatementParser) replaceArrayBindings(oldValue Value, newValue jsValue) int {
-	return p.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+	return p.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}), &bindingReplacementCache{arrays: make(map[uintptr]Value), objects: make(map[uintptr]Value)})
 }
 
-func (p *classicJSStatementParser) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
+func (p *classicJSStatementParser) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}, cache *bindingReplacementCache) int {
 	if oldValue.Kind != ValueKindArray || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindArray {
 		return 0
 	}
@@ -11455,11 +11701,11 @@ func (p *classicJSStatementParser) replaceArrayBindingsSeen(oldValue Value, newV
 	}
 	replaced := 0
 	if p.env != nil {
-		replaced += p.env.replaceArrayBindingsSeen(oldValue, newValue, visited)
+		replaced += p.env.replaceArrayBindingsSeen(oldValue, newValue, visited, cache)
 	}
 	if p.moduleExports != nil {
 		for name, value := range p.moduleExports {
-			updated, changed := replaceArrayReferencesInValue(value, oldPtr, newValue.value)
+			updated, changed := replaceArrayReferencesInValue(value, oldPtr, newValue.value, cache)
 			if !changed {
 				continue
 			}
@@ -11469,7 +11715,7 @@ func (p *classicJSStatementParser) replaceArrayBindingsSeen(oldValue Value, newV
 	}
 	if p.bindingUpdateParent != nil {
 		if parent, ok := p.bindingUpdateParent.(*classicJSStatementParser); ok {
-			replaced += parent.replaceArrayBindingsSeen(oldValue, newValue, visited)
+			replaced += parent.replaceArrayBindingsSeen(oldValue, newValue, visited, cache)
 		} else {
 			replaced += p.bindingUpdateParent.ReplaceArrayBindings(oldValue, newValue.value)
 		}
@@ -11501,7 +11747,25 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 			if left.Kind != ValueKindHostReference {
 				return false, nil
 			}
-			return strings.HasPrefix(left.HostReferencePath, "blob:"), nil
+			return strings.HasPrefix(left.HostReferencePath, "blob:") || strings.HasPrefix(left.HostReferencePath, "file:"), nil
+		case "File":
+			if left.Kind != ValueKindHostReference {
+				return false, nil
+			}
+			return strings.HasPrefix(left.HostReferencePath, "file:"), nil
+		case "DataTransfer":
+			if left.Kind != ValueKindHostReference {
+				return false, nil
+			}
+			return strings.HasPrefix(left.HostReferencePath, "datatransfer:"), nil
+		case "RegExp":
+			if left.Kind != ValueKindObject {
+				return false, nil
+			}
+			if _, ok := classicJSRegExpLiteralString(left); ok {
+				return true, nil
+			}
+			return false, nil
 		case "URL":
 			if left.Kind != ValueKindHostReference {
 				return false, nil
@@ -11517,6 +11781,11 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 				return false, nil
 			}
 			return left.HostReferencePath == "xmlserializer" || strings.HasPrefix(left.HostReferencePath, "xmlserializer."), nil
+		case "Worker":
+			if left.Kind != ValueKindHostReference {
+				return false, nil
+			}
+			return strings.HasPrefix(left.HostReferencePath, "worker:"), nil
 		}
 		if expectedTag, ok := browserHTMLConstructorTag(right.HostReferencePath); ok {
 			if left.Kind != ValueKindHostReference {
@@ -11564,6 +11833,26 @@ func classicJSInstanceOf(left Value, right Value) (bool, error) {
 					return left.HostReferencePath == "textencoder" || strings.HasPrefix(left.HostReferencePath, "textencoder."), nil
 				case "TextDecoder":
 					return left.HostReferencePath == "textdecoder" || strings.HasPrefix(left.HostReferencePath, "textdecoder."), nil
+				case "Worker":
+					return strings.HasPrefix(left.HostReferencePath, "worker:"), nil
+				case "Blob":
+					return strings.HasPrefix(left.HostReferencePath, "blob:") || strings.HasPrefix(left.HostReferencePath, "file:"), nil
+				case "File":
+					return strings.HasPrefix(left.HostReferencePath, "file:"), nil
+				case "DataTransfer":
+					return strings.HasPrefix(left.HostReferencePath, "datatransfer:"), nil
+				case "RegExp":
+					if left.Kind == ValueKindObject {
+						if _, ok := classicJSRegExpLiteralString(left); ok {
+							return true, nil
+						}
+					}
+					return false, nil
+				}
+			}
+			if right.Function.name == "RegExp" && left.Kind == ValueKindObject {
+				if _, ok := classicJSRegExpLiteralString(left); ok {
+					return true, nil
 				}
 			}
 			marker, ok := classicJSConstructibleFunctionMarker(right.Function)
@@ -14301,14 +14590,19 @@ func classicJSRegExpLiteralValue(pattern, flags string) (Value, error) {
 		if result == nil {
 			return NullValue(), nil
 		}
+		captureValues := make([]Value, len(result.Captures))
 		entries := make([]ObjectEntry, 0, len(result.Captures)+3)
 		for i, match := range result.Captures {
-			entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: StringValue(match)})
+			captureValue := StringValue(match)
+			captureValues[i] = captureValue
+			entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: captureValue})
 		}
 		entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(result.Captures)))})
 		entries = append(entries, ObjectEntry{Key: "index", Value: NumberValue(float64(result.Index))})
 		entries = append(entries, ObjectEntry{Key: "input", Value: StringValue(result.Input)})
-		return objectValueOwned(Value{}, entries), nil
+		value := objectValueOwned(Value{}, entries)
+		value.ArrayState = captureValues
+		return value, nil
 	}
 
 	return objectValueOwned(Value{}, []ObjectEntry{
@@ -14356,8 +14650,11 @@ func (p *classicJSStatementParser) parseTaggedTemplateLiteral(tag jsValue) (jsVa
 
 func templateLiteralObjectValue(cooked, raw []string) Value {
 	entries := make([]ObjectEntry, 0, len(cooked)+2)
+	arrayState := make([]Value, len(cooked))
 	for i, segment := range cooked {
-		entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: StringValue(segment)})
+		value := StringValue(segment)
+		arrayState[i] = value
+		entries = append(entries, ObjectEntry{Key: strconv.Itoa(i), Value: value})
 	}
 	rawValues := make([]Value, len(raw))
 	for i, segment := range raw {
@@ -14365,7 +14662,9 @@ func templateLiteralObjectValue(cooked, raw []string) Value {
 	}
 	entries = append(entries, ObjectEntry{Key: "length", Value: NumberValue(float64(len(cooked)))})
 	entries = append(entries, ObjectEntry{Key: "raw", Value: arrayValueOwned(rawValues)})
-	return objectValueOwned(Value{}, entries)
+	value := objectValueOwned(Value{}, entries)
+	value.ArrayState = arrayState
+	return value
 }
 
 func (p *classicJSStatementParser) consumeTemplateLiteralParts() ([]string, []string, []string, error) {

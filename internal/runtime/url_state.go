@@ -162,6 +162,19 @@ func (s *browserURLState) setRawQuery(rawQuery string) {
 	s.syncSearchParamsFromParsed()
 }
 
+func (s *browserURLState) setHash(rawHash string) {
+	if s == nil {
+		return
+	}
+	normalized := strings.TrimSpace(rawHash)
+	normalized = strings.TrimPrefix(normalized, "#")
+	if s.parsed == nil {
+		s.parsed = &neturl.URL{}
+	}
+	s.parsed.Fragment = normalized
+	s.href = s.parsed.String()
+}
+
 func (s *browserURLState) ensureSearchParams() *browserURLSearchParamsState {
 	if s == nil {
 		return nil

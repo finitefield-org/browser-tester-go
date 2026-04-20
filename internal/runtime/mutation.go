@@ -221,11 +221,18 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	prevTimers := cloneTimerMap(s.timers)
 	prevFrames := cloneAnimationFrameMap(s.animationFrames)
 	prevBlobStates := cloneBrowserBlobStateMap(s.blobStates)
+	prevFileStates := cloneBrowserFileStateMap(s.fileStates)
 	prevURLStates := cloneBrowserURLStateMap(s.urlStates)
+	prevDataTransferStates := cloneBrowserDataTransferStateMap(s.dataTransferStates)
+	prevGeolocationWatches := cloneBrowserGeolocationWatchMap(s.geolocationWatches)
+	prevFileInputSelections := cloneBrowserFileInputSelectionMap(s.fileInputSelections)
 	prevNextTimerID := s.nextTimerID
 	prevNextAnimationFrameID := s.nextAnimationFrameID
 	prevNextBlobStateID := s.nextBlobStateID
+	prevNextFileStateID := s.nextFileStateID
 	prevNextURLStateID := s.nextURLStateID
+	prevNextDataTransferStateID := s.nextDataTransferStateID
+	prevNextGeolocationWatchID := s.nextGeolocationWatchID
 	prevRunningTimerID := s.runningTimerID
 	prevRunningTimerCancelled := s.runningTimerCancelled
 	prevScrollX := s.scrollX
@@ -274,11 +281,18 @@ func (s *Session) WriteHTML(markup string) (err error) {
 			s.timers = prevTimers
 			s.animationFrames = prevFrames
 			s.blobStates = prevBlobStates
+			s.fileStates = prevFileStates
 			s.urlStates = prevURLStates
+			s.dataTransferStates = prevDataTransferStates
+			s.geolocationWatches = prevGeolocationWatches
+			s.fileInputSelections = prevFileInputSelections
 			s.nextTimerID = prevNextTimerID
 			s.nextAnimationFrameID = prevNextAnimationFrameID
 			s.nextBlobStateID = prevNextBlobStateID
+			s.nextFileStateID = prevNextFileStateID
 			s.nextURLStateID = prevNextURLStateID
+			s.nextDataTransferStateID = prevNextDataTransferStateID
+			s.nextGeolocationWatchID = prevNextGeolocationWatchID
 			s.runningTimerID = prevRunningTimerID
 			s.runningTimerCancelled = prevRunningTimerCancelled
 			s.scrollX = prevScrollX
@@ -320,6 +334,7 @@ func (s *Session) WriteHTML(markup string) (err error) {
 	s.hasIntlOverride = false
 	s.windowProperties = nil
 	s.elementEventHandlers = nil
+	s.clearGeolocationWatches()
 	s.syncDocumentState(s.URL())
 
 	if err = s.executeInlineScripts(store); err != nil {

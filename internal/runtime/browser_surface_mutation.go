@@ -31,6 +31,21 @@ func setBrowserHostReferenceValue(session *Session, store *dom.Store, path strin
 		return script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
 	}
 
+	if strings.HasPrefix(normalized, browserWorkerReferencePrefix) {
+		return setBrowserWorkerReferenceValue(session, normalized, value)
+	}
+	if strings.HasPrefix(normalized, browserFileReferencePrefix) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if strings.HasPrefix(normalized, browserDataTransferItemsReferencePrefix) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if strings.HasPrefix(normalized, browserDataTransferReferencePrefix) {
+		return setBrowserDataTransferReferenceValue(session, normalized, value)
+	}
+	if normalized == "geolocation" || strings.HasPrefix(normalized, "geolocation.") {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+	}
 	if strings.HasPrefix(normalized, browserWindowPropertyReferencePrefix) {
 		return session.setWindowPropertyReference(normalized, value)
 	}
@@ -89,6 +104,21 @@ func deleteBrowserHostReferenceValue(session *Session, store *dom.Store, path st
 		return script.NewError(script.ErrorKindUnsupported, "unsupported browser surface \"\" in this bounded classic-JS slice")
 	}
 
+	if strings.HasPrefix(normalized, browserWorkerReferencePrefix) {
+		return deleteBrowserWorkerReferenceValue(session, normalized)
+	}
+	if strings.HasPrefix(normalized, browserFileReferencePrefix) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if strings.HasPrefix(normalized, browserDataTransferItemsReferencePrefix) {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+	}
+	if strings.HasPrefix(normalized, browserDataTransferReferencePrefix) {
+		return deleteBrowserDataTransferReferenceValue(session, normalized)
+	}
+	if normalized == "geolocation" || strings.HasPrefix(normalized, "geolocation.") {
+		return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("deletion of %q is unsupported in this bounded classic-JS slice", path))
+	}
 	if strings.HasPrefix(normalized, browserWindowPropertyReferencePrefix) {
 		return session.deleteWindowPropertyReference(normalized)
 	}
@@ -242,6 +272,19 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "value", script.ToJSString(value))
 		}
 		return store.SetFormControlValue(nodeID, script.ToJSString(value))
+	case rest == "files":
+		if node.TagName != "input" || inputType(node) != "file" {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		if value.Kind != script.ValueKindArray {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q requires a FileList-like array value in this bounded classic-JS slice", path))
+		}
+		files := make([]script.Value, len(value.Array))
+		copy(files, value.Array)
+		if session != nil {
+			session.setBrowserFileInputSelection(nodeID, files)
+		}
+		return nil
 	case rest == "type":
 		switch node.TagName {
 		case "button", "input":
@@ -261,6 +304,17 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return fmt.Errorf("element.checked expects a boolean in this bounded classic-JS slice")
 		}
 		return store.SetFormControlChecked(nodeID, value.Bool)
+	case rest == "readOnly":
+		if !supportsReadOnlyAttribute(node.TagName) {
+			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
+		}
+		if value.Kind != script.ValueKindBool {
+			return fmt.Errorf("element.readOnly expects a boolean in this bounded classic-JS slice")
+		}
+		if value.Bool {
+			return store.SetAttribute(nodeID, "readonly", "")
+		}
+		return store.RemoveAttribute(nodeID, "readonly")
 	case rest == "disabled":
 		if !supportsDisabledAttribute(node.TagName) {
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
@@ -290,6 +344,14 @@ func setElementReferenceValue(session *Session, store *dom.Store, path string, v
 			return store.SetAttribute(nodeID, "open", "")
 		}
 		return store.RemoveAttribute(nodeID, "open")
+	case rest == "hidden":
+		if value.Kind != script.ValueKindBool {
+			return fmt.Errorf("element.hidden expects a boolean in this bounded classic-JS slice")
+		}
+		if value.Bool {
+			return store.SetAttribute(nodeID, "hidden", "")
+		}
+		return store.RemoveAttribute(nodeID, "hidden")
 	case rest == "selected":
 		if node.TagName != "option" {
 			return script.NewError(script.ErrorKindUnsupported, fmt.Sprintf("assignment to %q is unsupported in this bounded classic-JS slice", path))
@@ -555,14 +617,76 @@ func browserElementAppendChild(session *Session, store *dom.Store, nodeID dom.No
 	if len(args) != 1 {
 		return script.UndefinedValue(), fmt.Errorf("element.appendChild expects 1 argument")
 	}
+	parent := nodeFromStore(store, nodeID)
+	if parent == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	switch parent.Kind {
+	case dom.NodeKindDocument, dom.NodeKindElement, dom.NodeKindDocumentFragment:
+	default:
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
 	childID, err := browserNodeIDFromValue(args[0], "element.appendChild")
 	if err != nil {
+		return script.UndefinedValue(), err
+	}
+	child := nodeFromStore(store, childID)
+	if child == nil {
+		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	if child.Kind == dom.NodeKindDocumentFragment {
+		fragmentChildren := append([]dom.NodeID(nil), child.Children...)
+		for _, fragmentChildID := range fragmentChildren {
+			if err := browserValidateAppendChildTarget(store, nodeID, fragmentChildID); err != nil {
+				return script.UndefinedValue(), err
+			}
+		}
+		for _, fragmentChildID := range fragmentChildren {
+			if err := store.AppendChild(nodeID, fragmentChildID); err != nil {
+				return script.UndefinedValue(), err
+			}
+		}
+		return browserElementReferenceValue(childID, store), nil
+	}
+	if err := browserValidateAppendChildTarget(store, nodeID, childID); err != nil {
 		return script.UndefinedValue(), err
 	}
 	if err := store.AppendChild(nodeID, childID); err != nil {
 		return script.UndefinedValue(), err
 	}
 	return browserElementReferenceValue(childID, store), nil
+}
+
+func browserValidateAppendChildTarget(store *dom.Store, parentID, childID dom.NodeID) error {
+	if store == nil {
+		return script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	parent := nodeFromStore(store, parentID)
+	if parent == nil {
+		return script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	child := nodeFromStore(store, childID)
+	if child == nil {
+		return script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	switch parent.Kind {
+	case dom.NodeKindDocument, dom.NodeKindElement, dom.NodeKindDocumentFragment:
+	default:
+		return script.NewError(script.ErrorKindUnsupported, "element.appendChild is unavailable in this bounded classic-JS slice")
+	}
+	if child.Kind == dom.NodeKindDocument {
+		return script.NewError(script.ErrorKindUnsupported, "document node cannot be appended")
+	}
+	if parentID == childID {
+		return fmt.Errorf("node %d cannot be appended to itself", childID)
+	}
+	if store.ContainsNode(childID, parentID) {
+		return fmt.Errorf("node %d cannot be appended into its own descendant %d", childID, parentID)
+	}
+	if parent.Kind == dom.NodeKindDocument && child.Kind != dom.NodeKindElement {
+		return fmt.Errorf("document node can only contain element children")
+	}
+	return nil
 }
 
 func browserNodeBefore(session *Session, store *dom.Store, nodeID dom.NodeID, args []script.Value) (script.Value, error) {
@@ -654,12 +778,14 @@ func browserNodeReplaceChildren(session *Session, store *dom.Store, nodeID dom.N
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "replaceChildren is unavailable in this bounded classic-JS slice")
 	}
 	node := nodeFromStore(store, nodeID)
-	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument) {
+	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument && node.Kind != dom.NodeKindDocumentFragment) {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, "replaceChildren is unavailable in this bounded classic-JS slice")
 	}
 	method := "element.replaceChildren"
 	if node.Kind == dom.NodeKindDocument {
 		method = "document.replaceChildren"
+	} else if node.Kind == dom.NodeKindDocumentFragment {
+		method = "fragment.replaceChildren"
 	}
 
 	childIDs, createdIDs, err := browserNodeIDsFromValues(store, method, args)
@@ -1015,6 +1141,10 @@ func browserNodeIDsFromValues(store *dom.Store, method string, args []script.Val
 					browserDeleteNodeIDs(store, createdIDs)
 					return nil, nil, err
 				}
+				if node := store.Node(nodeID); node != nil && node.Kind == dom.NodeKindDocumentFragment {
+					childIDs = append(childIDs, append([]dom.NodeID(nil), node.Children...)...)
+					continue
+				}
 				childIDs = append(childIDs, nodeID)
 				continue
 			}
@@ -1059,6 +1189,32 @@ func browserNodeAppendValue(store *dom.Store, parentID dom.NodeID, method string
 	if err != nil {
 		return err
 	}
+	if child := store.Node(childID); child != nil && child.Kind == dom.NodeKindDocumentFragment {
+		fragmentChildren := append([]dom.NodeID(nil), child.Children...)
+		for _, fragmentChildID := range fragmentChildren {
+			if err := browserValidateAppendChildTarget(store, parentID, fragmentChildID); err != nil {
+				return err
+			}
+		}
+		for _, fragmentChildID := range fragmentChildren {
+			if referenceChildID == 0 {
+				if err := store.AppendChild(parentID, fragmentChildID); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := store.InsertBefore(parentID, fragmentChildID, referenceChildID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := browserValidateAppendChildTarget(store, parentID, childID); err != nil {
+		if created {
+			_ = store.DeleteNode(childID)
+		}
+		return err
+	}
 	if referenceChildID == 0 {
 		if err := store.AppendChild(parentID, childID); err != nil {
 			if created {
@@ -1082,7 +1238,7 @@ func browserNodeAppend(session *Session, store *dom.Store, nodeID dom.NodeID, me
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
 	}
 	node := nodeFromStore(store, nodeID)
-	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument) {
+	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument && node.Kind != dom.NodeKindDocumentFragment) {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
 	}
 	for _, arg := range args {
@@ -1098,7 +1254,7 @@ func browserNodePrepend(session *Session, store *dom.Store, nodeID dom.NodeID, m
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
 	}
 	node := nodeFromStore(store, nodeID)
-	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument) {
+	if node == nil || (node.Kind != dom.NodeKindElement && node.Kind != dom.NodeKindDocument && node.Kind != dom.NodeKindDocumentFragment) {
 		return script.UndefinedValue(), script.NewError(script.ErrorKindUnsupported, method+" is unavailable in this bounded classic-JS slice")
 	}
 	for i := len(args) - 1; i >= 0; i-- {

@@ -29,6 +29,11 @@ type BindingUpdateContext interface {
 	SkipEvaluation() bool
 }
 
+type bindingReplacementCache struct {
+	arrays  map[uintptr]Value
+	objects map[uintptr]Value
+}
+
 var currentBindingUpdateContext BindingUpdateContext
 
 type splitScriptStatementsCacheEntry struct {
@@ -377,6 +382,17 @@ func cloneValueDetached(value Value, mapping map[*classicJSEnvironment]*classicJ
 	)
 }
 
+func cloneValueSliceDetachedSeen(values []Value, mapping map[*classicJSEnvironment]*classicJSEnvironment, clonedFunctions map[*classicJSArrowFunction]*classicJSArrowFunction, clonedArrays map[uintptr]Value, clonedObjects map[uintptr]Value) []Value {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]Value, len(values))
+	for i, value := range values {
+		cloned[i] = cloneValueDetachedSeen(value, mapping, clonedFunctions, clonedArrays, clonedObjects)
+	}
+	return cloned
+}
+
 func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*classicJSEnvironment, clonedFunctions map[*classicJSArrowFunction]*classicJSArrowFunction, clonedArrays map[uintptr]Value, clonedObjects map[uintptr]Value) Value {
 	switch value.Kind {
 	case ValueKindArray:
@@ -403,6 +419,7 @@ func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*clas
 			cloned := Value{Kind: ValueKindObject}
 			cloned.ClassKey = value.ClassKey
 			cloned.ClassDefinition = value.ClassDefinition
+			cloned.ArrayState = cloneValueSliceDetachedSeen(value.ArrayState, mapping, clonedFunctions, clonedArrays, clonedObjects)
 			cloned.MapState = cloneMapStateDetached(value.MapState, mapping)
 			cloned.SetState = cloneSetStateDetached(value.SetState, mapping)
 			cloned.ObjectSize = value.ObjectSize
@@ -418,6 +435,7 @@ func cloneValueDetachedSeen(value Value, mapping map[*classicJSEnvironment]*clas
 		clonedValue := Value{Kind: ValueKindObject, Object: cloned}
 		clonedValue.ClassKey = value.ClassKey
 		clonedValue.ClassDefinition = value.ClassDefinition
+		clonedValue.ArrayState = cloneValueSliceDetachedSeen(value.ArrayState, mapping, clonedFunctions, clonedArrays, clonedObjects)
 		clonedValue.ObjectSize = value.ObjectSize
 		if ptr != 0 {
 			clonedObjects[ptr] = clonedValue
@@ -474,6 +492,23 @@ func (e *classicJSEnvironment) declare(name string, value jsValue, mutable bool)
 		return NewError(ErrorKindParse, fmt.Sprintf("duplicate lexical declaration for %q in this bounded classic-JS slice", name))
 	}
 	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: mutable}
+	e.clearLookupCache()
+	return nil
+}
+
+func (e *classicJSEnvironment) declareFunction(name string, value jsValue) error {
+	if e == nil {
+		return NewError(ErrorKindRuntime, "classic-JS environment is unavailable")
+	}
+	if e.bindings == nil {
+		e.bindings = make(map[string]classicJSBinding)
+	}
+	if binding, exists := e.bindings[name]; exists {
+		if binding.value.value.Kind != ValueKindFunction || value.value.Kind != ValueKindFunction {
+			return NewError(ErrorKindParse, fmt.Sprintf("duplicate lexical declaration for %q in this bounded classic-JS slice", name))
+		}
+	}
+	e.bindings[name] = classicJSBinding{value: value.withoutAssignTarget(), mutable: false}
 	e.clearLookupCache()
 	return nil
 }
@@ -733,10 +768,10 @@ func (e *classicJSEnvironment) replaceObjectBindings(oldValue Value, newValue js
 	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
 		return 0
 	}
-	return e.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+	return e.replaceObjectBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}), &bindingReplacementCache{arrays: make(map[uintptr]Value), objects: make(map[uintptr]Value)})
 }
 
-func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
+func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}, cache *bindingReplacementCache) int {
 	if oldValue.Kind != ValueKindObject || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindObject {
 		return 0
 	}
@@ -763,7 +798,7 @@ func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValu
 			if binding.skipBindingUpdates {
 				continue
 			}
-			updated, changed := replaceObjectReferencesInJSValue(binding.value, oldPtr, replacement.value)
+			updated, changed := replaceObjectReferencesInJSValue(binding.value, oldPtr, replacement.value, cache)
 			if !changed {
 				continue
 			}
@@ -774,7 +809,7 @@ func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValu
 		}
 	updateScopes:
 		for i, scope := range current.withScopes {
-			updated, changed := replaceObjectReferencesInValue(scope, oldPtr, replacement.value)
+			updated, changed := replaceObjectReferencesInValue(scope, oldPtr, replacement.value, cache)
 			if !changed {
 				continue
 			}
@@ -786,29 +821,29 @@ func (e *classicJSEnvironment) replaceObjectBindingsSeen(oldValue Value, newValu
 	return replaced
 }
 
-func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value) (jsValue, bool) {
+func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value, cache *bindingReplacementCache) (jsValue, bool) {
 	changed := false
 
 	switch value.kind {
 	case jsValueScalar:
-		updated, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement)
+		updated, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement, cache)
 		if ok {
 			value.value = updated
 			changed = true
 		}
 	case jsValueSuper:
-		updatedValue, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement)
+		updatedValue, ok := replaceObjectReferencesInValue(value.value, oldPtr, replacement, cache)
 		if ok {
 			value.value = updatedValue
 			changed = true
 		}
-		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement)
+		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement, cache)
 		if ok {
 			value.receiver = updatedReceiver
 			changed = true
 		}
 		if value.hasNewTarget {
-			updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement)
+			updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement, cache)
 			if ok {
 				value.newTarget = updatedNewTarget
 				changed = true
@@ -817,14 +852,14 @@ func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement
 	}
 
 	if value.kind != jsValueSuper && value.hasReceiver {
-		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement)
+		updatedReceiver, ok := replaceObjectReferencesInValue(value.receiver, oldPtr, replacement, cache)
 		if ok {
 			value.receiver = updatedReceiver
 			changed = true
 		}
 	}
 	if value.kind != jsValueSuper && value.hasNewTarget {
-		updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement)
+		updatedNewTarget, ok := replaceObjectReferencesInValue(value.newTarget, oldPtr, replacement, cache)
 		if ok {
 			value.newTarget = updatedNewTarget
 			changed = true
@@ -834,12 +869,12 @@ func replaceObjectReferencesInJSValue(value jsValue, oldPtr uintptr, replacement
 	return value, changed
 }
 
-func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+func replaceObjectReferencesInValue(value Value, oldPtr uintptr, replacement Value, cache *bindingReplacementCache) (Value, bool) {
 	budget := bindingReplacementWalkLimit
-	return replaceObjectReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}))
+	return replaceObjectReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}), cache)
 }
 
-func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenObjects map[uintptr]struct{}, seenArrays map[uintptr]struct{}, seenFunctions map[uintptr]struct{}) (Value, bool) {
+func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenObjects map[uintptr]struct{}, seenArrays map[uintptr]struct{}, seenFunctions map[uintptr]struct{}, cache *bindingReplacementCache) (Value, bool) {
 	switch value.Kind {
 	case ValueKindObject:
 		if budget != nil {
@@ -855,6 +890,11 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		if ptr == 0 {
 			return value, false
 		}
+		if cache != nil {
+			if cloned, ok := cache.objects[ptr]; ok {
+				return cloned, true
+			}
+		}
 		if _, seen := seenObjects[ptr]; seen {
 			return value, false
 		}
@@ -865,7 +905,7 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		var updated []ObjectEntry
 		changed := false
 		for i, entry := range value.Object {
-			next, ok := replaceObjectReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+			next, ok := replaceObjectReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions, cache)
 			if ok && !changed {
 				updated = make([]ObjectEntry, len(value.Object))
 				copy(updated, value.Object[:i])
@@ -875,10 +915,38 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 				updated[i] = ObjectEntry{Key: entry.Key, Value: next}
 			}
 		}
-		if !changed {
+		var mapUpdated *classicJSMapState
+		mapChanged := false
+		if value.MapState != nil && len(value.MapState.entries) > 0 {
+			mapUpdatedEntries := make([]classicJSMapEntry, len(value.MapState.entries))
+			for i, entry := range value.MapState.entries {
+				next, ok := replaceObjectReferencesInValueSeen(entry.value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions, cache)
+				if ok && !mapChanged {
+					copy(mapUpdatedEntries, value.MapState.entries[:i])
+					mapChanged = true
+				}
+				if mapChanged {
+					mapUpdatedEntries[i] = classicJSMapEntry{key: entry.key, value: next}
+				}
+			}
+			if mapChanged {
+				mapUpdated = &classicJSMapState{entries: mapUpdatedEntries}
+			}
+		}
+		if !changed && !mapChanged {
 			return value, false
 		}
-		return objectValueOwned(value, updated), true
+		cloned := value
+		if changed {
+			cloned.Object = updated
+		}
+		if mapChanged {
+			cloned.MapState = mapUpdated
+		}
+		if cache != nil {
+			cache.objects[ptr] = cloned
+		}
+		return cloned, true
 	case ValueKindArray:
 		if budget != nil {
 			if *budget <= 0 {
@@ -893,6 +961,11 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		if ptr == 0 {
 			return value, false
 		}
+		if cache != nil {
+			if cloned, ok := cache.arrays[ptr]; ok {
+				return cloned, true
+			}
+		}
 		if _, seen := seenArrays[ptr]; seen {
 			return value, false
 		}
@@ -903,7 +976,7 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		var updated []Value
 		changed := false
 		for i, element := range value.Array {
-			next, ok := replaceObjectReferencesInValueSeen(element, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+			next, ok := replaceObjectReferencesInValueSeen(element, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions, cache)
 			if ok && !changed {
 				updated = make([]Value, len(value.Array))
 				copy(updated, value.Array[:i])
@@ -916,7 +989,11 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		if !changed {
 			return value, false
 		}
-		return arrayValueOwned(updated), true
+		cloned := arrayValueOwned(updated)
+		if cache != nil {
+			cache.arrays[ptr] = cloned
+		}
+		return cloned, true
 	case ValueKindPromise:
 		if budget != nil {
 			if *budget <= 0 {
@@ -925,7 +1002,7 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 			*budget--
 		}
 		if value.PromiseState != nil && value.PromiseState.resolved {
-			next, ok := replaceObjectReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+			next, ok := replaceObjectReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions, cache)
 			if !ok {
 				return value, false
 			}
@@ -940,7 +1017,7 @@ func replaceObjectReferencesInValueSeen(value Value, oldPtr uintptr, replacement
 		if value.Promise == nil {
 			return value, false
 		}
-		next, ok := replaceObjectReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions)
+		next, ok := replaceObjectReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenObjects, seenArrays, seenFunctions, cache)
 		if !ok {
 			return value, false
 		}
@@ -958,10 +1035,10 @@ func (e *classicJSEnvironment) replaceArrayBindings(oldValue Value, newValue jsV
 	if ctx := CurrentBindingUpdateContext(); ctx != nil && ctx.SkipEvaluation() {
 		return 0
 	}
-	return e.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}))
+	return e.replaceArrayBindingsSeen(oldValue, newValue, make(map[*classicJSEnvironment]struct{}), &bindingReplacementCache{arrays: make(map[uintptr]Value), objects: make(map[uintptr]Value)})
 }
 
-func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}) int {
+func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue jsValue, visited map[*classicJSEnvironment]struct{}, cache *bindingReplacementCache) int {
 	if oldValue.Kind != ValueKindArray || newValue.kind != jsValueScalar || newValue.value.Kind != ValueKindArray {
 		return 0
 	}
@@ -985,7 +1062,7 @@ func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue
 			if binding.skipBindingUpdates {
 				continue
 			}
-			updated, changed := replaceArrayReferencesInJSValue(binding.value, oldPtr, replacement.value)
+			updated, changed := replaceArrayReferencesInJSValue(binding.value, oldPtr, replacement.value, cache)
 			if !changed {
 				continue
 			}
@@ -995,7 +1072,7 @@ func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue
 			replaced++
 		}
 		for i, scope := range current.withScopes {
-			updated, changed := replaceArrayReferencesInValue(scope, oldPtr, replacement.value)
+			updated, changed := replaceArrayReferencesInValue(scope, oldPtr, replacement.value, cache)
 			if !changed {
 				continue
 			}
@@ -1007,29 +1084,29 @@ func (e *classicJSEnvironment) replaceArrayBindingsSeen(oldValue Value, newValue
 	return replaced
 }
 
-func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value) (jsValue, bool) {
+func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement Value, cache *bindingReplacementCache) (jsValue, bool) {
 	changed := false
 
 	switch value.kind {
 	case jsValueScalar:
-		updated, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement)
+		updated, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement, cache)
 		if ok {
 			value.value = updated
 			changed = true
 		}
 	case jsValueSuper:
-		updatedValue, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement)
+		updatedValue, ok := replaceArrayReferencesInValue(value.value, oldPtr, replacement, cache)
 		if ok {
 			value.value = updatedValue
 			changed = true
 		}
-		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement)
+		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement, cache)
 		if ok {
 			value.receiver = updatedReceiver
 			changed = true
 		}
 		if value.hasNewTarget {
-			updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement)
+			updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement, cache)
 			if ok {
 				value.newTarget = updatedNewTarget
 				changed = true
@@ -1038,14 +1115,14 @@ func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement 
 	}
 
 	if value.kind != jsValueSuper && value.hasReceiver {
-		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement)
+		updatedReceiver, ok := replaceArrayReferencesInValue(value.receiver, oldPtr, replacement, cache)
 		if ok {
 			value.receiver = updatedReceiver
 			changed = true
 		}
 	}
 	if value.kind != jsValueSuper && value.hasNewTarget {
-		updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement)
+		updatedNewTarget, ok := replaceArrayReferencesInValue(value.newTarget, oldPtr, replacement, cache)
 		if ok {
 			value.newTarget = updatedNewTarget
 			changed = true
@@ -1055,12 +1132,12 @@ func replaceArrayReferencesInJSValue(value jsValue, oldPtr uintptr, replacement 
 	return value, changed
 }
 
-func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Value) (Value, bool) {
+func replaceArrayReferencesInValue(value Value, oldPtr uintptr, replacement Value, cache *bindingReplacementCache) (Value, bool) {
 	budget := bindingReplacementWalkLimit
-	return replaceArrayReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}))
+	return replaceArrayReferencesInValueSeen(value, oldPtr, replacement, &budget, make(map[uintptr]struct{}), make(map[uintptr]struct{}), make(map[uintptr]struct{}), cache)
 }
 
-func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenArrays map[uintptr]struct{}, seenObjects map[uintptr]struct{}, seenFunctions map[uintptr]struct{}) (Value, bool) {
+func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement Value, budget *int, seenArrays map[uintptr]struct{}, seenObjects map[uintptr]struct{}, seenFunctions map[uintptr]struct{}, cache *bindingReplacementCache) (Value, bool) {
 	switch value.Kind {
 	case ValueKindArray:
 		if budget != nil {
@@ -1076,6 +1153,11 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		if ptr == 0 {
 			return value, false
 		}
+		if cache != nil {
+			if cloned, ok := cache.arrays[ptr]; ok {
+				return cloned, true
+			}
+		}
 		if _, seen := seenArrays[ptr]; seen {
 			return value, false
 		}
@@ -1086,7 +1168,7 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		var updated []Value
 		changed := false
 		for i, element := range value.Array {
-			next, ok := replaceArrayReferencesInValueSeen(element, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+			next, ok := replaceArrayReferencesInValueSeen(element, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions, cache)
 			if ok && !changed {
 				updated = make([]Value, len(value.Array))
 				copy(updated, value.Array[:i])
@@ -1099,7 +1181,11 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		if !changed {
 			return value, false
 		}
-		return arrayValueOwned(updated), true
+		cloned := arrayValueOwned(updated)
+		if cache != nil {
+			cache.arrays[ptr] = cloned
+		}
+		return cloned, true
 	case ValueKindObject:
 		if budget != nil {
 			if *budget <= 0 {
@@ -1114,6 +1200,11 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		if ptr == 0 {
 			return value, false
 		}
+		if cache != nil {
+			if cloned, ok := cache.objects[ptr]; ok {
+				return cloned, true
+			}
+		}
 		if _, seen := seenObjects[ptr]; seen {
 			return value, false
 		}
@@ -1124,7 +1215,7 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		var updated []ObjectEntry
 		changed := false
 		for i, entry := range value.Object {
-			next, ok := replaceArrayReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+			next, ok := replaceArrayReferencesInValueSeen(entry.Value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions, cache)
 			if ok && !changed {
 				updated = make([]ObjectEntry, len(value.Object))
 				copy(updated, value.Object[:i])
@@ -1134,10 +1225,38 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 				updated[i] = ObjectEntry{Key: entry.Key, Value: next}
 			}
 		}
-		if !changed {
+		var mapUpdated *classicJSMapState
+		mapChanged := false
+		if value.MapState != nil && len(value.MapState.entries) > 0 {
+			mapUpdatedEntries := make([]classicJSMapEntry, len(value.MapState.entries))
+			for i, entry := range value.MapState.entries {
+				next, ok := replaceArrayReferencesInValueSeen(entry.value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions, cache)
+				if ok && !mapChanged {
+					copy(mapUpdatedEntries, value.MapState.entries[:i])
+					mapChanged = true
+				}
+				if mapChanged {
+					mapUpdatedEntries[i] = classicJSMapEntry{key: entry.key, value: next}
+				}
+			}
+			if mapChanged {
+				mapUpdated = &classicJSMapState{entries: mapUpdatedEntries}
+			}
+		}
+		if !changed && !mapChanged {
 			return value, false
 		}
-		return objectValueOwned(value, updated), true
+		cloned := value
+		if changed {
+			cloned.Object = updated
+		}
+		if mapChanged {
+			cloned.MapState = mapUpdated
+		}
+		if cache != nil {
+			cache.objects[ptr] = cloned
+		}
+		return cloned, true
 	case ValueKindPromise:
 		if budget != nil {
 			if *budget <= 0 {
@@ -1146,7 +1265,7 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 			*budget--
 		}
 		if value.PromiseState != nil && value.PromiseState.resolved {
-			next, ok := replaceArrayReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+			next, ok := replaceArrayReferencesInValueSeen(value.PromiseState.value, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions, cache)
 			if !ok {
 				return value, false
 			}
@@ -1161,7 +1280,7 @@ func replaceArrayReferencesInValueSeen(value Value, oldPtr uintptr, replacement 
 		if value.Promise == nil {
 			return value, false
 		}
-		next, ok := replaceArrayReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions)
+		next, ok := replaceArrayReferencesInValueSeen(*value.Promise, oldPtr, replacement, budget, seenArrays, seenObjects, seenFunctions, cache)
 		if !ok {
 			return value, false
 		}
@@ -1662,18 +1781,7 @@ func splitScriptStatements(source string) ([]string, error) {
 		}
 		return index, NewError(ErrorKindParse, "unterminated regular expression literal")
 	}
-	regexStartKeywords := map[string]struct{}{
-		"await":      {},
-		"case":       {},
-		"delete":     {},
-		"in":         {},
-		"instanceof": {},
-		"return":     {},
-		"throw":      {},
-		"typeof":     {},
-		"void":       {},
-		"yield":      {},
-	}
+	regexStartKeywords := classicJSRegexStartKeywords
 	skipSpaceAndCommentsForward := func(index int) int {
 		for index < len(text) {
 			switch text[index] {

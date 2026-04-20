@@ -71,6 +71,17 @@ func (s *Session) TypeText(selector, text string) (err error) {
 		}
 	}()
 	if store.FocusedNodeID() != nodeID {
+		if err := s.blurFocusedNodeIfNeeded(store, nodeID); err != nil {
+			return err
+		}
+		if s.domStore != nil && s.domStore != store {
+			return s.drainMicrotasks(s.domStore)
+		}
+		// Blur handlers may replace the target subtree, so re-resolve before writing.
+		store, nodeID, _, normalized, err = s.resolveActionTarget(selector)
+		if err != nil {
+			return err
+		}
 		if err := s.focusNode(store, nodeID, normalized, false); err != nil {
 			return err
 		}

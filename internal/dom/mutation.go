@@ -136,7 +136,7 @@ func (s *Store) ReplaceChildrenWithNodeIDs(nodeID NodeID, childIDs []NodeID) err
 	if node == nil {
 		return fmt.Errorf("invalid node id: %d", nodeID)
 	}
-	if node.Kind != NodeKindDocument && node.Kind != NodeKindElement {
+	if node.Kind != NodeKindDocument && node.Kind != NodeKindElement && node.Kind != NodeKindDocumentFragment {
 		return fmt.Errorf("node %d does not support replaceChildren", nodeID)
 	}
 
@@ -767,6 +767,9 @@ func (s *Store) AppendChild(parentID, childID NodeID) error {
 	child := s.Node(childID)
 	if child == nil {
 		return fmt.Errorf("invalid child node id: %d", childID)
+	}
+	if child.Kind == NodeKindDocument {
+		return fmt.Errorf("document node cannot be inserted")
 	}
 	if parentID == childID {
 		return fmt.Errorf("node %d cannot be appended to itself", childID)

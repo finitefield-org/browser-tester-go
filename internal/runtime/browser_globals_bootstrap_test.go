@@ -83,6 +83,22 @@ func TestSessionBootstrapsRawHtmlWithBrowserGlobals(t *testing.T) {
 	}
 }
 
+func TestSessionBootstrapsErrorConstructorThroughBrowserGlobals(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const sameConstructor = Error === window.Error; try { throw new Error("boom"); } catch (error) { document.getElementById("out").textContent = [sameConstructor, error instanceof Error, error instanceof window.Error, error.message, error.name].join("|"); }</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|true|true|boom|Error" {
+		t.Fatalf("TextContent(#out) = %q, want true|true|true|boom|Error", got)
+	}
+}
+
 func TestSessionBootstrapsFetchThroughBrowserGlobals(t *testing.T) {
 	const rawHTML = `<main><div id="meta"></div><div id="body"></div><script>window.fetch("https://example.test/api/message").then(function (response) { document.getElementById("meta").textContent = [response.url, response.status, response.ok].join("|"); return response.text().then(function (text) { document.getElementById("body").textContent = text; }); });</script></main>`
 
@@ -1182,6 +1198,41 @@ func TestSessionBootstrapsCsvDownloadClickWithQuotedArrowFunctions(t *testing.T)
 	}
 }
 
+func TestSessionBootstrapsFinitefieldMolecularWeightCsvDownload(t *testing.T) {
+	const rawHTML = `<main><button id="molecular-weight-download-csv">Download CSV</button><div id="out"></div><script>function buildTsv() { return [["Element", "Count", "Mass"], ["C", "6", "72.066"]].map((row) => row.join("\t")).join("\n"); } function buildCsv() { const rows = buildTsv().split("\n").map((line) => line.split("\t")); return rows.map((cols) => cols.map((value) => { const safe = String(value == null ? "" : value); if (/[",\n]/.test(safe)) return '"' + safe.replace(/"/g, '""') + '"'; return safe; }).join(",")).join("\n"); } function downloadCsv() { const csv = buildCsv(); if (!csv) return; const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "molecular-weight.csv"; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); document.getElementById("out").textContent = csv; } document.getElementById("molecular-weight-download-csv").addEventListener("click", downloadCsv);</script></main>`
+
+	session := NewSession(SessionConfig{
+		URL:  "https://example.test/base/",
+		HTML: rawHTML,
+	})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if err := session.Click("#molecular-weight-download-csv"); err != nil {
+		t.Fatalf("Click(#molecular-weight-download-csv) error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "Element,Count,Mass\nC,6,72.066" {
+		t.Fatalf("TextContent(#out) = %q, want CSV output", got)
+	}
+	downloads := session.Registry().Downloads().Artifacts()
+	if len(downloads) != 1 {
+		t.Fatalf("Downloads().Artifacts() = %#v, want one captured download", downloads)
+	}
+	if downloads[0].FileName != "molecular-weight.csv" {
+		t.Fatalf("Downloads()[0].FileName = %q, want molecular-weight.csv", downloads[0].FileName)
+	}
+	if got, want := string(downloads[0].Bytes), "\uFEFFElement,Count,Mass\nC,6,72.066"; got != want {
+		t.Fatalf("Downloads()[0].Bytes = %q, want %q", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after finitefield molecular weight download bootstrap", got)
+	}
+}
+
 func TestSessionBootstrapsXMLSerializerSerializesElementNodes(t *testing.T) {
 	const rawHTML = `<main><div id="out"></div><script>const serializer = new XMLSerializer(); if (!(serializer instanceof XMLSerializer)) { throw new Error("XMLSerializer instanceof failed"); } const node = document.createElement("div"); node.setAttribute("data-test", "ok"); document.getElementById("out").textContent = serializer.serializeToString(node);</script></main>`
 
@@ -1233,6 +1284,24 @@ func TestSessionBootstrapsTextEncoderAndTextDecoderRoundTrip(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after TextEncoder/TextDecoder bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsTextDecoderShiftJIS(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const decoder = new TextDecoder("shift_jis"); const bytes = new Uint8Array([0x82, 0xa0, 0x82, 0xa2]); document.getElementById("out").textContent = [decoder instanceof TextDecoder, decoder.encoding, decoder.decode(bytes)].join("|");</script></main>`
+
+	session := NewSession(SessionConfig{HTML: rawHTML})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "true|shift_jis|あい" {
+		t.Fatalf("TextContent(#out) = %q, want TextDecoder shift_jis decode output", got)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after TextDecoder shift_jis bootstrap", got)
 	}
 }
 
@@ -4675,6 +4744,30 @@ func TestSessionBootstrapsTemplateURLAndSearchParamsBridge(t *testing.T) {
 	}
 	if got := session.DOMError(); got != "" {
 		t.Fatalf("DOMError() = %q, want empty after URL/searchParams bootstrap", got)
+	}
+}
+
+func TestSessionBootstrapsURLHashSetter(t *testing.T) {
+	const rawHTML = `<main><div id="out"></div><script>const url = new URL(window.location.href); url.hash = "#ready"; const cleared = new URL("https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=raw#legacy"); cleared.hash = ""; document.getElementById("out").textContent = [url.href, url.hash, cleared.href, cleared.hash].join("|")</script></main>`
+
+	session := NewSession(SessionConfig{
+		URL:  "https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=initial",
+		HTML: rawHTML,
+	})
+	if _, err := session.ensureDOM(); err != nil {
+		t.Fatalf("ensureDOM() error = %v", err)
+	}
+
+	if got, err := session.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=initial#ready|#ready|https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=raw|" {
+		t.Fatalf("TextContent(#out) = %q, want URL hash setter output", got)
+	}
+	if got, want := session.URL(), "https://finitefield.org/en/tools/agri/agri-unit-converter/?mode=initial"; got != want {
+		t.Fatalf("URL() after URL.hash setter bootstrap = %q, want %q", got, want)
+	}
+	if got := session.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after URL.hash setter bootstrap", got)
 	}
 }
 

@@ -789,6 +789,31 @@ func TestRunScriptRejectsDecodeURIMalformedSequence(t *testing.T) {
 	}
 }
 
+func TestRunScriptSupportsObjectIs(t *testing.T) {
+	session := NewSession(DefaultSessionConfig())
+
+	result, err := session.runScriptOnStore(dom.NewStore(), `(() => {
+		const left = {};
+		const right = {};
+		return [
+			Object.is(NaN, NaN),
+			Object.is(0, -0),
+			Object.is(-0, -0),
+			Object.is(1, 1),
+			Object.is(left, right)
+		].join("|");
+	})()`)
+	if err != nil {
+		t.Fatalf("runScriptOnStore() error = %v", err)
+	}
+	if result.Kind != script.ValueKindString {
+		t.Fatalf("runScriptOnStore() kind = %q, want string", result.Kind)
+	}
+	if got, want := result.String, "true|false|true|true|false"; got != want {
+		t.Fatalf("runScriptOnStore() value = %q, want %q", got, want)
+	}
+}
+
 func TestRunScriptSupportsObjectPrototypeHasOwnPropertyCall(t *testing.T) {
 	session := NewSession(DefaultSessionConfig())
 

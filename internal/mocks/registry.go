@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -977,9 +978,17 @@ type FileInputSelection struct {
 	Files    []string
 }
 
+type FileInputFileData struct {
+	Text     string
+	Bytes    []byte
+	Type     string
+	HasText  bool
+	HasBytes bool
+}
+
 type FileInputFamily struct {
 	selections []FileInputSelection
-	texts      map[string]map[string]string
+	files      map[string]map[string]FileInputFileData
 }
 
 func (f *FileInputFamily) SetFiles(selector string, files []string) {
@@ -1016,38 +1025,69 @@ func (f *FileInputFamily) SeedFileText(selector, fileName, text string) {
 	if f == nil {
 		return
 	}
+	f.SeedFileBytes(selector, fileName, []byte(text), "")
+}
+
+func (f *FileInputFamily) SeedFileBytes(selector, fileName string, data []byte, mimeType string) {
+	if f == nil {
+		return
+	}
 	normalizedSelector := strings.TrimSpace(selector)
 	normalizedFileName := strings.TrimSpace(fileName)
 	if normalizedSelector == "" || normalizedFileName == "" {
 		return
 	}
-	if f.texts == nil {
-		f.texts = make(map[string]map[string]string)
+	if f.files == nil {
+		f.files = make(map[string]map[string]FileInputFileData)
 	}
-	if f.texts[normalizedSelector] == nil {
-		f.texts[normalizedSelector] = make(map[string]string)
+	if f.files[normalizedSelector] == nil {
+		f.files[normalizedSelector] = make(map[string]FileInputFileData)
 	}
-	f.texts[normalizedSelector][normalizedFileName] = text
+	bytesCopy := make([]byte, len(data))
+	copy(bytesCopy, data)
+	f.files[normalizedSelector][normalizedFileName] = FileInputFileData{
+		Text:     string(bytes.ToValidUTF8(bytesCopy, []byte("\uFFFD"))),
+		Bytes:    bytesCopy,
+		Type:     strings.TrimSpace(mimeType),
+		HasText:  true,
+		HasBytes: true,
+	}
 }
 
 func (f *FileInputFamily) FileText(selector, fileName string) (string, bool) {
-	if f == nil {
+	data, ok := f.FileData(selector, fileName)
+	if !ok || !data.HasText {
 		return "", false
+	}
+	return data.Text, true
+}
+
+func (f *FileInputFamily) FileData(selector, fileName string) (FileInputFileData, bool) {
+	if f == nil {
+		return FileInputFileData{}, false
 	}
 	normalizedSelector := strings.TrimSpace(selector)
 	normalizedFileName := strings.TrimSpace(fileName)
 	if normalizedSelector == "" || normalizedFileName == "" {
-		return "", false
+		return FileInputFileData{}, false
 	}
-	if f.texts == nil {
-		return "", false
+	if f.files == nil {
+		return FileInputFileData{}, false
 	}
-	files := f.texts[normalizedSelector]
+	files := f.files[normalizedSelector]
 	if len(files) == 0 {
-		return "", false
+		return FileInputFileData{}, false
 	}
-	text, ok := files[normalizedFileName]
-	return text, ok
+	data, ok := files[normalizedFileName]
+	if !ok {
+		return FileInputFileData{}, false
+	}
+	if data.HasBytes && len(data.Bytes) > 0 {
+		data.Bytes = append([]byte(nil), data.Bytes...)
+	} else if data.HasBytes {
+		data.Bytes = []byte{}
+	}
+	return data, true
 }
 
 func (f *FileInputFamily) Selections() []FileInputSelection {
@@ -1081,7 +1121,7 @@ func (f *FileInputFamily) Reset() {
 		return
 	}
 	f.selections = nil
-	f.texts = nil
+	f.files = nil
 }
 
 type StorageFamily struct {

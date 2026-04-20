@@ -44,15 +44,17 @@ type ObjectEntry struct {
 var nextSymbolID uint64
 
 type Value struct {
-	Kind                        ValueKind
-	String                      string
-	Bool                        bool
-	Number                      float64
-	BigInt                      string
-	SymbolDescription           string
-	SymbolID                    string
-	Array                       []Value
-	Object                      []ObjectEntry
+	Kind              ValueKind
+	String            string
+	Bool              bool
+	Number            float64
+	BigInt            string
+	SymbolDescription string
+	SymbolID          string
+	Array             []Value
+	Object            []ObjectEntry
+	// ArrayState stores indexed values for object-backed array-like results.
+	ArrayState                  []Value
 	PrivateName                 string
 	ClassKey                    string
 	ClassDefinition             *classicJSClassDefinition

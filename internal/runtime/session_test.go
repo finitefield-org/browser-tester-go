@@ -460,6 +460,26 @@ func TestSessionSetFilesExposesSeededFileText(t *testing.T) {
 	}
 }
 
+func TestSessionSetFilesExposesSeededFileBytesAndMetadata(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { const file = document.getElementById("upload").files[0]; file.text().then((text) => { file.arrayBuffer().then((buffer) => { const bytes = Array.from(new Uint8Array(buffer)).join(","); document.getElementById("out").textContent = [file.name, file.size, file.type, text, bytes].join("|"); }); }); });</script></main>`,
+	})
+	s.Registry().FileInput().SeedFileBytes("#upload", "sample.csv", []byte{0x41, 0x42, 0x43}, "text/csv")
+
+	if err := s.SetFiles("#upload", []string{"sample.csv"}); err != nil {
+		t.Fatalf("SetFiles() error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != "sample.csv|3|text/csv|ABC|65,66,67" {
+		t.Fatalf("TextContent(#out) = %q, want seeded file bytes and metadata", got)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after seeded file bytes capture", got)
+	}
+}
+
 func TestSessionSetFilesAllowsClearingFileInputValue(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="upload" type="file"><div id="out"></div><script>document.getElementById("upload").addEventListener("change", () => { document.getElementById("upload").value = ""; document.getElementById("out").textContent = "cleared"; });</script></main>`,
@@ -491,6 +511,29 @@ func TestSessionSetFilesRejectsUnseededFileTextRead(t *testing.T) {
 		t.Fatalf("SetFiles() error = nil, want unseeded file text failure")
 	} else if !strings.Contains(err.Error(), "file content is unavailable") {
 		t.Fatalf("SetFiles() error = %q, want unseeded file text failure text", err)
+	}
+}
+
+func TestSessionSetFilesSupportsDetachedFileInputCreatedOnDemand(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="import">import</button><div id="out"></div><script>document.getElementById("import").addEventListener("click", () => { const picker = document.createElement("input"); picker.type = "file"; picker.addEventListener("change", async () => { const file = picker.files[0]; document.getElementById("out").textContent = [file.name, await file.text()].join("|"); }); picker.click(); });</script></main>`,
+	})
+	s.Registry().FileInput().SeedFileText("input[type=file]", "sample.json", `{"message":"ok"}`)
+
+	if err := s.Click("#import"); err != nil {
+		t.Fatalf("Click(#import) error = %v", err)
+	}
+	if err := s.SetFiles("input[type=file]", []string{"sample.json"}); err != nil {
+		t.Fatalf("SetFiles(input[type=file]) error = %v", err)
+	}
+
+	if got, err := s.TextContent("#out"); err != nil {
+		t.Fatalf("TextContent(#out) error = %v", err)
+	} else if got != `sample.json|{"message":"ok"}` {
+		t.Fatalf("TextContent(#out) = %q, want detached file-input change listener output", got)
+	}
+	if selections := s.FileInputSelections(); len(selections) != 1 || selections[0].Selector != "input[type=file]" || len(selections[0].Files) != 1 || selections[0].Files[0] != "sample.json" {
+		t.Fatalf("FileInputSelections() = %#v, want detached file-input selection to be recorded", selections)
 	}
 }
 
@@ -1633,6 +1676,29 @@ func TestSessionTypeTextCommitsPreviousFocusedTextInputChangeOnFocusSwitch(t *te
 	}
 }
 
+func TestSessionTypeTextReResolvesTargetAfterBlurRerender(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><input id="source" type="text"><div id="rows"><input id="target" type="text"></div><script>function rerenderRows() { document.getElementById("rows").innerHTML = '<input id="target" type="text">'; document.getElementById("target").addEventListener("input", () => {}); } document.getElementById("source").addEventListener("change", rerenderRows); document.getElementById("target").addEventListener("input", () => {});</script></main>`,
+	})
+
+	if err := s.TypeText("#source", "alpha"); err != nil {
+		t.Fatalf("TypeText(#source, alpha) error = %v", err)
+	}
+	if err := s.TypeText("#target", "beta"); err != nil {
+		t.Fatalf("TypeText(#target, beta) error = %v", err)
+	}
+
+	if err := s.AssertValue("#target", "beta"); err != nil {
+		t.Fatalf("AssertValue(#target, beta) error = %v", err)
+	}
+	if got, want := s.FocusedSelector(), "#target"; got != want {
+		t.Fatalf("FocusedSelector() after blur rerender = %q, want %q", got, want)
+	}
+	if got := s.DOMError(); got != "" {
+		t.Fatalf("DOMError() = %q, want empty after blur rerender regression", got)
+	}
+}
+
 func TestSessionFocusBlursFocusedTextInputBeforeNextFocusHandler(t *testing.T) {
 	s := NewSession(SessionConfig{
 		HTML: `<main><input id="reference-date" type="date"><input id="next"><div id="out">--</div><script>const state = { referenceDate: "" }; document.getElementById("reference-date").addEventListener("change", (event) => { state.referenceDate = String(event.target.value || ""); }); document.getElementById("next").addEventListener("focus", () => { document.getElementById("out").textContent = state.referenceDate || "--"; });</script></main>`,
@@ -2433,6 +2499,28 @@ func TestSessionClickHonorsStopPropagationFromCaptureListeners(t *testing.T) {
 
 	if got, want := s.DumpDOM(), `<main><section id="wrap"><button id="btn">Go</button></section><div id="log"><span>capture</span><span>target</span></div><script>host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>capture</span>"); host:stopPropagation()', "capture"); host:addEventListener("#btn", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>target</span>")'); host:addEventListener("#wrap", "click", 'host:insertAdjacentHTML("#log", "beforeend", "<span>bubble</span>")', "bubble")</script></main>`; got != want {
 		t.Fatalf("DumpDOM() after stopPropagation click = %q, want %q", got, want)
+	}
+}
+
+func TestSessionClickAllowsDocumentCaptureAndTargetListenersToToggleBodyOverflow(t *testing.T) {
+	s := NewSession(SessionConfig{
+		HTML: `<main><button id="open" type="button">Open</button><button id="close" type="button">Close</button><div id="dialog" hidden></div><script>const openButton = document.getElementById("open"); const closeButton = document.getElementById("close"); const dialog = document.getElementById("dialog"); let activeDialog = false; let lastFocus = null; function setDialogOpen(nextOpen) { activeDialog = Boolean(nextOpen); dialog.hidden = !activeDialog; document.body.style.overflow = activeDialog ? "hidden" : ""; if (activeDialog) { lastFocus = document.activeElement; window.setTimeout(() => { const focusTarget = dialog.querySelector("button") || openButton; if (focusTarget && typeof focusTarget.focus === "function") { focusTarget.focus(); } }, 0); } else if (lastFocus && typeof lastFocus.focus === "function") { window.setTimeout(() => lastFocus.focus(), 0); } } function onClick(event) { const target = event.target instanceof HTMLElement ? event.target.closest("button") : null; if (!target) return; if (target.id === "open") { setDialogOpen(true); return; } if (target.id === "close") { setDialogOpen(false); return; } } document.addEventListener("click", onClick, true); openButton.addEventListener("click", () => setDialogOpen(true)); closeButton.addEventListener("click", () => setDialogOpen(false));</script></main>`,
+	})
+
+	if err := s.Click("#open"); err != nil {
+		t.Fatalf("Click(#open) error = %v", err)
+	}
+
+	if got := s.DumpDOM(); !strings.Contains(got, `style="overflow: hidden"`) {
+		t.Fatalf("DumpDOM() after open click = %q, want body overflow to be hidden", got)
+	}
+
+	if err := s.Click("#close"); err != nil {
+		t.Fatalf("Click(#close) error = %v", err)
+	}
+
+	if got := s.DumpDOM(); strings.Contains(got, `style="overflow: hidden"`) {
+		t.Fatalf("DumpDOM() after close click = %q, want body overflow to be cleared", got)
 	}
 }
 
